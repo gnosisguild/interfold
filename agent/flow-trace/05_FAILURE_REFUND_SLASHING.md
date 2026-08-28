@@ -6,9 +6,13 @@ An E3 can fail at any stage due to timeouts, insufficient participants, or misbe
 first attributes economic responsibility from `FailureReason`:
 
 - Requester, data-provider, or compute-provider failures pay completed work and the protocol share
-  from fee escrow; the requester receives the unspent remainder.
-- Supplier/ciphernode failures return 100% of fee escrow to the requester with no protocol cut.
-  Honest nodes are compensated from actual ticket collateral slashed from faulty nodes.
+  from service fee escrow; the requester receives the unspent remainder.
+- Supplier/ciphernode failures return 100% of service fee escrow to the requester with no protocol
+  cut. Honest nodes are compensated from actual ticket collateral slashed from faulty nodes.
+
+The flat randomness fee is a request-time infrastructure charge, not fee escrow. Interfold credits
+it to the request-time treasury after an accepted randomness request. No success, failure, or
+cancellation path pays this amount to ciphernodes or returns it to the requester.
 
 Slashed assets remain token-specific pull claims. Compensation is therefore limited to collateral
 actually slashed and does not require an oracle or relabel one ERC-20 as another.
@@ -21,6 +25,13 @@ actually slashed and does not require an oracle or relabel one ERC-20 as another
 
 Anyone can call `markE3Failed()` when a deadline is missed. A ready committee remains finalizable
 through its absolute DKG deadline. It can fail if it remains unfinalized after that deadline.
+
+For the aggregator-owned DKG and decryption stages, each selected ciphernode reconstructs a
+canonical deadline watch from `CiphernodeSelected` and `E3StageChanged` during replay. After
+`EffectsEnabled`, it reads the deadline from `Interfold`, staggers its attempt by canonical party
+ID, confirms that the stage and failure condition still match, and calls `markE3Failed`. A canonical
+stage change cancels the old watch. If a node restarts after the deadline, the party-ID stagger is
+applied from restart time so all committee wallets do not submit at once.
 
 If an honest-node allocation is smaller than the node count, the refund manager credits it to the
 request-time treasury instead of creating zero-value claims.
@@ -97,31 +108,36 @@ Specific triggers:
 
 ### Requester Cancellation
 
-Only the address that created an E3 can call `cancelE3(e3Id)`. The call is valid in `Requested`,
-`CommitteeFinalized`, `KeyPublished`, and `CiphertextReady`. It records the current stage before it
-sets the terminal `Failed` stage and emits `RequesterCancelled` through the standard failure events.
+Only the address that created an E3 can call `cancelE3(e3Id)`. Cancellation is a recovery path for
+an asynchronous randomness request that did not produce a usable result by its frozen deadline. It
+is valid only while the E3 remains in `Requested`, the Registry reports no seed, and the randomness
+deadline has passed.
 
-Cancellation and settlement are separate. This lets the E3 stop even if a registry lookup or token
-transfer temporarily fails. Any account can later retry `processE3Failure(e3Id)`.
+The contract does not allow cancellation while a timely VRF result can still arrive. This prevents a
+requester from seeing a pending fulfillment and canceling only when the random word is unfavorable.
+The provider never re-requests or deletes randomness for an E3.
 
 ```text
 Requester calls: Interfold.cancelE3(e3Id)
 │
 ├─ require(msg.sender == request-time requester)
-├─ require(stage is active and not terminal)
+├─ require(stage == Requested)
+├─ require(Registry.sortitionSeed(e3Id) is unavailable)
+├─ require(block.timestamp > randomnessDeadline)
 ├─ _e3Stages[e3Id] = Failed
-├─ _e3FailureReasons[e3Id] = RequesterCancelled
+├─ _e3FailureReasons[e3Id] = CommitteeFormationTimeout
+├─ Registry.releaseCommittee(e3Id)
+│  → release candidate and request obligations
+│  → clear the active randomness provider
+│  → reject new E3 requests until governance restores a provider
+│  → a late provider callback cannot restart sortition
 └─ Emit E3StageChanged and E3Failed
 
-Settlement derives the pre-failure stage from the monotonic deadline markers
-that each lifecycle transition stored before cancellation:
-  Requested          → no completed node milestone
-  CommitteeFinalized → committee-formation allocation completed
-  KeyPublished       → committee formation and DKG completed
-  CiphertextReady    → committee formation and DKG completed
-
-The requester receives the remaining work allocation. The request-time protocol share is retained.
-No decryption allocation is paid unless the E3 completes normally.
+Settlement remains separate from cancellation. Any account can call `processE3Failure(e3Id)` after
+the state change. `CommitteeFormationTimeout` is supplier-paid, so the requester receives the full
+service fee escrow. No node or service protocol allocation is paid from that escrow because no
+committee work began. The flat randomness fee stays charged because a late response can still
+charge the protocol-funded subscription.
 ```
 
 ---
@@ -235,7 +251,7 @@ REQUESTER claims:
 ├─ require(msg.sender == requester from Interfold)
 ├─ require(!requester refund already claimed)
 ├─ requesterAmount is either:
-│   • 100% of fee escrow for ciphernodes/supply liability, or
+│   • 100% of service fee escrow for ciphernodes/supply liability, or
 │   • the unspent request-time work allocation for requester liability
 ├─ Transfer requesterAmount in the per-E3 fee token
 └─ Emit RefundClaimed(e3Id, requester, amount)
@@ -329,17 +345,23 @@ path is a compatibility re-export)
 EIP-712 digests, admission, vote/quorum decisions, and re-verification state. The actor owns timers
 and executes the workflow's returned `VoteAction`s.
 
-The AccusationManager is a per-E3 ephemeral actor created when `SortitionCommitteeFinalized` (the
-`ICiphernodeRegistry` event) fires. It bridges proof verification failures to on-chain slashing
-through an off-chain committee quorum protocol.
+The AccusationManager is a per-E3 actor created when `SortitionCommitteeFinalized` (the
+`ICiphernodeRegistry` event) fires. On restart, its extension recreates the actor from the persisted
+active committee before replay. It bridges proof verification failures to on-chain slashing through
+an off-chain committee quorum protocol.
 
 ```text
 LIFECYCLE:
-  Created by AccusationManagerExtension on SortitionCommitteeFinalized
+  Created by AccusationManagerExtension on SortitionCommitteeFinalized or context hydration
   → Stores committee list, threshold_m, this node's address + signer
-  → In-memory only (ephemeral — no persistence)
+  → Actor identity and committee inputs recover from durable committee state
+  → In-flight accusations, votes, and timers remain process-local
   → Destroyed by E3RequestComplete (Die signal)
 ```
+
+A restart does not reconstruct a partially collected vote tally. The actor can accept new valid
+messages after hydration, but peers must resend any vote that existed only in the old process.
+Signed accusation deadlines bound how long that recovery remains useful.
 
 #### Step 1: Local Proof Failure Detection
 
@@ -512,10 +534,12 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 │     → Equivocation remains local evidence until the on-chain format can
 │       prove each distinct signed payload
 │
-├─ 1. EFFECT AND REPLAY GATE:
-│     Before EffectsEnabled (startup replay), retain the intent without sending a transaction
+├─ 1. DURABLE OUTBOX AND EFFECT GATE:
+│     Store the intent in the versioned per-chain recovery outbox before policy or RPC work
 │     Coalesce by the contract replay tuple (chainId, e3Id, accused, proofType)
-│     After EffectsEnabled, release each retained intent once and track it in flight
+│     Before EffectsEnabled, retain the intent without sending a transaction
+│     After EffectsEnabled, release each retained intent and track it in flight
+│     Startup backfills a missing outbox from the EventStore
 │
 ├─ 2. READ THE PROOF-TYPE POLICY ON EVERY COMMITTEE NODE:
 │     reason = keccak256(abi.encodePacked(uint256(proofType)))
@@ -524,11 +548,12 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 │     ├─ Policy disabled:
 │     │   ├─ Do not submit a transaction that can only revert
 │     │   ├─ Publish durable CommitteeMemberExcluded { party_id: None }
+│     │   ├─ Clear the outbox only after that exclusion is observed
 │     │   └─ Stop waiting for the confirmed faulty member in this E3 only
 │     │       → No on-chain slash, ban, reward hold, or future-selection change is implied
 │     │
 │     ├─ Policy enabled but not configured for proof attestations:
-│     │   └─ Report the configuration error; do not invent an exclusion
+│     │   └─ Report a terminal configuration error; do not invent an exclusion
 │     │
 │     └─ Policy read fails:
 │         └─ Do not invent an exclusion; ranked voters retain the transaction path
@@ -560,9 +585,11 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 │     → On-chain verification happens (see Lane A below)
 │
 └─ 6. Handle result:
-     ├─ Success: log transaction hash
+     ├─ Confirmed receipt: log transaction hash and clear the outbox intent
+     ├─ Matching SlashExecuted or CommitteeMemberExcluded: clear the outbox intent
      ├─ DuplicateEvidence / stale committee attribution: terminal and logged as warning
-     └─ Other RPC or contract failures: reported and made eligible for a later retry event
+     └─ Temporary RPC, nonce, transport, or unknown failure: keep the outbox intent and retry
+        after 30 seconds
 ```
 
 ### Lane A: Attestation-Based Slashing (Permissionless, Atomic)
@@ -951,8 +978,8 @@ settleSlashedFunds(e3Id, proposalId):
        0, toHonestNodes)
 
 Design rationale:
-  Supplier/ciphernode failures already return 100% of the requester's fee
-  escrow. Ticket slashes compensate honest service providers in the slash
+  Supplier/ciphernode failures already return 100% of the requester's service
+  fee escrow. Ticket slashes compensate honest service providers in the slash
   asset itself. No trusted conversion price is needed, and requester-fault
   failures do not gain a slash-funded rebate for costs they caused.
 ```

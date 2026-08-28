@@ -22,6 +22,7 @@ export async function currentPricingConfig(interfold: Interfold) {
     decryptUtilizationBps: pricing.decryptUtilizationBps,
     minCommitteeSize: pricing.minCommitteeSize,
     minThreshold: pricing.minThreshold,
+    randomnessFlatFee: pricing.randomnessFlatFee,
   };
 }
 

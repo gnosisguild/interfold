@@ -16,7 +16,7 @@ export { ThresholdBfvParamsPresetNames } from './crypto/types'
 export type { ContractAddresses, E3, E3RequestParams } from './contracts/types'
 export { E3Stage, FailureReason, CommitteeSize, validateCommitteeSize } from './contracts/types'
 
-export { InterfoldEventType, RegistryEventType } from './events/types'
+export { InterfoldEventType, RandomnessProviderEventType, RegistryEventType } from './events/types'
 
 export type {
   AllEventTypes,
@@ -32,6 +32,11 @@ export type {
   CiphernodeAddedData,
   CiphernodeRemovedData,
   CommitteeRequestedData,
+  CommitteeRandomnessRequestedData,
+  RandomnessCircuitBreakerTrippedData,
+  RandomnessFulfilledData,
+  RandomnessProviderEvent,
+  RandomnessProviderEventCallback,
   CommitteePublishedData,
   CommitteeFinalizedData,
   InterfoldEventData,

@@ -17,7 +17,7 @@ import { InterfoldEventType, RegistryEventType } from '@interfold/sdk/events'
 import type { AllEventTypes, InterfoldEvent } from '@interfold/sdk/events'
 import { E3Stage } from '@interfold/sdk/contracts'
 import type { E3 } from '@interfold/sdk/contracts'
-import { createWalletClient, hexToBytes, http } from 'viem'
+import { createWalletClient, hexToBytes, http, parseAbi } from 'viem'
 import assert from 'assert'
 
 import { describe, expect, it } from 'vitest'
@@ -26,6 +26,8 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { anvil } from 'viem/chains'
 
 import { advanceAnvilTime, sleep } from './anvil-helpers'
+
+const registryReadAbi = parseAbi(['function sortitionSeed(uint256 e3Id) view returns (bool ready, uint256 seed)'])
 
 export function getContractAddresses() {
   return {
@@ -187,13 +189,14 @@ describe('Integration', () => {
     transport: http('http://localhost:8545'),
   })
 
-  it('should run an integration test', async () => {
+  it('completes an E3 from request through plaintext output', async () => {
     const { waitForEvent } = await setupEventListeners(sdk, store)
 
     const committeeSize = CommitteeSize.Minimum
-    // Input window length (seconds); also used as vitest wait budget per phase.
-    const duration = 120
-    const inputWindow = await calculateInputWindow(publicClient, duration)
+    const inputWindowDurationSeconds = 300
+    const phaseTimeoutMs = 180_000
+    const randomnessAcceptanceTimeoutMs = 30_000
+    const inputWindow = await calculateInputWindow(publicClient, inputWindowDurationSeconds)
     const computeProviderParams = encodeComputeProviderParams(
       DEFAULT_COMPUTE_PROVIDER_PARAMS,
       true, // Mock the compute provider parameters, return 32 bytes of 0x00
@@ -222,15 +225,13 @@ describe('Integration', () => {
     await sleep(1000)
 
     // REQUEST phase
-    const timeoutMs = duration * 1000
-
     const requestEvent = await waitForEvent(
       InterfoldEventType.E3_REQUESTED,
       async () => {
         console.log('Requested E3...')
         await sdk.requestE3(requestParams)
       },
-      timeoutMs,
+      phaseTimeoutMs,
     )
 
     state = store.get(requestEvent.data.e3Id)
@@ -243,16 +244,24 @@ describe('Integration', () => {
     const stageAfterRequest = await sdk.getE3Stage(state.e3Id)
     assert.strictEqual(stageAfterRequest, E3Stage.Requested, 'E3 stage should be Requested after requestE3')
 
-    // Ciphernodes submit tickets during the on-chain sortition window (10s). Anvil must mine so
-    // block.timestamp passes committeeDeadline before finalizeCommittee (see anvil-automine.mjs).
-    console.log('Waiting for ciphernode sortition tickets...')
-    await sleep(8000)
-    await advanceAnvilTime(publicClient, 15)
-    console.log('Advanced anvil past sortition deadline')
+    const randomnessWaitDeadline = Date.now() + randomnessAcceptanceTimeoutMs
+    for (;;) {
+      const [ready] = await publicClient.readContract({
+        address: contracts.ciphernodeRegistry,
+        abi: registryReadAbi,
+        functionName: 'sortitionSeed',
+        args: [state.e3Id],
+      })
+      if (ready) break
+      if (Date.now() >= randomnessWaitDeadline) {
+        throw new Error(`Registry did not accept delayed randomness for E3 ${state.e3Id} within ${randomnessAcceptanceTimeoutMs}ms`)
+      }
+      await sleep(250)
+    }
 
     // Ciphernodes will publish a public key within the COMMITTEE_PUBLISHED event
     console.log('Waiting for committee + DKG (CommitteePublished)...')
-    event = await waitForEvent(RegistryEventType.COMMITTEE_PUBLISHED, undefined, timeoutMs)
+    event = await waitForEvent(RegistryEventType.COMMITTEE_PUBLISHED, undefined, phaseTimeoutMs)
 
     const publicKeyBytes = hexToBytes(event.data.publicKey as `0x${string}`)
 
@@ -295,12 +304,19 @@ describe('Integration', () => {
     )
     await sdk.waitForTransaction(txHash)
 
-    const plaintextEvent = await waitForEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, undefined, timeoutMs)
+    const currentBlock = await publicClient.getBlock()
+    if (currentBlock.timestamp <= inputWindow[1]) {
+      const secondsUntilInputWindowCloses = Number(inputWindow[1] - currentBlock.timestamp + 1n)
+      await advanceAnvilTime(publicClient, secondsUntilInputWindowCloses)
+    }
+    console.log('Closed the input window after both inputs were confirmed')
+
+    const plaintextEvent = await waitForEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, undefined, phaseTimeoutMs)
 
     const result = decodePlaintextOutput(plaintextEvent.data.plaintextOutput)
     assert(result !== null, 'Failed to decode plaintext output')
 
     expect(BigInt(result)).toBe(num1 + num2)
     console.log('Answer was correct')
-  }, 9999999)
+  }, 600_000)
 })

@@ -65,6 +65,7 @@ describe("BondingRegistry", function () {
       usdcToken,
       slashingManager,
       mockCiphernodeRegistry,
+      nodeReleaseRegistry,
     } = sys;
     // Spec consumes the (mock) registry typed as the real interface.
     const ciphernodeRegistry = mockCiphernodeRegistry!;
@@ -91,6 +92,20 @@ describe("BondingRegistry", function () {
     await bondingRegistry
       .connect(operatorKey2)
       .setBondOwner(operator2OwnerAddress);
+    await nodeReleaseRegistry
+      .connect(operatorKey1)
+      .acknowledgeNodeRelease(
+        ethers.id("interfold.node.release:v1:test"),
+        1,
+        1,
+      );
+    await nodeReleaseRegistry
+      .connect(operatorKey2)
+      .acknowledgeNodeRelease(
+        ethers.id("interfold.node.release:v1:test"),
+        1,
+        1,
+      );
 
     return {
       bondingRegistry,

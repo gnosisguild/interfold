@@ -7,6 +7,7 @@ import { expect } from "chai";
 
 import {
   ACTIVE_CRYPTO_CONFIG_ID,
+  ADDRESS_ONE,
   DATA as data,
   deployInterfoldSystem,
   ethers,
@@ -29,7 +30,7 @@ describe("E3 Pricing", function () {
     decryptionPerNode: 300000n,
     publicationBase: 1000000n,
     verificationPerProof: 5000n,
-    protocolTreasury: ethers.ZeroAddress,
+    protocolTreasury: ADDRESS_ONE,
     marginBps: 1000,
     protocolShareBps: 0,
     dkgUtilizationBps: 2500,
@@ -37,6 +38,7 @@ describe("E3 Pricing", function () {
     decryptUtilizationBps: 2500,
     minCommitteeSize: 0,
     minThreshold: 0,
+    randomnessFlatFee: 1_000_000n,
   };
 
   // Convert ethers Result to a plain object that can be spread
@@ -56,6 +58,7 @@ describe("E3 Pricing", function () {
     decryptUtilizationBps: pc.decryptUtilizationBps,
     minCommitteeSize: pc.minCommitteeSize,
     minThreshold: pc.minThreshold,
+    randomnessFlatFee: pc.randomnessFlatFee,
   });
 
   const inputWindowDuration = 300;
@@ -143,7 +146,8 @@ describe("E3 Pricing", function () {
       baseFee += pc.publicationBase;
 
       const marginBps = pc.marginBps;
-      const expectedFee = (baseFee * (10000n + BigInt(marginBps))) / 10000n;
+      const serviceFee = (baseFee * (10000n + BigInt(marginBps))) / 10000n;
+      const expectedFee = serviceFee + pc.randomnessFlatFee;
 
       const actualFee = await interfold.getE3Quote(request);
       expect(actualFee).to.equal(expectedFee);
@@ -281,7 +285,10 @@ describe("E3 Pricing", function () {
         interfold.setFeeAssetConfig({
           token: tokenAddress,
           expectedDecimals: 6,
-          pricing,
+          pricing: {
+            ...pricing,
+            randomnessFlatFee: ethers.parseEther("25"),
+          },
         }),
       )
         .to.be.revertedWithCustomError(interfold, "FeeTokenDecimalsMismatch")
@@ -290,13 +297,35 @@ describe("E3 Pricing", function () {
       await interfold.setFeeAssetConfig({
         token: tokenAddress,
         expectedDecimals: 18,
-        pricing,
+        pricing: {
+          ...pricing,
+          randomnessFlatFee: ethers.parseEther("25"),
+        },
       });
       expect(await interfold.feeToken()).to.equal(tokenAddress);
       expect(await interfold.feeTokenDecimals()).to.equal(18);
+      expect((await interfold.getPricingConfig()).randomnessFlatFee).to.equal(
+        ethers.parseEther("25"),
+      );
       expect((await interfold.getPricingConfig()).publicationBase).to.equal(
         ethers.parseEther("1"),
       );
+    });
+
+    it("requires a flat randomness fee", async function () {
+      const { interfold } = await loadFixture(setup);
+      await expect(
+        interfold.setFeeAssetConfig({
+          token: await interfold.feeToken(),
+          expectedDecimals: await interfold.feeTokenDecimals(),
+          pricing: {
+            ...toPlainConfig(await interfold.getPricingConfig()),
+            randomnessFlatFee: 0,
+          },
+        }),
+      )
+        .to.be.revertedWithCustomError(interfold, "PaymentRequired")
+        .withArgs(0);
     });
 
     it("changes the fee returned by getE3Quote", async function () {
@@ -420,6 +449,35 @@ describe("E3 Pricing", function () {
         minThreshold: 2,
       });
       await (await interfold.setCommitteeThresholds(0, [2, 3])).wait();
+    });
+  });
+
+  describe("setRandomnessFlatFee()", function () {
+    it("updates only the flat randomness fee", async function () {
+      const { interfold, notTheOwner } = await loadFixture(setup);
+      const tokenBefore = await interfold.feeToken();
+      const decimalsBefore = await interfold.feeTokenDecimals();
+      const pricingBefore = toPlainConfig(await interfold.getPricingConfig());
+      const newFee = pricingBefore.randomnessFlatFee + 123n;
+
+      await expect(
+        interfold.connect(notTheOwner).setRandomnessFlatFee(newFee),
+      ).to.be.revertedWithCustomError(interfold, "OwnableUnauthorizedAccount");
+      await expect(interfold.setRandomnessFlatFee(0))
+        .to.be.revertedWithCustomError(interfold, "PaymentRequired")
+        .withArgs(0);
+      await expect(interfold.setRandomnessFlatFee(newFee)).to.emit(
+        interfold,
+        "FeeAssetConfigUpdated",
+      );
+
+      const pricingAfter = toPlainConfig(await interfold.getPricingConfig());
+      expect(await interfold.feeToken()).to.equal(tokenBefore);
+      expect(await interfold.feeTokenDecimals()).to.equal(decimalsBefore);
+      expect(pricingAfter).to.deep.equal({
+        ...pricingBefore,
+        randomnessFlatFee: newFee,
+      });
     });
   });
 
@@ -597,7 +655,10 @@ describe("E3 Pricing", function () {
       const expectedProtocol = (fee * 182n) / 10000n;
       const expectedCN = fee - expectedProtocol;
 
-      expect(treasuryAfter - treasuryBefore).to.equal(expectedProtocol);
+      expect(treasuryAfter - treasuryBefore).to.equal(
+        (await interfold.getPricingConfig()).randomnessFlatFee +
+          expectedProtocol,
+      );
       expect(ownerAfter - ownerBefore).to.equal(expectedCN);
     });
   });
@@ -608,7 +669,7 @@ describe("E3 Pricing", function () {
 
   describe("Default pricing parameters", function () {
     it("has correct default pricing config from initialize", async function () {
-      const { interfold } = await loadFixture(setup);
+      const { interfold, owner } = await loadFixture(setup);
       const pc = await interfold.getPricingConfig();
       expect(pc.keyGenFixedPerNode).to.equal(100000);
       expect(pc.keyGenPerEncryptionProof).to.equal(50000);
@@ -622,7 +683,8 @@ describe("E3 Pricing", function () {
       expect(pc.dkgUtilizationBps).to.equal(2500);
       expect(pc.computeUtilizationBps).to.equal(5000);
       expect(pc.decryptUtilizationBps).to.equal(2500);
-      expect(pc.protocolTreasury).to.equal(ethers.ZeroAddress);
+      expect(pc.protocolTreasury).to.equal(await owner.getAddress());
+      expect(pc.randomnessFlatFee).to.equal(1_000_000n);
       expect(pc.minCommitteeSize).to.equal(0);
       expect(pc.minThreshold).to.equal(0);
     });
@@ -725,7 +787,9 @@ describe("E3 Pricing", function () {
       baseFee += pc2.decryptionPerNode * h;
       if (h > 1n) baseFee += (pc2.coordinationPerPair * h * (h - 1n)) / 2n;
       baseFee += pc2.publicationBase;
-      const expectedFee = (baseFee * (10000n + BigInt(pc2.marginBps))) / 10000n;
+      const expectedFee =
+        (baseFee * (10000n + BigInt(pc2.marginBps))) / 10000n +
+        pc2.randomnessFlatFee;
 
       // Quote against the same request — only the timeout config changed.
       const actualFee = await interfold.getE3Quote(request);
@@ -741,7 +805,9 @@ describe("E3 Pricing", function () {
       oldBaseFee += pc2.decryptionPerNode * h;
       if (h > 1n) oldBaseFee += (pc2.coordinationPerPair * h * (h - 1n)) / 2n;
       oldBaseFee += pc2.publicationBase;
-      const oldFee = (oldBaseFee * (10000n + BigInt(pc2.marginBps))) / 10000n;
+      const oldFee =
+        (oldBaseFee * (10000n + BigInt(pc2.marginBps))) / 10000n +
+        pc2.randomnessFlatFee;
 
       // The new formula must price strictly higher when the old one truncated.
       expect(actualFee).to.be.gt(oldFee);

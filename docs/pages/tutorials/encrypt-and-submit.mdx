@@ -45,10 +45,10 @@ FEE_TOKEN_ADDRESS=0x...
 The BFV preset determines the encryption parameters. It must match the `paramSet` index used when
 the E3 was requested:
 
-| Preset name              | `paramSet` index | When to use                                  |
-| ------------------------ | ---------------- | -------------------------------------------- |
-| `INSECURE_THRESHOLD_512` | `0`              | Local development only — fast but not secure |
-| `SECURE_THRESHOLD_8192`  | `1`              | Production — full security guarantees        |
+| Preset name              | `paramSet` index | When to use                                      |
+| ------------------------ | ---------------- | ------------------------------------------------ |
+| `INSECURE_THRESHOLD_512` | `0`              | Local development and Sepolia — fast, not secure |
+| `SECURE_THRESHOLD_8192`  | `1`              | Production — full security guarantees            |
 
 ```typescript
 import { InterfoldSDK } from '@interfold/sdk'
@@ -63,13 +63,12 @@ const sdk = new InterfoldSDK({
   },
   chain: sepolia,
   // Must match the paramSet used when the E3 was requested
-  thresholdBfvParamsPresetName: 'SECURE_THRESHOLD_8192',
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
 })
 ```
 
-If you initialise the SDK with `INSECURE_THRESHOLD_512` but the E3 was requested with `paramSet: 1`
-(secure), the ciphertext will be encrypted under the wrong parameters and decryption will fail
-silently.
+Sepolia runs `INSECURE_THRESHOLD_512` / `paramSet: 0`. If the preset here and the `paramSet` of the
+E3 disagree, the ciphertext is encrypted under the wrong parameters and decryption fails silently.
 
 ---
 
@@ -117,6 +116,12 @@ generate a proof alongside the ciphertext:
 const { encryptedData, proof } = await sdk.encryptNumberAndGenProof(42n, publicKey)
 ```
 
+This uses the user-data-encryption circuits embedded in `@interfold/sdk`, which are compiled for
+`INSECURE_THRESHOLD_512` and a minimum-size committee. For any other preset or committee, or for a
+program that folds the encryption proof into an app circuit, compile your own circuits and call
+`encryptNumberAndGenInputs()` to get the witness — see
+[Proving: embedded circuits or your own](../sdk#proving-embedded-circuits-or-your-own).
+
 For CRISP specifically, the SDK handles this through `generateVoteProof()` which orchestrates
 multiple circuit executions (see [Custom Noir Circuits](./custom-zk-circuits)).
 
@@ -127,8 +132,8 @@ If you only need encryption (not the full SDK), import directly:
 ```typescript
 import { generatePublicKey, encryptNumber } from '@interfold/sdk/crypto'
 
-const pk = await generatePublicKey('SECURE_THRESHOLD_8192')
-const ct = await encryptNumber(42n, pk, 'SECURE_THRESHOLD_8192')
+const pk = await generatePublicKey('INSECURE_THRESHOLD_512')
+const ct = await encryptNumber(42n, pk, 'INSECURE_THRESHOLD_512')
 ```
 
 ---

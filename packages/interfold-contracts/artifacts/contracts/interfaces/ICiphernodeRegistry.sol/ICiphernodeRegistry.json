@@ -218,6 +218,22 @@
       "type": "error"
     },
     {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "provider",
+          "type": "address"
+        }
+      ],
+      "name": "InvalidRandomnessProvider",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidRandomnessRequestId",
+      "type": "error"
+    },
+    {
       "inputs": [],
       "name": "InvalidTicketNumber",
       "type": "error"
@@ -300,6 +316,54 @@
       "type": "error"
     },
     {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "unreleasedCommittees",
+          "type": "uint256"
+        }
+      ],
+      "name": "RandomnessConfigurationInUse",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "RandomnessConfigurationRequiresPause",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "provider",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "expected",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "actual",
+          "type": "address"
+        }
+      ],
+      "name": "RandomnessProviderRequesterMismatch",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "timeout",
+          "type": "uint256"
+        }
+      ],
+      "name": "RandomnessRequestTimeoutOutOfBounds",
+      "type": "error"
+    },
+    {
       "inputs": [],
       "name": "RegistryGenerationNotDrained",
       "type": "error"
@@ -313,7 +377,7 @@
         },
         {
           "internalType": "uint256",
-          "name": "entropyBlock",
+          "name": "requestId",
           "type": "uint256"
         }
       ],
@@ -656,6 +720,37 @@
           "type": "uint256"
         },
         {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "requestId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "provider",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "randomnessDeadline",
+          "type": "uint256"
+        }
+      ],
+      "name": "CommitteeRandomnessRequested",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
           "indexed": false,
           "internalType": "uint256",
           "name": "entropyBlock",
@@ -801,6 +896,57 @@
         }
       ],
       "name": "InterfoldSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "requestId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "randomnessProvider",
+          "type": "address"
+        }
+      ],
+      "name": "RandomnessCircuitBreakerTripped",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "randomnessProvider",
+          "type": "address"
+        }
+      ],
+      "name": "RandomnessProviderSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "randomnessRequestTimeout",
+          "type": "uint256"
+        }
+      ],
+      "name": "RandomnessRequestTimeoutSet",
       "type": "event"
     },
     {
@@ -1225,6 +1371,53 @@
     {
       "inputs": [
         {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "getSortitionRequest",
+      "outputs": [
+        {
+          "internalType": "uint32[2]",
+          "name": "threshold",
+          "type": "uint32[2]"
+        },
+        {
+          "internalType": "uint256",
+          "name": "requestBlock",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "committeeDeadline",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "ticketPrice",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "interfold",
+      "outputs": [
+        {
+          "internalType": "contract IInterfold",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "address",
           "name": "ciphernode",
           "type": "address"
@@ -1400,6 +1593,32 @@
       "type": "function"
     },
     {
+      "inputs": [],
+      "name": "randomnessProvider",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "randomnessRequestTimeout",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
       "inputs": [
         {
           "internalType": "uint256",
@@ -1528,6 +1747,32 @@
     {
       "inputs": [
         {
+          "internalType": "contract IRandomnessProvider",
+          "name": "provider",
+          "type": "address"
+        }
+      ],
+      "name": "setRandomnessProvider",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "timeout",
+          "type": "uint256"
+        }
+      ],
+      "name": "setRandomnessRequestTimeout",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "uint256",
           "name": "_sortitionSubmissionWindow",
           "type": "uint256"
@@ -1536,6 +1781,30 @@
       "name": "setSortitionSubmissionWindow",
       "outputs": [],
       "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "sortitionSeed",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "ready",
+          "type": "bool"
+        },
+        {
+          "internalType": "uint256",
+          "name": "seed",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
       "type": "function"
     },
     {
@@ -1602,5 +1871,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ICiphernodeRegistry.sol",
-  "buildInfoId": "solc-0_8_28-7d174de86a308108eba85a8ebc2203ff44654d12"
+  "buildInfoId": "solc-0_8_28-a9ff432c520a34187742acc5d51aa1e5b4a73f45"
 }

@@ -198,7 +198,8 @@ _updateOperatorStatus(operator):
   wasActive = operators[operator].active
 
   isNowActive = (
-    operators[operator].registered == true
+    nodeReleaseRegistry.isNodeReleaseReady(operator) == true
+    AND operators[operator].registered == true
     AND no authorized slashing manager has banned the operator
     AND operators[operator].ciphernodeBond >= ceil(requiredCiphernodeBond * ciphernodeBondActiveBps / 10000)
         // Default: ciphernodeBondActiveBps = 8000 (80%)
@@ -227,6 +228,11 @@ older policy. The Rust sortition state consumes the same `ConfigurationUpdated` 
 chain-local operators inactive until matching `OperatorActivationChanged` refresh events arrive.
 
 A completed ban or unban refreshes the affected registered operator immediately.
+
+A mandatory ciphernode release uses the same fail-closed refresh mechanism. Governance pauses and
+drains the protocol, raises the required release policy, and resets the active count to zero.
+Starting the compatible binary acknowledges its release and refreshes the operator. See
+[07_UPGRADES.md](07_UPGRADES.md).
 
 ---
 
@@ -626,6 +632,9 @@ doing nothing.
 
 ```text
 active = registered
+  AND nodeReleaseRegistry.isNodeReleaseReady(operator) == true
+      // The operator's acknowledged protocolVersion must equal the required value.
+      // The operator's acknowledged nodeGeneration must meet the required minimum.
   AND ciphernodeBond >= ceil(requiredCiphernodeBond * ciphernodeBondActiveBps / 10000)
   AND (ticketToken.balanceOf(operator) / ticketPrice) >= minTicketBalance
 ```

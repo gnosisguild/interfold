@@ -95,6 +95,40 @@ Run `check-config` before `deploy`. This action validates the network, required
 contract addresses, ProxyAdmin owner, and initial E3 program owner. It does not
 send a transaction.
 
+Committee sortition uses a Chainlink VRF v2.5 subscription through
+`ChainlinkVrfRandomnessProvider`. Set the coordinator, subscription ID, key
+hash, confirmation count, callback gas limit, payment mode, and response timeout
+in the `randomness` configuration. Also set `minimumSubscriptionBalance` in wei
+for native payment or juels for LINK. The subscription owner must equal
+`protocolOwner`. Deployment validation checks this balance, and the provider
+checks it again before each request. An underfunded request reverts before the
+protocol accepts the E3 payment. Use a dedicated subscription and monitor its
+balance because the floor does not reserve funds for concurrent requests or
+automatically replenish the subscription. The governance batch accepts provider
+ownership, adds the provider as a subscription consumer, and connects it to the
+Registry. The mainnet configuration requires a 1 ETH floor and waits 64 blocks
+before fulfillment. This confirmation window makes a request-block rewrite more
+expensive while remaining within the one-hour response timeout.
+
+This VRF sortition release supports Ethereum mainnet, Sepolia, and local
+development chains only. Deployment scripts, the production provider, and the
+ciphernode reject other chain IDs. Arbitrum support requires a later contract
+and node upgrade.
+
+Ciphernode releases use the on-chain `NodeReleaseRegistry`. A compatible rolling
+release keeps both compatibility values and needs no governance transaction. For
+a mandatory node-only fix, increase `node_generation`, pause and drain the
+protocol, then run `pnpm upgrade:node-release --action prepare --mandatory`.
+After enough upgraded nodes acknowledge the release, generate the checked
+unpause transaction with `pnpm upgrade:node-release --action resume`.
+
+If a request reaches its randomness deadline without a usable response, the
+Registry clears the active provider. This blocks every new E3 request and stops
+a withholding provider from creating repeated randomness draws. The Registry
+emits `RandomnessCircuitBreakerTripped` for monitoring. Governance must pause
+requests, investigate the subscription or provider, and call
+`setRandomnessProvider` before requests can resume.
+
 Set `protocolOwner` to the contract that owns and configures the protocol. Set
 the optional `safe` field to the same address only when the protocol owner is a
 Safe. The deploy action writes a governance transaction file. Use
@@ -161,25 +195,43 @@ ciphernodes. The planned launch uses sUSDS shares. Nodes can redeem their shares
 after an exit, while the protocol routes slashed shares through the slashed-fund
 paths.
 
-The launch pricing model is cost-plus:
+The launch pricing model separates node services from the VRF request:
 
 ```text
 modeled base cost = key generation + coordination + availability
                   + decryption + publication + verification
-gross E3 fee      = modeled base cost * (1 + marginBps / 10_000)
-treasury revenue  = gross E3 fee * protocolShareBps / 10_000
-CN reward pool    = gross E3 fee - treasury revenue
+service fee       = modeled base cost * (1 + marginBps / 10_000)
+total quote       = service fee + randomnessFlatFee
+treasury revenue  = randomnessFlatFee
+                  + service fee * protocolShareBps / 10_000
+CN reward pool    = service fee - service protocol share
 ```
 
 Launch defaults set `marginBps = 1000` and `protocolShareBps = 182`. In plain
 English: requests pay a 10% margin over modeled ciphernode cost, and the
-protocol treasury receives about 1.82% of the gross E3 fee. Because the treasury
-share is applied to the gross fee in-contract, 1.82% gross is approximately 20%
-of the 10% margin; the remaining fee is distributed to active committee nodes.
+protocol treasury receives about 1.82% of the service fee. Because the treasury
+share is applied to the service fee in-contract, 1.82% is approximately 20% of
+the 10% margin; the remaining fee is distributed to active committee nodes.
+
+The Ethereum launch configuration sets `randomnessFlatFee` to 5 USDS. The fee
+reimburses the DAO-funded Chainlink VRF subscription. It does not receive the
+service margin, and ciphernodes do not share it. The contract credits this fee
+to the request-time treasury when Chainlink accepts the randomness request.
+
+The 5 USDS value is a rounded long-term operating estimate. Actual requests can
+cost more or less because Ethereum gas prices and the ETH price change. The DAO
+subscription reserve absorbs this variance across requests. This estimate
+assumes that 1 USDS is worth 1 USD.
+
+The randomness fee is not part of service escrow. If randomness times out, the
+requester receives all service escrow, but the randomness fee stays charged. A
+late fulfillment can still charge the subscription after the E3 fails. If the
+Chainlink request itself reverts, the complete E3 request reverts and no fee is
+collected.
 
 Do not configure `protocolShareBps = 2000` unless the intent is for the treasury
-to receive 20% of the whole E3 fee. With a 10% margin, that would pay
-ciphernodes less than the modeled base cost.
+to receive 20% of the service fee. With a 10% margin, that would pay ciphernodes
+less than the modeled base cost.
 
 ## Localhost deployment
 

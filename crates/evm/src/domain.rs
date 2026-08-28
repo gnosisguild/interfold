@@ -38,6 +38,8 @@ pub(crate) mod log_timestamp;
 pub(crate) mod plaintext_publication;
 #[path = "publication_writing/workflow.rs"]
 pub(crate) mod publication_replay;
+#[path = "randomness_provider/events.rs"]
+pub(crate) mod randomness_provider_events;
 #[path = "chain_reader/reorg.rs"]
 pub(crate) mod reorg;
 #[path = "slashing_writing/workflow.rs"]

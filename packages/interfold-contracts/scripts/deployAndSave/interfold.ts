@@ -6,6 +6,8 @@
 import type { HardhatRuntimeEnvironment } from "hardhat/types/hre";
 
 import { Interfold, Interfold__factory as InterfoldFactory } from "../../types";
+import { localPricingConfig, pricingConfigFingerprint } from "../pricingConfig";
+import type { PricingConfig } from "../protocol/types";
 import { getProxyAdmin, verifyProxyAdminOwner } from "../proxy";
 import { readDeploymentArgs, storeDeploymentArgs } from "../utils";
 
@@ -30,6 +32,7 @@ export interface InterfoldArgs {
   feeToken?: string;
   feeTokenDecimals?: number;
   timeoutConfig?: E3TimeoutConfig;
+  pricingConfig?: PricingConfig;
   initialE3Program: string;
   hre: HardhatRuntimeEnvironment;
 }
@@ -48,6 +51,7 @@ export const deployAndSaveInterfold = async ({
   feeToken,
   feeTokenDecimals = 6,
   timeoutConfig,
+  pricingConfig: requestedPricingConfig,
   initialE3Program,
   hre,
 }: InterfoldArgs): Promise<{ interfold: Interfold }> => {
@@ -63,6 +67,12 @@ export const deployAndSaveInterfold = async ({
 
   const chain = hre.globalOptions.network;
   const preDeployedArgs = readDeploymentArgs("Interfold", chain);
+  const effectivePricingConfig = owner
+    ? (requestedPricingConfig ?? localPricingConfig(owner))
+    : undefined;
+  const effectivePricingFingerprint = effectivePricingConfig
+    ? pricingConfigFingerprint(effectivePricingConfig)
+    : undefined;
 
   if (
     !owner ||
@@ -80,6 +90,10 @@ export const deployAndSaveInterfold = async ({
       preDeployedArgs?.constructorArgs?.feeToken === feeToken &&
       preDeployedArgs?.constructorArgs?.feeTokenDecimals ===
         feeTokenDecimals.toString() &&
+      preDeployedArgs?.constructorArgs?.timeoutConfig ===
+        JSON.stringify(timeoutConfig) &&
+      preDeployedArgs?.constructorArgs?.pricingConfig ===
+        effectivePricingFingerprint &&
       preDeployedArgs?.constructorArgs?.initialE3Program === initialE3Program)
   ) {
     if (!preDeployedArgs?.address) {
@@ -90,6 +104,9 @@ export const deployAndSaveInterfold = async ({
       signer,
     );
     return { interfold: interfoldContract };
+  }
+  if (!effectivePricingConfig || !effectivePricingFingerprint) {
+    throw new Error("Interfold pricing configuration is required");
   }
 
   const pricingLibFactory = await ethers.getContractFactory(
@@ -140,23 +157,7 @@ export const deployAndSaveInterfold = async ({
     {
       token: feeToken,
       expectedDecimals: feeTokenDecimals,
-      pricing: {
-        keyGenFixedPerNode: 100000,
-        keyGenPerEncryptionProof: 50000,
-        coordinationPerPair: 10000,
-        availabilityPerNodePerSec: 50,
-        decryptionPerNode: 300000,
-        publicationBase: 1000000,
-        verificationPerProof: 5000,
-        protocolTreasury: "0x0000000000000000000000000000000000000000",
-        marginBps: 1000,
-        protocolShareBps: 0,
-        dkgUtilizationBps: 2500,
-        computeUtilizationBps: 5000,
-        decryptUtilizationBps: 2500,
-        minCommitteeSize: 0,
-        minThreshold: 0,
-      },
+      pricing: effectivePricingConfig,
     },
     maxDuration,
     timeoutConfig,
@@ -183,6 +184,8 @@ export const deployAndSaveInterfold = async ({
         feeTokenDecimals: feeTokenDecimals.toString(),
         maxDuration,
         timeoutConfig: JSON.stringify(timeoutConfig),
+        randomnessFlatFee: effectivePricingConfig.randomnessFlatFee,
+        pricingConfig: effectivePricingFingerprint,
         initialE3Program,
       },
       libraries: {

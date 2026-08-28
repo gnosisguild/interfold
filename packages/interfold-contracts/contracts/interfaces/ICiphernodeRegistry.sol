@@ -8,6 +8,7 @@ pragma solidity 0.8.28;
 import { IInterfold } from "./IInterfold.sol";
 import { IBondingRegistry } from "./IBondingRegistry.sol";
 import { IDkgFoldAttestationVerifier } from "./IDkgFoldAttestationVerifier.sol";
+import { IRandomnessProvider } from "./IRandomnessProvider.sol";
 
 /**
  * @title ICiphernodeRegistry
@@ -69,7 +70,9 @@ interface ICiphernodeRegistry {
         bool obligationsReleased;
     }
 
-    /// @notice This event MUST be emitted when a committee is selected for an E3.
+    /// @notice Legacy event retained so historical logs remain decodable.
+    /// @dev New requests emit {CommitteeRandomnessRequested}. Rust emits the durable
+    ///      committee request only after the Registry accepts the provider response.
     /// @param e3Id ID of the E3 for which the committee was selected.
     /// @param entropyBlock Future chain block whose hash supplies sortition entropy.
     /// @param threshold The viability threshold and total member count [H, N].
@@ -82,6 +85,14 @@ interface ICiphernodeRegistry {
         uint256 requestBlock,
         uint256 committeeDeadline,
         uint256 ticketPrice
+    );
+
+    /// @notice Emitted when an E3 requests asynchronous sortition randomness.
+    event CommitteeRandomnessRequested(
+        uint256 indexed e3Id,
+        uint256 indexed requestId,
+        address indexed provider,
+        uint256 randomnessDeadline
     );
 
     /// @notice This event MUST be emitted when a ticket is submitted for sortition
@@ -239,6 +250,19 @@ interface ICiphernodeRegistry {
     /// @param sortitionSubmissionWindow The submission window for the E3 sortition in seconds.
     event SortitionSubmissionWindowSet(uint256 sortitionSubmissionWindow);
 
+    /// @notice Emitted when the randomness provider changes.
+    event RandomnessProviderSet(address indexed randomnessProvider);
+
+    /// @notice Emitted when an expired response disables future randomness requests.
+    event RandomnessCircuitBreakerTripped(
+        uint256 indexed e3Id,
+        uint256 indexed requestId,
+        address indexed randomnessProvider
+    );
+
+    /// @notice Emitted when the maximum randomness wait changes.
+    event RandomnessRequestTimeoutSet(uint256 randomnessRequestTimeout);
+
     /// @notice Emitted whenever the registry-wide accusation vote validity window changes.
     /// @param accusationVoteValidity New validity window, in seconds.
     event AccusationVoteValiditySet(uint256 accusationVoteValidity);
@@ -287,8 +311,30 @@ interface ICiphernodeRegistry {
     /// @notice Committee deadline has been reached for this E3
     error CommitteeDeadlineReached();
 
-    /// @notice The committed block hash is not available yet or is outside the chain's history.
-    error SortitionSeedUnavailable(uint256 e3Id, uint256 entropyBlock);
+    /// @notice The E3's asynchronous randomness is not ready or arrived too late.
+    error SortitionSeedUnavailable(uint256 e3Id, uint256 requestId);
+
+    /// @notice The randomness provider does not identify this registry as its requester.
+    error RandomnessProviderRequesterMismatch(
+        address provider,
+        address expected,
+        address actual
+    );
+
+    /// @notice The configured randomness provider is not a contract.
+    error InvalidRandomnessProvider(address provider);
+
+    /// @notice A randomness setting cannot change while a committee is unreleased.
+    error RandomnessConfigurationInUse(uint256 unreleasedCommittees);
+
+    /// @notice Randomness settings can change only while new E3 requests are paused.
+    error RandomnessConfigurationRequiresPause();
+
+    /// @notice The randomness timeout is outside the permitted range.
+    error RandomnessRequestTimeoutOutOfBounds(uint256 timeout);
+
+    /// @notice The randomness provider returned the reserved zero request ID.
+    error InvalidRandomnessRequestId();
 
     /// @notice Committee has already been finalized for this E3
     error CommitteeAlreadyFinalized();
@@ -554,6 +600,9 @@ interface ICiphernodeRegistry {
     /// @param _interfold Address of the Interfold contract
     function setInterfold(IInterfold _interfold) external;
 
+    /// @notice Returns the Interfold controller for the active dependency generation.
+    function interfold() external view returns (IInterfold);
+
     /// @notice Sets the bonding registry contract address
     /// @dev Only callable by owner. Its exit delay must exceed the current
     ///      exit-delay floor.
@@ -564,9 +613,15 @@ interface ICiphernodeRegistry {
     /// @return The sortition submission window in seconds.
     function sortitionSubmissionWindow() external view returns (uint256);
 
+    /// @notice Returns the current asynchronous randomness provider.
+    function randomnessProvider() external view returns (address);
+
+    /// @notice Returns the maximum time allowed for a randomness response.
+    function randomnessRequestTimeout() external view returns (uint256);
+
     /// @notice Returns the duration that the exit delay must exceed.
-    /// @dev Includes the current submission window and the remaining time for
-    ///      the latest request-time committee deadline.
+    /// @dev Includes the current randomness and submission windows and the
+    ///      remaining time for the latest frozen committee deadline.
     /// @return floor Required duration in seconds.
     function exitDelayFloor() external view returns (uint256);
 
@@ -577,6 +632,12 @@ interface ICiphernodeRegistry {
     function setSortitionSubmissionWindow(
         uint256 _sortitionSubmissionWindow
     ) external;
+
+    /// @notice Sets the provider used by future committee requests.
+    function setRandomnessProvider(IRandomnessProvider provider) external;
+
+    /// @notice Sets the maximum wait for future randomness responses.
+    function setRandomnessRequestTimeout(uint256 timeout) external;
 
     /// @notice Returns registry-wide accusation vote validity window (seconds).
     function accusationVoteValidity() external view returns (uint256);
@@ -605,6 +666,24 @@ interface ICiphernodeRegistry {
     /// @param e3Id ID of the E3 computation
     /// @param ticketNumber The ticket number to submit
     function submitTicket(uint256 e3Id, uint256 ticketNumber) external;
+
+    /// @notice Returns the request-bound sortition seed when randomness is ready.
+    function sortitionSeed(
+        uint256 e3Id
+    ) external view returns (bool ready, uint256 seed);
+
+    /// @notice Returns the request context needed to process a fulfillment event.
+    function getSortitionRequest(
+        uint256 e3Id
+    )
+        external
+        view
+        returns (
+            uint32[2] memory threshold,
+            uint256 requestBlock,
+            uint256 committeeDeadline,
+            uint256 ticketPrice
+        );
 
     /// @notice Finalize the committee after submission window closes
     /// @dev If threshold not met, marks E3 as failed and returns false

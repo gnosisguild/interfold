@@ -11,19 +11,48 @@ import os from "os";
 import path from "path";
 
 import { deployProtocolContracts } from "../../scripts/protocol/deployContracts";
+import { currentNodeRelease } from "../../scripts/protocol/nodeRelease";
+import {
+  assertValidatedVrfDeploymentMatchesPlan,
+  assertVrfSubscription,
+  assertVrfUpgradePlanMatchesDeployment,
+  requireCiphernodeRestartAcknowledgement,
+  requirePlannedRandomnessConfig,
+} from "../../scripts/protocol/randomness";
 import {
   aragonAdminSafeBatch,
   aragonAdminSafeTransactions,
   safeTx,
 } from "../../scripts/protocol/safe";
 import { buildSafeTransactions } from "../../scripts/protocol/transactions";
-import type { ProtocolConfigFile } from "../../scripts/protocol/types";
+import type {
+  ProtocolConfigFile,
+  ProtocolDeployment,
+  VrfSortitionUpgradePlan,
+} from "../../scripts/protocol/types";
 import { loadConfig } from "../../scripts/protocol/values";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
 
 const { ethers } = await network.connect();
 
 describe("Protocol deployment", function () {
+  it("derives one release identity for the Rust and contract tooling", function () {
+    const release = currentNodeRelease();
+    expect(release.version).to.match(/^\d+\.\d+\.\d+/);
+    expect(release.protocolVersion).to.be.greaterThan(0);
+    expect(release.nodeGeneration).to.be.greaterThan(0);
+    expect(release.releaseId).to.equal(
+      ethersLib.id(`interfold.node.release:v1:${release.version}`),
+    );
+  });
+
+  it("requires a ciphernode restart acknowledgement before resume", function () {
+    expect(() => requireCiphernodeRestartAcknowledgement(false)).to.throw(
+      "Restart every ciphernode",
+    );
+    expect(() => requireCiphernodeRestartAcknowledgement(true)).not.to.throw();
+  });
+
   it("wraps DAO wiring actions in one Aragon Admin Safe transaction", async function () {
     const [adminPlugin, proposerSafe, targetA, targetB] =
       await ethers.getSigners();
@@ -141,6 +170,336 @@ describe("Protocol deployment", function () {
     }
   });
 
+  it("rejects a stale VRF upgrade plan", function () {
+    const config = JSON.parse(
+      fs.readFileSync(
+        new URL(
+          "../../deploy/protocol/mainnet-protocol.config.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as ProtocolConfigFile;
+    const deployment = JSON.parse(
+      fs.readFileSync(
+        new URL(
+          "../../deploy/protocol/mainnet-protocol.deployment.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as ProtocolDeployment;
+    const plan = {
+      name: config.name,
+      operator: ethersLib.ZeroAddress,
+      protocolOwner: config.protocolOwner,
+      registryProxy: deployment.ciphernodeRegistry,
+      registryProxyAdmin: deployment.ciphernodeRegistryProxyAdmin,
+      registryImplementation: ethersLib.ZeroAddress,
+      sortitionLibrary: ethersLib.ZeroAddress,
+      interfoldProxy: deployment.interfold,
+      interfoldProxyAdmin: deployment.interfoldProxyAdmin,
+      interfoldImplementation: ethersLib.ZeroAddress,
+      lifecycleLibrary: ethersLib.ZeroAddress,
+      pricingLibrary: ethersLib.ZeroAddress,
+      bondingProxy: config.bondingRegistryProxy,
+      bondingProxyAdmin: config.bondingRegistryProxyAdmin,
+      bondingImplementation: ethersLib.ZeroAddress,
+      bondingAssetLibrary: ethersLib.ZeroAddress,
+      bondingEligibilityLibrary: ethersLib.ZeroAddress,
+      bondingSlashingLibrary: ethersLib.ZeroAddress,
+      bondingRegistrationLibrary: ethersLib.ZeroAddress,
+      bondingOwnershipLibrary: ethersLib.ZeroAddress,
+      nodeReleaseRegistry: ethersLib.ZeroAddress,
+      nodeRelease: {
+        ...currentNodeRelease(),
+        releaseId: ethersLib.ZeroHash,
+      },
+      randomnessProvider: ethersLib.ZeroAddress,
+      randomness: { ...config.randomness! },
+      randomnessFlatFee: config.interfold.pricing.randomnessFlatFee,
+      randomnessProviderOwnershipAcceptanceRequired: false,
+      safeTransactions: "upgrade.json",
+    } satisfies VrfSortitionUpgradePlan;
+
+    expect(() =>
+      assertVrfUpgradePlanMatchesDeployment(config, deployment, plan, 1n),
+    ).not.to.throw();
+    expect(() =>
+      assertVrfUpgradePlanMatchesDeployment(
+        config,
+        deployment,
+        { ...plan, registryProxy: ethersLib.ZeroAddress },
+        1n,
+      ),
+    ).to.throw("registry proxy");
+    expect(() =>
+      assertVrfUpgradePlanMatchesDeployment(config, deployment, plan, 42161n),
+    ).to.throw("connected chain");
+  });
+
+  it("binds validation and resume to the prepared VRF settings", function () {
+    const config = JSON.parse(
+      fs.readFileSync(
+        new URL(
+          "../../deploy/protocol/mainnet-protocol.config.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as ProtocolConfigFile;
+    const deployment = JSON.parse(
+      fs.readFileSync(
+        new URL(
+          "../../deploy/protocol/mainnet-protocol.deployment.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as ProtocolDeployment;
+    const randomness = { ...config.randomness!, subscriptionId: "7" };
+    const plan = {
+      name: config.name,
+      operator: ethersLib.ZeroAddress,
+      protocolOwner: config.protocolOwner,
+      registryProxy: deployment.ciphernodeRegistry,
+      registryProxyAdmin: deployment.ciphernodeRegistryProxyAdmin,
+      registryImplementation: "0x0000000000000000000000000000000000000011",
+      sortitionLibrary: "0x0000000000000000000000000000000000000012",
+      interfoldProxy: deployment.interfold,
+      interfoldProxyAdmin: deployment.interfoldProxyAdmin,
+      interfoldImplementation: "0x0000000000000000000000000000000000000013",
+      lifecycleLibrary: "0x0000000000000000000000000000000000000014",
+      pricingLibrary: "0x0000000000000000000000000000000000000015",
+      bondingProxy: config.bondingRegistryProxy,
+      bondingProxyAdmin: config.bondingRegistryProxyAdmin,
+      bondingImplementation: "0x0000000000000000000000000000000000000017",
+      bondingAssetLibrary: "0x0000000000000000000000000000000000000018",
+      bondingEligibilityLibrary: "0x0000000000000000000000000000000000000019",
+      bondingSlashingLibrary: "0x0000000000000000000000000000000000000020",
+      bondingRegistrationLibrary: "0x0000000000000000000000000000000000000021",
+      bondingOwnershipLibrary: "0x0000000000000000000000000000000000000022",
+      nodeReleaseRegistry: "0x0000000000000000000000000000000000000023",
+      nodeRelease: {
+        ...currentNodeRelease(),
+        releaseId: ethersLib.ZeroHash,
+      },
+      randomnessProvider: "0x0000000000000000000000000000000000000016",
+      randomness,
+      randomnessFlatFee: config.interfold.pricing.randomnessFlatFee,
+      randomnessProviderOwnershipAcceptanceRequired: false,
+      safeTransactions: "upgrade.json",
+    } satisfies VrfSortitionUpgradePlan;
+
+    expect(requirePlannedRandomnessConfig(config, plan)).to.deep.equal(
+      randomness,
+    );
+    expect(() =>
+      requirePlannedRandomnessConfig(
+        {
+          ...config,
+          randomness: { ...config.randomness!, requestTimeout: "7200" },
+        },
+        plan,
+      ),
+    ).to.throw("config.randomness.requestTimeout");
+    expect(() =>
+      requirePlannedRandomnessConfig(
+        {
+          ...config,
+          interfold: {
+            ...config.interfold,
+            pricing: {
+              ...config.interfold.pricing,
+              randomnessFlatFee: "1",
+            },
+          },
+        },
+        plan,
+      ),
+    ).to.throw("config.interfold.pricing.randomnessFlatFee");
+
+    const validatedDeployment = {
+      ...deployment,
+      registrySortitionLib: plan.sortitionLibrary,
+      ciphernodeRegistryImplementation: plan.registryImplementation,
+      interfoldImplementation: plan.interfoldImplementation,
+      interfoldLifecycle: plan.lifecycleLibrary,
+      interfoldPricing: plan.pricingLibrary,
+      randomnessProvider: plan.randomnessProvider,
+      bondingRegistryImplementation: plan.bondingImplementation,
+      bondingAssetLib: plan.bondingAssetLibrary,
+      bondingEligibilityLib: plan.bondingEligibilityLibrary,
+      bondingSlashingLib: plan.bondingSlashingLibrary,
+      bondingRegistrationLib: plan.bondingRegistrationLibrary,
+      bondingOwnershipLib: plan.bondingOwnershipLibrary,
+      nodeReleaseRegistry: plan.nodeReleaseRegistry,
+      randomness: { ...plan.randomness },
+    };
+    expect(() =>
+      assertValidatedVrfDeploymentMatchesPlan(validatedDeployment, plan),
+    ).not.to.throw();
+    expect(() =>
+      assertValidatedVrfDeploymentMatchesPlan(
+        {
+          ...validatedDeployment,
+          interfoldImplementation: ethersLib.ZeroAddress,
+        },
+        plan,
+      ),
+    ).to.throw("deployment Interfold implementation");
+  });
+
+  it("rejects VRF timing that cannot satisfy protocol reservations", function () {
+    const source = new URL(
+      "../../deploy/protocol/mainnet-protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-protocol-vrf-timing-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+
+    try {
+      config.bonding.exitDelay = "4200";
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "exitDelay 4200 must be greater than sortitionSubmissionWindow 600 + randomnessRequestTimeout 3600",
+      );
+
+      config.bonding.exitDelay = "2592000";
+      config.randomness.requestTimeout = "900";
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "randomness.requestTimeout must be at least 1668 seconds",
+      );
+
+      config.randomness.requestTimeout = "3600";
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).not.to.throw();
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unsupported VRF parameters", async function () {
+    const [owner] = await ethers.getSigners();
+    if (!owner) throw new Error("owner signer missing");
+    const coordinator = await ethers.deployContract(
+      "ChainlinkVrfCoordinatorV2_5Mock",
+      [0, 0, ethers.parseEther("1")],
+    );
+    await coordinator.waitForDeployment();
+    await coordinator.createSubscription();
+    const [subscriptionId] = await coordinator.getActiveSubscriptionIds(0, 1);
+    if (!subscriptionId) throw new Error("subscription missing");
+    await coordinator.fundSubscription(subscriptionId, 1n);
+
+    const config = {
+      chainId: 1,
+      protocolOwner: await owner.getAddress(),
+      randomness: {
+        coordinator: await coordinator.getAddress(),
+        subscriptionId: subscriptionId.toString(),
+        keyHash: `0x${"11".repeat(32)}`,
+        requestConfirmations: 1,
+        callbackGasLimit: 2_500_000,
+        nativePayment: false,
+        minimumSubscriptionBalance: "1",
+        requestTimeout: "3600",
+      },
+    } as ProtocolConfigFile;
+
+    await assertVrfSubscription(ethers, config);
+    await expect(
+      assertVrfSubscription(ethers, {
+        ...config,
+        randomness: { ...config.randomness!, requestConfirmations: 0 },
+      }),
+    ).to.be.rejectedWith("below the coordinator minimum");
+    await expect(
+      assertVrfSubscription(ethers, {
+        ...config,
+        randomness: { ...config.randomness!, callbackGasLimit: 2_500_001 },
+      }),
+    ).to.be.rejectedWith("exceeds the coordinator maximum");
+    await expect(
+      assertVrfSubscription(ethers, {
+        ...config,
+        randomness: { ...config.randomness!, keyHash: ethersLib.ZeroHash },
+      }),
+    ).to.be.rejectedWith("keyHash is not registered");
+    await expect(
+      assertVrfSubscription(ethers, {
+        ...config,
+        randomness: {
+          ...config.randomness!,
+          minimumSubscriptionBalance: "2",
+        },
+      }),
+    ).to.be.rejectedWith("balance 1 is below the configured minimum 2");
+
+    const nativeConfig = {
+      ...config,
+      randomness: {
+        ...config.randomness!,
+        nativePayment: true,
+      },
+    };
+    await expect(
+      assertVrfSubscription(ethers, nativeConfig),
+    ).to.be.rejectedWith("native balance 0 is below the configured minimum 1");
+    await coordinator.fundSubscriptionWithNative(subscriptionId, {
+      value: 1n,
+    });
+    await assertVrfSubscription(ethers, nativeConfig);
+  });
+
+  it("rejects Arbitrum VRF config", function () {
+    const source = new URL(
+      "../../deploy/protocol/mainnet-protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-protocol-chain-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+
+    try {
+      config.chainId = 42161;
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "VRF sortition supports Ethereum mainnet, Sepolia, and local development chains only",
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an oversized VRF balance floor", function () {
+    const source = new URL(
+      "../../deploy/protocol/mainnet-protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-protocol-balance-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+
+    try {
+      config.randomness.minimumSubscriptionBalance = (1n << 96n).toString();
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "randomness.minimumSubscriptionBalance must be a positive uint96 value",
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("normalizes the optional escrow votes adapter", function () {
     const source = new URL(
       "../../deploy/protocol/example.protocol.config.json",
@@ -225,8 +584,9 @@ describe("Protocol deployment", function () {
   });
 
   it("uses separate fee and ticket collateral tokens", async function () {
-    const [operator, safe, bondingProxy, bondingProxyAdmin] =
-      await ethers.getSigners();
+    const [operator, safe, bondingProxyAdmin] = await ethers.getSigners();
+    const bondingProxy = await ethers.deployContract("MockBondingRegistry");
+    await bondingProxy.waitForDeployment();
     const tokenFactory = await ethers.getContractFactory(
       "MockFeeOnTransferToken",
     );
@@ -253,6 +613,18 @@ describe("Protocol deployment", function () {
       "DkgFoldAttestationVerifier",
     );
     await dkgFoldAttestationVerifier.waitForDeployment();
+    const coordinator: any = await ethers.deployContract(
+      "ChainlinkVrfCoordinatorV2_5Mock",
+      [0, 0, ethers.parseEther("1")],
+    );
+    await coordinator.waitForDeployment();
+    await coordinator.connect(safe).createSubscription();
+    const [subscriptionId] = await coordinator.getActiveSubscriptionIds(0, 1);
+    if (!subscriptionId) throw new Error("subscription missing");
+    await coordinator.fundSubscription(
+      subscriptionId,
+      ethers.parseEther("100"),
+    );
 
     const config = JSON.parse(
       fs.readFileSync(
@@ -280,6 +652,16 @@ describe("Protocol deployment", function () {
       dkgFoldAttestationVerifier: await dkgFoldAttestationVerifier.getAddress(),
     };
     config.deployMockCiphertextVerifier = true;
+    config.randomness = {
+      coordinator: await coordinator.getAddress(),
+      subscriptionId: subscriptionId.toString(),
+      keyHash: `0x${"11".repeat(32)}`,
+      requestConfirmations: 3,
+      callbackGasLimit: 500_000,
+      nativePayment: false,
+      minimumSubscriptionBalance: "1",
+      requestTimeout: "3600",
+    };
 
     const result = await deployProtocolContracts(ethers, operator, config);
     const ticket = await ethers.getContractAt(
@@ -313,6 +695,7 @@ describe("Protocol deployment", function () {
       await dkgFoldAttestationVerifier.getAddress(),
     );
     expect(result.contracts.ciphertextVerifier).to.match(/^0x[0-9a-fA-F]{40}$/);
+    expect(result.contracts.randomnessProvider).to.match(/^0x[0-9a-fA-F]{40}$/);
     for (const verifier of [
       result.contracts.decryptionVerifier,
       result.contracts.pkVerifier,
@@ -371,5 +754,42 @@ describe("Protocol deployment", function () {
     expect(ciphertextTx[0].data.toLowerCase()).to.contain(
       result.contracts.ciphertextVerifier!.slice(2).toLowerCase(),
     );
+
+    const registry = await ethers.getContractAt(
+      "CiphernodeRegistryOwnable",
+      result.contracts.ciphernodeRegistry,
+    );
+    const randomnessProvider = await ethers.getContractAt(
+      "ChainlinkVrfRandomnessProvider",
+      result.contracts.randomnessProvider,
+    );
+    expect(await randomnessProvider.minimumSubscriptionBalance()).to.equal(1);
+    const randomnessCalls = [
+      [
+        result.contracts.randomnessProvider,
+        randomnessProvider.interface.getFunction("acceptOwnership")!.selector,
+      ],
+      [
+        await coordinator.getAddress(),
+        coordinator.interface.getFunction("addConsumer")!.selector,
+      ],
+      [
+        result.contracts.ciphernodeRegistry,
+        registry.interface.getFunction("setRandomnessRequestTimeout")!.selector,
+      ],
+      [
+        result.contracts.ciphernodeRegistry,
+        registry.interface.getFunction("setRandomnessProvider")!.selector,
+      ],
+    ] as const;
+    for (const [target, selector] of randomnessCalls) {
+      expect(
+        txs.filter(
+          (tx) =>
+            tx.to.toLowerCase() === target.toLowerCase() &&
+            tx.data.startsWith(selector),
+        ),
+      ).to.have.lengthOf(1);
+    }
   });
 });

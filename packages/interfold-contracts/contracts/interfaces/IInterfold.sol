@@ -70,7 +70,8 @@ interface IInterfold {
         ComputeTimeout,
         ComputeProviderExpired,
         ComputeProviderFailed,
-        /// @dev Requester-initiated cancellation of an active E3.
+        /// @dev Reserved for historical ABI compatibility. VRF-era requests can only
+        ///      be cancelled after a randomness timeout and use CommitteeFormationTimeout.
         RequesterCancelled,
         DecryptionTimeout,
         DecryptionInvalidShares,
@@ -115,6 +116,7 @@ interface IInterfold {
         uint16 decryptUtilizationBps;
         uint32 minCommitteeSize;
         uint32 minThreshold;
+        uint192 randomnessFlatFee;
     }
 
     /// @notice Fee asset and every raw-unit price denominated in that asset.
@@ -223,7 +225,7 @@ interface IInterfold {
         uint256 amount
     );
 
-    /// @notice Emitted when the protocol-treasury share is credited for later pull.
+    /// @notice Emitted when a randomness fee or protocol share is credited for later pull.
     /// @param e3Id The ID of the E3 computation.
     /// @param treasury The treasury address credited (snapshotted at request time).
     /// @param token The ERC20 fee token used for this E3.
@@ -235,7 +237,7 @@ interface IInterfold {
         uint256 amount
     );
 
-    /// @notice Emitted when a treasury withdraws its accrued protocol share.
+    /// @notice Emitted when a treasury withdraws its accrued credits.
     /// @param treasury The treasury address pulling its credits.
     /// @param token The ERC20 token transferred.
     /// @param amount The amount transferred.
@@ -457,7 +459,7 @@ interface IInterfold {
     /// @notice Caller is not the requester that created the E3.
     error NotRequester(uint256 e3Id, address caller);
 
-    /// @notice The E3 is not in an active stage that the requester can cancel.
+    /// @notice The E3 cannot be cancelled before its randomness timeout or after a seed exists.
     error E3NotCancellable(uint256 e3Id, E3Stage stage);
 
     /// @notice Thrown when a committee publishes its key after the DKG deadline.
@@ -645,6 +647,11 @@ interface IInterfold {
     ///      must transfer exact amounts and must not rebase account balances.
     function setFeeAssetConfig(FeeAssetConfig calldata config) external;
 
+    /// @notice Sets only the non-refundable randomness fee.
+    /// @dev Preserves the fee token, token scale, treasury, and service prices.
+    /// @param randomnessFlatFee The fee-token amount charged for one accepted randomness request.
+    function setRandomnessFlatFee(uint192 randomnessFlatFee) external;
+
     /// @notice Add or remove a token from the fee-token allow-list.
     /// @dev Owner-only. The contract `feeToken()` must be on the allow-list for `request()` to succeed.
     /// @param token The ERC20 token.
@@ -707,7 +714,7 @@ interface IInterfold {
     /// @return e3 The struct representing the requested E3.
     function getE3(uint256 e3Id) external view returns (E3 memory e3);
 
-    /// @notice This function returns the fee of an E3
+    /// @notice Returns the service fee and flat randomness fee for an E3.
     /// @dev This function MUST revert if the E3 parameters are invalid.
     /// @param e3Params the struct representing the E3 request parameters
     /// @return fee the fee of the E3
@@ -809,9 +816,10 @@ interface IInterfold {
     /// @return reason The failure reason
     function markE3Failed(uint256 e3Id) external returns (FailureReason reason);
 
-    /// @notice Cancel an active E3 and preserve payment for completed work.
-    /// @dev Only the original requester can cancel. Refund settlement remains
-    ///      permissionless through {processE3Failure}.
+    /// @notice Cancel a request after its randomness request expires without a usable result.
+    /// @dev Only the original requester can cancel. The failure is classified as a committee
+    ///      formation timeout, and refund settlement remains permissionless through
+    ///      {processE3Failure}.
     /// @param e3Id The E3 ID.
     function cancelE3(uint256 e3Id) external;
 

@@ -8,10 +8,12 @@ import {
   readVkRecursiveHash,
 } from "../utils";
 import { ADDRESS_ONE } from "./constants";
+import { deployNodeReleaseRegistry } from "./nodeRelease";
 import { ensurePoseidonT3 } from "./poseidon";
 import { deployProxy } from "./proxies";
+import { deployRandomnessProvider } from "./randomness";
 import type { ProtocolConfigFile, ProtocolDeployResult } from "./types";
-import { deployedAddress, pricingConfig, timeoutConfig } from "./values";
+import { deployedAddress, feeAssetConfig, timeoutConfig } from "./values";
 
 export async function deployProtocolContracts(
   ethers: any,
@@ -82,6 +84,13 @@ export async function deployProtocolContracts(
     ]),
   );
 
+  const randomness = await deployRandomnessProvider(
+    ethers,
+    operator,
+    config,
+    registryProxy.proxy,
+  );
+
   const pricingLibFactory = await ethers.getContractFactory("InterfoldPricing");
   const pricingLib = await pricingLibFactory.deploy();
   await pricingLib.waitForDeployment();
@@ -111,11 +120,7 @@ export async function deployProtocolContracts(
       registryProxy.proxy,
       config.bondingRegistryProxy,
       ADDRESS_ONE,
-      {
-        token: config.feeToken,
-        expectedDecimals: config.feeTokenDecimals,
-        pricing: pricingConfig(config.interfold.pricing),
-      },
+      feeAssetConfig(config),
       BigInt(config.interfold.maxDuration),
       timeoutConfig(config.interfold.timeoutConfig),
       initialE3Program,
@@ -182,6 +187,14 @@ export async function deployProtocolContracts(
   const bondingImpl = await bondingFactory.deploy();
   await bondingImpl.waitForDeployment();
 
+  const nodeRelease = await deployNodeReleaseRegistry(
+    ethers,
+    config.protocolOwner,
+    config.bondingRegistryProxy,
+    registryProxy.proxy,
+  );
+  const nodeReleaseRegistry = nodeRelease.address;
+
   // Bound to the proxy, not the implementation: the proxy is the address that calls `sync`, and
   // `BondedCheckpoints` accepts writes from exactly one address. The registry is pointed at this
   // contract by a `setBondedCheckpoints` transaction in the governance batch, after `initialize`.
@@ -218,6 +231,7 @@ export async function deployProtocolContracts(
       slashingEvidenceLib,
       poseidonT3,
       registrySortitionLib,
+      ...randomness,
       ciphernodeRegistry: registryProxy.proxy,
       ciphernodeRegistryImplementation,
       ciphernodeRegistryProxyAdmin: registryProxy.proxyAdmin,
@@ -235,6 +249,7 @@ export async function deployProtocolContracts(
       bondingSlashingLib,
       bondingRegistrationLib,
       bondingOwnershipLib,
+      nodeReleaseRegistry,
       bondedCheckpoints,
       initialE3Program,
       ...deployedVerifiers,
@@ -248,6 +263,7 @@ export async function deployProtocolContracts(
       registry: registryFactory.interface,
       interfold: interfoldFactory.interface,
       bonding: bondingFactory.interface,
+      nodeRelease: nodeRelease.interface,
     },
   };
 }

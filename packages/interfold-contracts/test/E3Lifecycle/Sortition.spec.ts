@@ -105,6 +105,7 @@ async function deployStack() {
     decryptUtilizationBps: 2500,
     minCommitteeSize: 0,
     minThreshold: 0,
+    randomnessFlatFee: 1n,
   });
 
   await feeToken
@@ -214,19 +215,8 @@ describe("Sortition & E3 lifecycle", function () {
       const tx = await makeRequest();
       const receipt = await tx.wait();
       const block = await ethers.provider.getBlock(receipt!.blockNumber);
-
-      const iface = ciphernodeRegistry.interface;
-      const evt = receipt!.logs
-        .map((l) => {
-          try {
-            return iface.parseLog(l);
-          } catch {
-            return null;
-          }
-        })
-        .find((p) => p && p.name === "CommitteeRequested");
-      expect(evt, "CommitteeRequested not emitted").to.not.equal(null);
-      const requestBlock = evt!.args.requestBlock as bigint;
+      const { requestBlock } =
+        await ciphernodeRegistry.getSortitionRequest(firstE3Id);
       expect(requestBlock).to.equal(BigInt(block!.timestamp));
       expect(requestBlock).to.not.equal(BigInt(receipt!.blockNumber));
     });
@@ -341,20 +331,10 @@ describe("Sortition & E3 lifecycle", function () {
       await mine(1);
 
       const tx = await makeRequest();
-      const receipt = await tx.wait();
+      await tx.wait();
       const e3Id = firstE3Id;
-
-      const iface = ciphernodeRegistry.interface;
-      const evt = receipt!.logs
-        .map((l) => {
-          try {
-            return iface.parseLog(l);
-          } catch {
-            return null;
-          }
-        })
-        .find((p) => p && p.name === "CommitteeRequested");
-      const requestBlock = evt!.args.requestBlock as bigint;
+      const { requestBlock } =
+        await ciphernodeRegistry.getSortitionRequest(e3Id);
 
       // Now the latecomer adds tickets *after* requestBlock — the snapshot
       // at requestBlock - 1 should still be zero.

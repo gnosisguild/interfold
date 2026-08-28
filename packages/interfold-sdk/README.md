@@ -24,7 +24,7 @@ pnpm add @interfold/sdk
 ## Quick Start
 
 ```typescript
-import { InterfoldSDK, InterfoldEventType, RegistryEventType } from '@interfold/sdk'
+import { CommitteeSize, InterfoldSDK, InterfoldEventType, RegistryEventType } from '@interfold/sdk'
 import { createPublicClient, createWalletClient, http, custom } from 'viem'
 import { sepolia } from 'viem/chains'
 
@@ -49,8 +49,8 @@ const sdk = new InterfoldSDK({
     feeToken: '0x...', // Your ERC-20 fee token address
   },
   chain: sepolia,
-  // Use 'SECURE_THRESHOLD_8192' for production; 'INSECURE_THRESHOLD_512' for local dev only
-  thresholdBfvParamsPresetName: 'SECURE_THRESHOLD_8192',
+  // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
 })
 
 // Listen to events with the unified event system
@@ -58,19 +58,24 @@ sdk.onInterfoldEvent(InterfoldEventType.E3_REQUESTED, (event) => {
   console.log('E3 Requested:', event.data)
 })
 
-sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_REQUESTED, (event) => {
-  console.log('Committee Requested:', event.data)
+sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_RANDOMNESS_REQUESTED, (event) => {
+  console.log('Committee randomness requested:', event.data)
 })
 
 // Interact with contracts
-const hash = await sdk.requestE3({
-  threshold: [1, 3],
-  inputWindow: [BigInt(0), BigInt(100)],
+const now = BigInt(Math.floor(Date.now() / 1000))
+const requestParams = {
+  committeeSize: CommitteeSize.Minimum,
+  inputWindow: [now, now + 300n] as const,
   e3Program: '0x...',
-  e3ProgramParams: '0x...',
+  paramSet: 0, // Insecure512 for development
   computeProviderParams: '0x...',
   customParams: '0x...',
-})
+}
+const quote = await sdk.getE3Quote(requestParams)
+const approvalHash = await sdk.approveFeeToken(quote)
+await sdk.waitForTransaction(approvalHash)
+const hash = await sdk.requestE3({ ...requestParams, maxFee: quote })
 ```
 
 ### Factory Method
@@ -90,8 +95,8 @@ const sdk = InterfoldSDK.create({
   },
   chain: sepolia,
   privateKey: '0x...', // optional — omit for read-only
-  // Use 'SECURE_THRESHOLD_8192' for production; 'INSECURE_THRESHOLD_512' for local dev only
-  thresholdBfvParamsPresetName: 'SECURE_THRESHOLD_8192',
+  // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
 })
 ```
 
@@ -137,17 +142,15 @@ enum InterfoldEventType {
   PLAINTEXT_OUTPUT_PUBLISHED = 'PlaintextOutputPublished',
 
   // E3 Program Management
-  E3_PROGRAM_ENABLED = 'E3ProgramEnabled',
-  E3_PROGRAM_DISABLED = 'E3ProgramDisabled',
+  E3_PROGRAM_REGISTERED = 'E3ProgramRegistered',
 
   // Encryption Scheme Management
   ENCRYPTION_SCHEME_ENABLED = 'EncryptionSchemeEnabled',
-  ENCRYPTION_SCHEME_DISABLED = 'EncryptionSchemeDisabled',
 
   // Configuration
   CIPHERNODE_REGISTRY_SET = 'CiphernodeRegistrySet',
   MAX_DURATION_SET = 'MaxDurationSet',
-  ALLOWED_E3_PROGRAMS_PARAMS_SET = 'AllowedE3ProgramsParamsSet',
+  PARAM_SET_REGISTERED = 'ParamSetRegistered',
   OWNERSHIP_TRANSFERRED = 'OwnershipTransferred',
   INITIALIZED = 'Initialized',
 }
@@ -157,14 +160,44 @@ enum InterfoldEventType {
 
 ```typescript
 enum RegistryEventType {
+  // On-chain legacy event retained only for pre-VRF registry logs. The
+  // ciphernode runtime creates its separate durable CommitteeRequested event
+  // after the Registry accepts a VRF response.
   COMMITTEE_REQUESTED = 'CommitteeRequested',
+  COMMITTEE_RANDOMNESS_REQUESTED = 'CommitteeRandomnessRequested',
+  RANDOMNESS_CIRCUIT_BREAKER_TRIPPED = 'RandomnessCircuitBreakerTripped',
   COMMITTEE_PUBLISHED = 'CommitteePublished',
-  COMMITTEE_FINALIZED = 'CommitteeFinalized',
+  COMMITTEE_FINALIZED = 'SortitionCommitteeFinalized',
   INTERFOLD_SET = 'InterfoldSet',
   OWNERSHIP_TRANSFERRED = 'OwnershipTransferred',
   INITIALIZED = 'Initialized',
 }
 ```
+
+### Randomness Provider Events
+
+The provider address is frozen for each E3 and can change after governance rotation, so it is not
+part of the static SDK contract addresses. Read `provider`, `requestId`, and `e3Id` from
+`CommitteeRandomnessRequested`, then watch that provider through the main SDK:
+
+```typescript
+await sdk.onRandomnessProviderEvent(
+  provider,
+  RandomnessProviderEventType.RANDOMNESS_FULFILLED,
+  ({ data }) => {
+    console.log(data.requestId, data.e3Id, data.fulfilledAt)
+  },
+)
+```
+
+Use `sdk.getHistoricalRandomnessProviderEvents` with explicit block bounds to recover earlier
+fulfillments. Start the live watcher at `historicalToBlock + 1n` so the historical and live ranges
+do not overlap. Historical reads are split into bounded RPC queries, and live watchers suppress
+duplicate delivery of the same log. `RandomnessFulfilled` proves that the provider stored a
+response. The Registry remains authoritative about whether that response was timely and usable. If
+the listener config does not define `fromBlock`, the history method requires it as an argument.
+Subscribers that share one provider and event watcher must use the same explicit `fromBlock`, or
+omit it to join the active watcher.
 
 ### Event Data Structure
 
@@ -209,8 +242,8 @@ function MyComponent() {
       feeToken: '0x...',
     },
     autoConnect: true,
-    // Use 'SECURE_THRESHOLD_8192' for production; 'INSECURE_THRESHOLD_512' for local dev only
-    thresholdBfvParamsPresetName: 'SECURE_THRESHOLD_8192',
+    // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production
+    thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
   })
 
   useEffect(() => {
@@ -272,8 +305,8 @@ import {
   getThresholdBfvParamsSet,
 } from '@interfold/sdk'
 
-// Use 'SECURE_THRESHOLD_8192' for production; 'INSECURE_THRESHOLD_512' for local dev only
-const presetName = 'SECURE_THRESHOLD_8192'
+// 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production
+const presetName = 'INSECURE_THRESHOLD_512'
 
 const publicKey = await generatePublicKey(presetName)
 const encrypted = await encryptNumber(42n, publicKey, presetName)
@@ -311,13 +344,14 @@ await sdk.approveFeeToken(amount: bigint);
 
 // Request a new E3 computation
 await sdk.requestE3({
-  threshold: [number, number],
+  committeeSize: CommitteeSize.Minimum,
   inputWindow: [bigint, bigint],
   e3Program: `0x${string}`,
-  e3ProgramParams: `0x${string}`,
+  paramSet: 0,
   computeProviderParams: `0x${string}`,
-  customParams?: `0x${string}`,
-  gasLimit?: bigint
+  customParams: '0x',
+  maxFee: amount,
+  gasLimit: 1_500_000n
 });
 
 // Publish ciphertext output
@@ -331,9 +365,9 @@ const stage = await sdk.getE3Stage(e3Id: bigint);
 const reason = await sdk.getFailureReason(e3Id: bigint);
 ```
 
-The original requester can cancel an E3 while it is in `Requested`, `CommitteeFinalized`,
-`KeyPublished`, or `CiphertextReady`. Operators retain the configured value of completed milestones,
-and the remaining work allocation becomes claimable through the refund manager.
+The original requester can cancel only while the E3 is `Requested`, after the randomness deadline,
+and only if no timely VRF result is usable. A valid result disables cancellation. The failure path
+returns all service fee escrow and keeps the flat randomness fee charged.
 
 ```ts
 const hash = await sdk.cancelE3(e3Id)
@@ -434,13 +468,35 @@ interface SDKConfig {
 `thresholdBfvParamsPresetName` selects the BFV parameter set used for encryption. It must match the
 on-chain `paramSet` index registered in the Interfold contract:
 
-| Preset name                | On-chain `paramSet` index | Use case                                                                                                    |
-| -------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `'INSECURE_THRESHOLD_512'` | `0`                       | Local development and testing only — small polynomial degree (N=512), fast but not cryptographically secure |
-| `'SECURE_THRESHOLD_8192'`  | `1`                       | Production — full security parameters (N=8192, L=4 CRT moduli)                                              |
+| Preset name                | On-chain `paramSet` index | Use case                                                                                               |
+| -------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `'INSECURE_THRESHOLD_512'` | `0`                       | Local development and Sepolia — small polynomial degree (N=512), fast but not cryptographically secure |
+| `'SECURE_THRESHOLD_8192'`  | `1`                       | Production — full security parameters (N=8192, L=3 CRT moduli)                                         |
 
-Always use `'SECURE_THRESHOLD_8192'` in production. The insecure preset exists solely to speed up
-local dev cycles.
+| Network                | Preset                     | `paramSet` |
+| ---------------------- | -------------------------- | ---------- |
+| Local development      | `'INSECURE_THRESHOLD_512'` | `0`        |
+| Sepolia testnet        | `'INSECURE_THRESHOLD_512'` | `0`        |
+| Mainnet and production | `'SECURE_THRESHOLD_8192'`  | `1`        |
+
+Use `'INSECURE_THRESHOLD_512'` on Sepolia: the Sepolia ciphernodes run the insecure preset, and the
+circuit artifacts bundled in this package are compiled for it. Use `'SECURE_THRESHOLD_8192'` in
+production, together with your own `secure-8192` circuit artifacts (see
+[Proving](#proving-embedded-circuits-or-your-own)).
+
+### Proving: embedded circuits or your own
+
+`generateProof()`, `encryptNumberAndGenProof()`, and `encryptVectorAndGenProof()` run the
+user-data-encryption (UDE) circuits bundled in this package. Those artifacts are compiled with
+`--preset insecure-512 --committee minimum` (`scripts/compile-circuits.sh`), so they only match
+`'INSECURE_THRESHOLD_512'` and a minimum-size committee. With `'SECURE_THRESHOLD_8192'`,
+`encryptNumberAndGenInputs()` returns N=8192 circuit inputs that the bundled N=512 circuits cannot
+execute.
+
+For on-chain Honk verification, compile your own UDE, app, and fold circuits for the preset and
+committee your deployment uses, emit the Solidity verifier from them, and feed them the witness from
+`encryptNumberAndGenInputs()`. `examples/CRISP` in the monorepo shows the full flow. Secure
+artifacts may ship here in a later release.
 
 ## Error Handling
 

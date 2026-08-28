@@ -2,6 +2,7 @@
 import { type Interface, ethers as ethersLib } from "ethers";
 import path from "path";
 
+import { pricingConfigFingerprint } from "./pricingConfig";
 import { ADDRESS_ONE } from "./protocol/constants";
 import { repoRoot } from "./protocol/files";
 import type {
@@ -9,7 +10,7 @@ import type {
   ProtocolDeployment,
   ProtocolInterfaces,
 } from "./protocol/types";
-import { pricingConfig } from "./protocol/values";
+import { feeAssetConfig } from "./protocol/values";
 import {
   isLocalDeploymentChain,
   storeDeploymentArgs,
@@ -122,6 +123,28 @@ export function syncProtocolDeploymentRecords(
     "RegistrySortitionLib",
     opts.chain,
   );
+  if (config.randomness && deployment.randomnessProvider) {
+    storeDeploymentArgs(
+      {
+        address: deployment.randomnessProvider,
+        blockNumber,
+        constructorArgs: {
+          requesterAddress: deployment.ciphernodeRegistry,
+          coordinator: config.randomness.coordinator,
+          vrfSubscriptionId: config.randomness.subscriptionId,
+          vrfKeyHash: config.randomness.keyHash,
+          vrfRequestConfirmations: config.randomness.requestConfirmations,
+          vrfCallbackGasLimit: config.randomness.callbackGasLimit,
+          payInNativeToken: config.randomness.nativePayment,
+          vrfMinimumSubscriptionBalance:
+            config.randomness.minimumSubscriptionBalance,
+          protocolOwner: config.protocolOwner,
+        },
+      },
+      "ChainlinkVrfRandomnessProvider",
+      opts.chain,
+    );
+  }
   storeDeploymentArgs(
     { address: config.feeToken, blockNumber },
     "MockUSDC",
@@ -246,11 +269,7 @@ export function syncProtocolDeploymentRecords(
       deployment.ciphernodeRegistry,
       config.bondingRegistryProxy,
       ADDRESS_ONE,
-      {
-        token: config.feeToken,
-        expectedDecimals: config.feeTokenDecimals,
-        pricing: pricingConfig(config.interfold.pricing),
-      },
+      feeAssetConfig(config),
       BigInt(config.interfold.maxDuration),
       {
         dkgWindow: BigInt(config.interfold.timeoutConfig.dkgWindow),
@@ -273,9 +292,10 @@ export function syncProtocolDeploymentRecords(
         e3RefundManager: ADDRESS_ONE,
         feeToken: config.feeToken,
         feeTokenDecimals: config.feeTokenDecimals,
+        randomnessFlatFee: config.interfold.pricing.randomnessFlatFee,
         maxDuration: config.interfold.maxDuration,
         timeoutConfig: JSON.stringify(config.interfold.timeoutConfig),
-        pricingConfig: JSON.stringify(config.interfold.pricing),
+        pricingConfig: pricingConfigFingerprint(config.interfold.pricing),
         initialE3Program: deployment.initialE3Program,
       },
       libraries: {
@@ -368,6 +388,20 @@ export function syncProtocolDeploymentRecords(
       },
     },
     "BondingRegistry",
+    opts.chain,
+  );
+
+  storeDeploymentArgs(
+    {
+      address: deployment.nodeReleaseRegistry,
+      blockNumber,
+      constructorArgs: {
+        owner: config.protocolOwner,
+        bondingRegistry: config.bondingRegistryProxy,
+        ciphernodeRegistry: deployment.ciphernodeRegistry,
+      },
+    },
+    "NodeReleaseRegistry",
     opts.chain,
   );
 

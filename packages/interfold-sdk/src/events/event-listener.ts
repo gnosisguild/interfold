@@ -5,10 +5,13 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { type Abi, type Log, type PublicClient } from 'viem'
-import { CiphernodeRegistryOwnable__factory, Interfold__factory } from '@interfold/contracts/types'
+import { CiphernodeRegistryOwnable__factory, Interfold__factory, IRandomnessProvider__factory } from '@interfold/contracts/types'
 
 import {
   RegistryEventType,
+  type RandomnessProviderEvent,
+  type RandomnessProviderEventCallback,
+  type RandomnessProviderEventType,
   type AllEventTypes,
   type InterfoldEvent,
   type InterfoldEventData,
@@ -29,8 +32,13 @@ export interface EventListenerOptions {
 }
 
 export class EventListener implements SDKEventEmitter {
+  private static readonly DEFAULT_HISTORICAL_BLOCK_RANGE = 10_000n
+  private static readonly MAX_REMEMBERED_LOGS = 10_000
   private listeners: Map<AllEventTypes, Set<EventCallback>> = new Map()
   private activeWatchers: Map<string, () => void> = new Map()
+  private watcherStartBlocks: Map<string, bigint | undefined> = new Map()
+  private randomnessProviderListeners: Map<string, Set<RandomnessProviderEventCallback>> = new Map()
+  private seenLiveLogs: Map<string, true> = new Map()
   private isPolling = false
   private lastBlockNumber: bigint = BigInt(0)
   private publicClient: PublicClient
@@ -49,6 +57,8 @@ export class EventListener implements SDKEventEmitter {
   // runtime; those default to the Interfold contract.
   private static readonly REGISTRY_ONLY_EVENTS: ReadonlySet<string> = new Set([
     RegistryEventType.COMMITTEE_REQUESTED,
+    RegistryEventType.COMMITTEE_RANDOMNESS_REQUESTED,
+    RegistryEventType.RANDOMNESS_CIRCUIT_BREAKER_TRIPPED,
     RegistryEventType.COMMITTEE_PUBLISHED,
     RegistryEventType.COMMITTEE_FINALIZED,
     RegistryEventType.INTERFOLD_SET,
@@ -65,6 +75,113 @@ export class EventListener implements SDKEventEmitter {
   public async onInterfoldEvent<T extends AllEventTypes>(eventType: T, callback: EventCallback<T>): Promise<void> {
     const { address, abi } = this.resolveContract(eventType)
     return this.watchContractEvent(address, eventType, abi, callback)
+  }
+
+  public async onRandomnessProviderEvent<T extends RandomnessProviderEventType>(
+    provider: `0x${string}`,
+    eventType: T,
+    callback: RandomnessProviderEventCallback<T>,
+    fromBlock?: bigint,
+  ): Promise<void> {
+    const listenerKey = `${provider.toLowerCase()}:${eventType}`
+    const watcherKey = `randomness-provider:${listenerKey}`
+    const requestedStartBlock = fromBlock ?? this.config.fromBlock
+    let callbacks = this.randomnessProviderListeners.get(listenerKey)
+    if (!callbacks) {
+      callbacks = new Set()
+      this.randomnessProviderListeners.set(listenerKey, callbacks)
+    }
+
+    if (this.activeWatchers.has(watcherKey)) {
+      const activeStartBlock = this.watcherStartBlocks.get(watcherKey)
+      if (fromBlock !== undefined && requestedStartBlock !== activeStartBlock) {
+        throw new SDKError(
+          `Randomness provider watcher for ${eventType} on ${provider} already starts at ${activeStartBlock ?? 'latest'}; requested ${requestedStartBlock ?? 'latest'}`,
+          'INVALID_EVENT_CONFIG',
+        )
+      }
+      callbacks.add(callback as RandomnessProviderEventCallback)
+      return
+    }
+
+    callbacks.add(callback as RandomnessProviderEventCallback)
+
+    try {
+      const unwatch = this.publicClient.watchContractEvent({
+        address: provider,
+        abi: IRandomnessProvider__factory.abi,
+        eventName: eventType,
+        fromBlock: requestedStartBlock,
+        onLogs: (logs: Log[]) => {
+          for (const log of logs) {
+            if (!this.rememberLiveLog(log)) continue
+            const event: RandomnessProviderEvent<T> = {
+              type: eventType,
+              data: (log as unknown as { args: RandomnessProviderEvent<T>['data'] }).args,
+              provider,
+              log,
+              timestamp: new Date(),
+              blockNumber: log.blockNumber ?? 0n,
+              transactionHash: log.transactionHash ?? '0x',
+            }
+            const currentCallbacks = this.randomnessProviderListeners.get(listenerKey)
+            currentCallbacks?.forEach((currentCallback) => {
+              try {
+                const result = currentCallback(event)
+                if (result) {
+                  void result.catch((error) => {
+                    console.error(`Error in randomness provider callback for ${eventType}:`, error)
+                  })
+                }
+              } catch (error) {
+                console.error(`Error in randomness provider callback for ${eventType}:`, error)
+              }
+            })
+          }
+        },
+      })
+      this.activeWatchers.set(watcherKey, unwatch)
+      this.watcherStartBlocks.set(watcherKey, requestedStartBlock)
+    } catch (error) {
+      callbacks.delete(callback as RandomnessProviderEventCallback)
+      if (callbacks.size === 0) this.randomnessProviderListeners.delete(listenerKey)
+      throw new SDKError(`Failed to watch randomness provider event ${eventType} on ${provider}: ${error}`, 'WATCH_EVENT_FAILED')
+    }
+  }
+
+  public offRandomnessProviderEvent<T extends RandomnessProviderEventType>(
+    provider: `0x${string}`,
+    eventType: T,
+    callback: RandomnessProviderEventCallback<T>,
+  ): void {
+    const listenerKey = `${provider.toLowerCase()}:${eventType}`
+    const callbacks = this.randomnessProviderListeners.get(listenerKey)
+    callbacks?.delete(callback as RandomnessProviderEventCallback)
+    if (callbacks && callbacks.size === 0) {
+      this.randomnessProviderListeners.delete(listenerKey)
+      const watcherKey = `randomness-provider:${listenerKey}`
+      const unwatch = this.activeWatchers.get(watcherKey)
+      if (unwatch) unwatch()
+      this.activeWatchers.delete(watcherKey)
+      this.watcherStartBlocks.delete(watcherKey)
+    }
+  }
+
+  public async getHistoricalRandomnessProviderEvents(
+    provider: `0x${string}`,
+    eventType: RandomnessProviderEventType,
+    fromBlock?: bigint,
+    toBlock?: bigint,
+  ): Promise<Log[]> {
+    const start = fromBlock ?? this.config.fromBlock
+    if (start === undefined) {
+      throw new SDKError('Randomness provider history requires fromBlock or EventListenerConfig.fromBlock', 'INVALID_EVENT_CONFIG')
+    }
+    try {
+      return await this.getHistoricalContractEvents(provider, IRandomnessProvider__factory.abi, eventType, start, toBlock)
+    } catch (error) {
+      throw new SDKError(`Failed to get randomness provider events from ${provider}: ${error}`, 'HISTORICAL_EVENTS_FAILED')
+    }
   }
 
   public async once<T extends AllEventTypes>(type: T, callback: EventCallback<T>): Promise<void> {
@@ -105,6 +222,7 @@ export class EventListener implements SDKEventEmitter {
             for (let i = 0; i < logs.length; i++) {
               const log = logs[i]
               if (!log) break
+              if (!emitter.rememberLiveLog(log)) continue
               const event: InterfoldEvent<T> = {
                 type: eventType,
                 data: (log as unknown as { args: unknown }).args as T extends InterfoldEventTypeT
@@ -172,13 +290,7 @@ export class EventListener implements SDKEventEmitter {
     const { address, abi } = this.resolveContract(eventType)
 
     try {
-      return await this.publicClient.getContractEvents({
-        address,
-        abi,
-        eventName: eventType as string,
-        fromBlock: fromBlock ?? this.config.fromBlock,
-        toBlock: toBlock ?? this.config.toBlock,
-      })
+      return await this.getHistoricalContractEvents(address, abi, eventType as string, fromBlock, toBlock)
     } catch (error) {
       throw new SDKError(`Failed to get historical events: ${error}`, 'HISTORICAL_EVENTS_FAILED')
     }
@@ -242,7 +354,78 @@ export class EventListener implements SDKEventEmitter {
       }
     })
     this.activeWatchers.clear()
+    this.watcherStartBlocks.clear()
     this.listeners.clear()
+    this.randomnessProviderListeners.clear()
+    this.seenLiveLogs.clear()
+  }
+
+  private logIdentity(log: Log): string | undefined {
+    if (log.blockHash && log.transactionHash && log.logIndex !== null && log.logIndex !== undefined) {
+      return `${log.blockHash}:${log.transactionHash}:${log.logIndex}:${Boolean(log.removed)}`
+    }
+    return undefined
+  }
+
+  private rememberLiveLog(log: Log): boolean {
+    const identity = this.logIdentity(log)
+    if (!identity) return true
+    if (this.seenLiveLogs.has(identity)) return false
+
+    this.seenLiveLogs.set(identity, true)
+    if (this.seenLiveLogs.size > EventListener.MAX_REMEMBERED_LOGS) {
+      const oldest = this.seenLiveLogs.keys().next().value
+      if (oldest !== undefined) this.seenLiveLogs.delete(oldest)
+    }
+    return true
+  }
+
+  private async getHistoricalContractEvents(
+    address: `0x${string}`,
+    abi: Abi,
+    eventName: string,
+    fromBlock?: bigint,
+    toBlock?: bigint,
+  ): Promise<Log[]> {
+    const start = fromBlock ?? this.config.fromBlock
+    const configuredEnd = toBlock ?? this.config.toBlock
+    if (start === undefined) {
+      return (await this.publicClient.getContractEvents({
+        address,
+        abi,
+        eventName,
+        toBlock: configuredEnd,
+      })) as Log[]
+    }
+
+    const end = configuredEnd ?? (await this.publicClient.getBlockNumber({ cacheTime: 0 }))
+    if (end < start) return []
+
+    const range = this.config.historicalBlockRange ?? EventListener.DEFAULT_HISTORICAL_BLOCK_RANGE
+    if (range <= 0n) throw new SDKError('Historical block range must be greater than zero', 'INVALID_EVENT_CONFIG')
+
+    const logs: Log[] = []
+    const seen = new Set<string>()
+    for (let cursor = start; cursor <= end; cursor += range) {
+      const chunkEnd = cursor + range - 1n < end ? cursor + range - 1n : end
+      const chunk = (await this.publicClient.getContractEvents({
+        address,
+        abi,
+        eventName,
+        fromBlock: cursor,
+        toBlock: chunkEnd,
+      })) as Log[]
+      for (const log of chunk) {
+        const identity = this.logIdentity(log)
+        if (identity && seen.has(identity)) continue
+        if (identity) {
+          seen.add(identity)
+          this.rememberLiveLog(log)
+        }
+        logs.push(log)
+      }
+    }
+    return logs
   }
 
   private async pollForEvents(): Promise<void> {

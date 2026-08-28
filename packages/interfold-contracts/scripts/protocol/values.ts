@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
 
+import { assertSupportedVrfChain, assertVrfRequestTimeout } from "./chains";
 import { arg } from "./cli";
 import { ZERO, abi } from "./constants";
 import { configPath, readJson } from "./files";
@@ -91,7 +92,30 @@ export function pricingConfig(config: PricingConfig) {
     decryptUtilizationBps: BigInt(config.decryptUtilizationBps),
     minCommitteeSize: BigInt(config.minCommitteeSize),
     minThreshold: BigInt(config.minThreshold),
+    randomnessFlatFee: BigInt(config.randomnessFlatFee),
   };
+}
+
+export function feeAssetConfig(config: ProtocolConfigFile) {
+  return {
+    token: config.feeToken,
+    expectedDecimals: config.feeTokenDecimals,
+    pricing: pricingConfig(config.interfold.pricing),
+  };
+}
+
+export function assertExitTiming(
+  exitDelay: bigint,
+  sortitionSubmissionWindow: bigint,
+  randomnessRequestTimeout: bigint,
+  context: string,
+): void {
+  const requiredDelay = sortitionSubmissionWindow + randomnessRequestTimeout;
+  if (exitDelay <= requiredDelay) {
+    throw new Error(
+      `${context} exitDelay ${exitDelay} must be greater than sortitionSubmissionWindow ${sortitionSubmissionWindow} + randomnessRequestTimeout ${randomnessRequestTimeout} (${requiredDelay})`,
+    );
+  }
 }
 
 export function loadConfig(file = configPath()): ProtocolConfigFile {
@@ -159,6 +183,7 @@ export function loadConfig(file = configPath()): ProtocolConfigFile {
     "SLASHED_FUNDS_TREASURY",
   );
   applyAddressOverride(config, "slasher", "slasher", "SLASHER_ADDRESS");
+  applyRandomnessOverride(config);
   if (config.interfold.pricing.protocolTreasury === ZERO) {
     config.interfold.pricing.protocolTreasury = config.protocolTreasury;
   }
@@ -213,6 +238,18 @@ function applyGovernanceOverride(config: ProtocolConfigFile): void {
   }
   if (proposalMetadata && !config.governance.proposalMetadata) {
     config.governance.proposalMetadata = proposalMetadata;
+  }
+}
+
+function applyRandomnessOverride(config: ProtocolConfigFile): void {
+  const subscriptionId =
+    arg("vrf-subscription-id") ?? process.env.VRF_SUBSCRIPTION_ID;
+  if (
+    subscriptionId &&
+    config.randomness &&
+    BigInt(config.randomness.subscriptionId) === 0n
+  ) {
+    config.randomness.subscriptionId = subscriptionId;
   }
 }
 
@@ -287,10 +324,96 @@ function validateConfig(config: ProtocolConfigFile): void {
   );
   if (config.slasher !== ZERO)
     config.slasher = address(config.slasher, "slasher");
+  if (config.randomness) {
+    assertSupportedVrfChain(config.chainId);
+    config.randomness.coordinator = address(
+      config.randomness.coordinator,
+      "randomness.coordinator",
+    );
+    if (config.randomness.coordinator === ZERO) {
+      throw new Error("randomness.coordinator must not be the zero address");
+    }
+    if (!/^\d+$/.test(config.randomness.subscriptionId)) {
+      throw new Error("randomness.subscriptionId must be an unsigned integer");
+    }
+    if (
+      !ethersLib.isHexString(config.randomness.keyHash, 32) ||
+      BigInt(config.randomness.keyHash) === 0n
+    ) {
+      throw new Error("randomness.keyHash must be a non-zero bytes32 value");
+    }
+    if (
+      !Number.isInteger(config.randomness.requestConfirmations) ||
+      config.randomness.requestConfirmations < 1 ||
+      config.randomness.requestConfirmations > 200
+    ) {
+      throw new Error(
+        "randomness.requestConfirmations must be an integer from 1 through 200",
+      );
+    }
+    if (
+      !Number.isInteger(config.randomness.callbackGasLimit) ||
+      config.randomness.callbackGasLimit < 1 ||
+      config.randomness.callbackGasLimit > 4_294_967_295
+    ) {
+      throw new Error(
+        "randomness.callbackGasLimit must be a positive uint32 value",
+      );
+    }
+    if (typeof config.randomness.nativePayment !== "boolean") {
+      throw new Error("randomness.nativePayment must be a boolean");
+    }
+    if (
+      !/^\d+$/.test(config.randomness.minimumSubscriptionBalance) ||
+      BigInt(config.randomness.minimumSubscriptionBalance) === 0n ||
+      BigInt(config.randomness.minimumSubscriptionBalance) >= 1n << 96n
+    ) {
+      throw new Error(
+        "randomness.minimumSubscriptionBalance must be a positive uint96 value",
+      );
+    }
+    if (!/^\d+$/.test(config.randomness.requestTimeout)) {
+      throw new Error("randomness.requestTimeout must be an unsigned integer");
+    }
+    const requestTimeout = BigInt(config.randomness.requestTimeout);
+    if (requestTimeout < 60n || requestTimeout > 86_400n) {
+      throw new Error(
+        "randomness.requestTimeout must be from 60 through 86400 seconds",
+      );
+    }
+    assertVrfRequestTimeout(
+      config.chainId,
+      config.randomness.requestConfirmations,
+      requestTimeout,
+    );
+    if (!/^\d+$/.test(config.registry.sortitionSubmissionWindow)) {
+      throw new Error(
+        "registry.sortitionSubmissionWindow must be an unsigned integer",
+      );
+    }
+    if (!/^\d+$/.test(config.bonding.exitDelay)) {
+      throw new Error("bonding.exitDelay must be an unsigned integer");
+    }
+    assertExitTiming(
+      BigInt(config.bonding.exitDelay),
+      BigInt(config.registry.sortitionSubmissionWindow),
+      requestTimeout,
+      "Protocol configuration",
+    );
+  }
   config.interfold.pricing.protocolTreasury = address(
     config.interfold.pricing.protocolTreasury,
     "interfold.pricing.protocolTreasury",
   );
+  if (
+    !/^\d+$/.test(config.interfold.pricing.randomnessFlatFee) ||
+    BigInt(config.interfold.pricing.randomnessFlatFee) === 0n ||
+    BigInt(config.interfold.pricing.randomnessFlatFee) >= 1n << 192n
+  ) {
+    throw new Error(
+      "interfold.pricing.randomnessFlatFee must be a positive uint192 value",
+    );
+  }
   if (!Array.isArray(config.e3Programs) || config.e3Programs.length !== 1) {
     throw new Error("Exactly one initial E3 Program is required");
   }

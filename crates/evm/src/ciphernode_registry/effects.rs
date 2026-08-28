@@ -4,6 +4,12 @@
 
 use super::*;
 
+const TICKET_GAS_SAFETY_MULTIPLIER: u64 = 2;
+
+fn ticket_gas_limit(estimate: u64) -> u64 {
+    estimate.saturating_mul(TICKET_GAS_SAFETY_MULTIPLIER)
+}
+
 /// Report whether a contract call contains this exact parameterless custom error.
 fn reverts_with(error: &anyhow::Error, selector: [u8; 4]) -> bool {
     contains_error_selector(&format!("{error:?}"), selector)
@@ -44,7 +50,16 @@ pub async fn submit_ticket_to_registry<P: Provider + WalletProvider + Clone + 's
             let builder = contract
                 .submitTicket(e3_id_u256, ticket_number_u256)
                 .nonce(current_nonce);
-            let pending = builder.send().await?;
+            // Nodes estimate concurrently before any ticket is mined. Earlier
+            // insertions can make a later top-N update more expensive than its
+            // estimate, so leave room for the request state to change.
+            let estimated_gas = builder.estimate_gas().await?;
+            let gas_limit = ticket_gas_limit(estimated_gas);
+            debug!(
+                estimated_gas,
+                gas_limit, "Applying submitTicket gas safety margin"
+            );
+            let pending = builder.gas(gas_limit).send().await?;
             drop(_nonce_guard);
             let receipt = pending.get_receipt().await?;
             require_successful_receipt("submit ticket", &receipt)?;
@@ -120,7 +135,15 @@ pub async fn finalize_committee_on_registry<P: Provider + WalletProvider + Clone
     contract_address: Address,
     e3_id: E3id,
 ) -> Result<TxOutcome> {
-    let e3_id_u256: U256 = e3_id.try_into()?;
+    let e3_id_u256: U256 = e3_id.clone().try_into()?;
+
+    // Members finalize on a stagger. Another member can finalize between the
+    // stagger tick and this call, so read the chain first. Without this check
+    // the transaction is mined with a failed receipt and burns gas.
+    if committee_finalization_terminal(provider.clone(), contract_address, e3_id_u256).await? {
+        info!(e3_id = %e3_id, "Committee already finalized on chain; skipping finalizeCommittee");
+        return Ok(TxOutcome::AlreadySettled);
+    }
 
     let settled_provider = provider.clone();
     let settled = || async move {
@@ -335,9 +358,61 @@ pub async fn fetch_accusation_vote_validity<P: Provider + Clone>(
     }
 }
 
+/// Reads the provider used for future committee randomness requests.
+pub async fn fetch_randomness_provider<P: Provider + Clone>(
+    provider: &P,
+    registry_address: Address,
+) -> Result<Option<Address>> {
+    let contract = ICiphernodeRegistry::new(registry_address, provider);
+    let randomness_provider = contract.randomnessProvider().call().await?;
+    if randomness_provider == Address::ZERO {
+        Ok(None)
+    } else {
+        Ok(Some(randomness_provider))
+    }
+}
+
+/// Reads every provider needed to replay committee randomness history.
+pub async fn fetch_randomness_providers<P: Provider + Clone>(
+    provider: &P,
+    registry_address: Address,
+    from_block: u64,
+) -> Result<Vec<Address>> {
+    const LOG_CHUNK_SIZE: u64 = 10_000;
+    let base_filter = Filter::new()
+        .address(registry_address)
+        .event_signature(ICiphernodeRegistry::RandomnessProviderSet::SIGNATURE_HASH);
+    let mut providers = Vec::new();
+    let mut seen = HashSet::new();
+    let head = provider.get_block_number().await?;
+    let mut start = from_block;
+    while start <= head {
+        let end = start.saturating_add(LOG_CHUNK_SIZE - 1).min(head);
+        let filter = base_filter.clone().from_block(start).to_block(end);
+        for log in provider.get_logs(&filter).await? {
+            let event = ICiphernodeRegistry::RandomnessProviderSet::decode_log_data(log.data())
+                .context("invalid RandomnessProviderSet event")?;
+            if event.randomnessProvider != Address::ZERO && seen.insert(event.randomnessProvider) {
+                providers.push(event.randomnessProvider);
+            }
+        }
+        if end == head {
+            break;
+        }
+        start = end + 1;
+    }
+
+    if let Some(current) = fetch_randomness_provider(provider, registry_address).await? {
+        if seen.insert(current) {
+            providers.push(current);
+        }
+    }
+    Ok(providers)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{reverts_with, ticket_submission_error_is_terminal};
+    use super::{reverts_with, ticket_gas_limit, ticket_submission_error_is_terminal};
     use crate::contracts::ICiphernodeRegistry;
     use alloy::sol_types::{Revert, SolError};
 
@@ -380,5 +455,11 @@ mod tests {
             &anyhow::anyhow!("CommitteeAlreadyFinalized"),
             selector
         ));
+    }
+
+    #[test]
+    fn doubles_ticket_gas_estimate_without_overflow() {
+        assert_eq!(ticket_gas_limit(250_000), 500_000);
+        assert_eq!(ticket_gas_limit(u64::MAX), u64::MAX);
     }
 }

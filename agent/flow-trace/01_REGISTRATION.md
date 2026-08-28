@@ -154,7 +154,7 @@ Bond owner
    ├─ Reverts with NotRegistered() when registration has not happened
    ├─ Mints tFOLD to the operator from the owner's stablecoin
    └─ Calls _updateOperatorStatus(operator)
-      └─ Activates when bond and ticket thresholds are met
+      └─ Activates when bond, ticket, ban, and required-release checks pass
 ```
 
 Registration must precede the ticket purchase. `_addTicketBalance` requires
@@ -165,6 +165,10 @@ order is bond, register, tickets.
 
 The node's address—not the bond owner's—is inserted into the IMT, owns the tFOLD balance, and
 remains the committee and slashing identity.
+
+The ciphernode checks and acknowledges its compatibility values during startup. Registration and
+ticket funding may finish first, but the operator remains inactive until that acknowledgement meets
+the required protocol version and node generation. See [07_UPGRADES.md](07_UPGRADES.md).
 
 ---
 

@@ -33,8 +33,8 @@ echo "DEV SCRIPT STARTING..."
 
 pnpm concurrently \
   -ks first \
-  --names "ANVIL,DEPLOY" \
-  --prefix-colors "blue,green" \
+  --names "ANVIL,RANDOMNESS,DEPLOY" \
+  --prefix-colors "blue,gray,green" \
   "anvil --host 0.0.0.0 --chain-id 31337 --block-time 1 --mnemonic 'test test test test test test test test test test test junk' --silent" \
+  "wait-on tcp:127.0.0.1:8545 && node ./scripts/anvil-randomness.mjs" \
   "./scripts/crisp_deploy.sh && ./scripts/dev_services.sh"
-

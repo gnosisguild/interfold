@@ -20,11 +20,14 @@ import { deployAndSaveFaucet } from "./deployAndSave/faucet";
 import { deployAndSaveInterfold } from "./deployAndSave/interfold";
 import { deployAndSaveInterfoldTicketToken } from "./deployAndSave/interfoldTicketToken";
 import { deployAndSaveInterfoldToken } from "./deployAndSave/interfoldToken";
+import { deployAndSaveMockRandomnessProvider } from "./deployAndSave/mockRandomnessProvider";
 import { deployAndSaveMockStableToken } from "./deployAndSave/mockStableToken";
+import { deployAndSaveNodeReleaseRegistry } from "./deployAndSave/nodeReleaseRegistry";
 import { deployAndSavePoseidonT3 } from "./deployAndSave/poseidonT3";
 import { deployAndSaveSlashingManager } from "./deployAndSave/slashingManager";
 import { deployAndSaveAllVerifiers } from "./deployAndSave/verifiers";
 import { deployMocks } from "./deployMocks";
+import { currentNodeRelease } from "./protocol/nodeRelease";
 import {
   ACTIVE_BFV_COMMITTEE_N,
   ACTIVE_BFV_COMMITTEE_SIZE,
@@ -233,6 +236,14 @@ export const deployInterfold = async (
   const ciphernodeRegistryAddress = await ciphernodeRegistry.getAddress();
   console.log("CiphernodeRegistry deployed to:", ciphernodeRegistryAddress);
 
+  console.log("Deploying MockRandomnessProvider...");
+  const { randomnessProvider } = await deployAndSaveMockRandomnessProvider({
+    requester: ciphernodeRegistryAddress,
+    hre,
+  });
+  const randomnessProviderAddress = await randomnessProvider.getAddress();
+  console.log("MockRandomnessProvider deployed to:", randomnessProviderAddress);
+
   // BondingRegistry is deployed before FOLD so its address can be passed to
   // the token constructor.  The ciphernode bond token is set to address(0) temporarily
   // and fixed after FOLD is deployed with the complete asset configuration.
@@ -432,6 +443,12 @@ export const deployInterfold = async (
     "ciphernodeRegistry.setBondingRegistry",
   );
 
+  console.log("Setting RandomnessProvider address in CiphernodeRegistry...");
+  await send(
+    ciphernodeRegistry.setRandomnessProvider(randomnessProviderAddress),
+    "ciphernodeRegistry.setRandomnessProvider",
+  );
+
   console.log("Setting Submission Window in CiphernodeRegistry...");
   console.log("SORTITION_SUBMISSION_WINDOW:", SORTITION_SUBMISSION_WINDOW);
   await send(
@@ -445,6 +462,27 @@ export const deployInterfold = async (
   await send(
     bondingRegistry.setRegistry(ciphernodeRegistryAddress),
     "bondingRegistry.setRegistry",
+  );
+
+  console.log("Deploying and activating NodeReleaseRegistry...");
+  const { nodeReleaseRegistry } = await deployAndSaveNodeReleaseRegistry({
+    owner: ownerAddress,
+    bondingRegistry: bondingRegistryAddress,
+    ciphernodeRegistry: ciphernodeRegistryAddress,
+    hre,
+  });
+  const nodeReleaseRegistryAddress = await nodeReleaseRegistry.getAddress();
+  const nodeRelease = currentNodeRelease();
+  await send(
+    interfold.setNodeReleaseRegistry(nodeReleaseRegistryAddress),
+    "interfold.setNodeReleaseRegistry",
+  );
+  await send(
+    nodeReleaseRegistry.setRequiredNodeRelease(
+      nodeRelease.protocolVersion,
+      nodeRelease.nodeGeneration,
+    ),
+    "nodeReleaseRegistry.setRequiredNodeRelease",
   );
 
   console.log("Setting Interfold address in SlashingManager...");
@@ -578,6 +616,7 @@ export const deployInterfold = async (
         decryptUtilizationBps: 2500, // 25%
         minCommitteeSize: 0,
         minThreshold: 0,
+        randomnessFlatFee: 1_000_000, // 1.00 mock USDC
       },
     }),
     "interfold.setFeeAssetConfig",
@@ -788,6 +827,11 @@ export const deployInterfold = async (
       slashingManagerAddress,
     ],
     [
+      "interfold.nodeReleaseRegistry",
+      interfold.nodeReleaseRegistry(),
+      nodeReleaseRegistryAddress,
+    ],
+    [
       "ciphernodeRegistry.interfold",
       ciphernodeRegistry.interfold(),
       interfoldAddress,
@@ -803,8 +847,28 @@ export const deployInterfold = async (
       slashingManagerAddress,
     ],
     [
+      "ciphernodeRegistry.randomnessProvider",
+      ciphernodeRegistry.randomnessProvider(),
+      randomnessProviderAddress,
+    ],
+    [
+      "randomnessProvider.requester",
+      randomnessProvider.requester(),
+      ciphernodeRegistryAddress,
+    ],
+    [
       "bondingRegistry.registry",
       bondingRegistry.registry(),
+      ciphernodeRegistryAddress,
+    ],
+    [
+      "nodeReleaseRegistry.bondingRegistry",
+      nodeReleaseRegistry.bondingRegistry(),
+      bondingRegistryAddress,
+    ],
+    [
+      "nodeReleaseRegistry.ciphernodeRegistry",
+      nodeReleaseRegistry.ciphernodeRegistry(),
       ciphernodeRegistryAddress,
     ],
     [
@@ -901,6 +965,8 @@ export const deployInterfold = async (
     BondedCheckpoints: ${bondedCheckpointsAddress}
     BondedVotes: ${bondedVotesAddress}
     CiphernodeRegistry: ${ciphernodeRegistryAddress}
+    NodeReleaseRegistry: ${nodeReleaseRegistryAddress}
+    RandomnessProvider: ${randomnessProviderAddress}
     E3RefundManager: ${e3RefundManagerAddress}
     Interfold: ${interfoldAddress}
     DecryptionVerifier (BFV): ${decryptionVerifierAddress}

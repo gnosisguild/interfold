@@ -8,6 +8,7 @@ pragma solidity 0.8.28;
 import { IInterfold, E3, IE3Program } from "./interfaces/IInterfold.sol";
 import { ICiphernodeRegistry } from "./interfaces/ICiphernodeRegistry.sol";
 import { IBondingRegistry } from "./interfaces/IBondingRegistry.sol";
+import { INodeReleaseRegistry } from "./interfaces/INodeReleaseRegistry.sol";
 import { ISlashingManager } from "./interfaces/ISlashingManager.sol";
 import { IE3RefundManager } from "./interfaces/IE3RefundManager.sol";
 import { IDecryptionVerifier } from "./interfaces/IDecryptionVerifier.sol";
@@ -114,7 +115,7 @@ contract Interfold is
     mapping(uint8 => bytes) public paramSetRegistry;
 
     /// @notice Mapping tracking fee payments for each E3.
-    /// @dev Stores the amount paid for an E3, distributed to committee upon completion.
+    /// @dev Stores service escrow. The request-time randomness fee is credited separately.
     mapping(uint256 e3Id => uint256 e3Payment) public e3Payments;
 
     /// @notice Maps E3 ID to its current stage
@@ -164,7 +165,7 @@ contract Interfold is
     mapping(uint256 e3Id => mapping(address account => uint256 amount))
         internal _pendingRewards;
 
-    /// @notice Pull-payment ledger for treasury protocol-share credits.
+    /// @notice Pull-payment ledger for treasury randomness-fee and protocol-share credits.
     /// @dev Per-treasury / per-token so treasury rotations are non-destructive.
     mapping(address treasury => mapping(IERC20 token => uint256 amount))
         internal _pendingTreasury;
@@ -209,8 +210,16 @@ contract Interfold is
     /// @notice Circuit configuration frozen for each E3 request.
     mapping(uint256 e3Id => bytes32 configId) public e3CryptoConfigIds;
 
+    /// @notice Governance-selected controller for ciphernode release eligibility.
+    INodeReleaseRegistry public nodeReleaseRegistry;
+
     /// @notice Emitted when the {markFailedGracePeriod} value is updated.
     event MarkFailedGracePeriodSet(uint256 gracePeriod);
+
+    /// @notice Emitted when governance replaces the ciphernode release controller.
+    event NodeReleaseRegistrySet(
+        INodeReleaseRegistry indexed nodeReleaseRegistry
+    );
 
     ////////////////////////////////////////////////////////////
     //                                                        //
@@ -318,7 +327,7 @@ contract Interfold is
             InterfoldLifecycle.requestLifecycleDuration(
                 requestParams.inputWindow[1],
                 block.timestamp,
-                dependencies.registry.sortitionSubmissionWindow(),
+                address(dependencies.registry),
                 _timeoutConfig
             );
         dependencies.refundManager.snapshotE3Policy(
@@ -329,11 +338,18 @@ contract Interfold is
         // separate committee seed after this request is final.
         uint256 seed = uint256(keccak256(abi.encode(block.prevrandao, e3Id)));
 
-        e3Payments[e3Id] = quotedFee;
         e3CryptoConfigIds[e3Id] = requestParams.expectedCryptoConfigId;
-        _e3FeeTokens[e3Id] = feeToken;
-        _e3ProtocolShareBps[e3Id] = _pricingConfig.protocolShareBps;
-        _e3ProtocolTreasury[e3Id] = _pricingConfig.protocolTreasury;
+        InterfoldPricing.recordRequestPayment(
+            e3Payments,
+            _e3FeeTokens,
+            _e3ProtocolShareBps,
+            _e3ProtocolTreasury,
+            _pendingTreasury,
+            _pricingConfig,
+            e3Id,
+            quotedFee,
+            feeToken
+        );
 
         // Initialize E3 Lifecycle
         _e3Stages[e3Id] = E3Stage.Requested;
@@ -342,11 +358,8 @@ contract Interfold is
 
         e3.seed = seed;
         e3.committeeSize = requestParams.committeeSize;
-        // store request timepoint as `block.timestamp` (EIP-6372
-        // timestamp clock) so it matches the registry's `c.requestBlock`
-        // and ticket-token `getPastVotes` lookups across L2s (e.g.
-        // Arbitrum where `block.number` ticks every ~250ms and is
-        // inconsistent with consensus-time deadlines).
+        // Store the request as an EIP-6372 timestamp. The Registry and ticket
+        // token use the same clock for request-time voting-power lookups.
         e3.requestBlock = block.timestamp;
         e3.inputWindow = requestParams.inputWindow;
         e3.e3Program = requestParams.e3Program;
@@ -563,6 +576,15 @@ contract Interfold is
     }
 
     /// @inheritdoc IInterfold
+    function setRandomnessFlatFee(
+        uint192 randomnessFlatFee
+    ) external onlyOwner {
+        if (randomnessFlatFee == 0) revert PaymentRequired(0);
+        _pricingConfig.randomnessFlatFee = randomnessFlatFee;
+        emit FeeAssetConfigUpdated(feeToken, feeTokenDecimals, _pricingConfig);
+    }
+
+    /// @inheritdoc IInterfold
     function setFeeTokenAllowed(IERC20 token, bool allowed) external onlyOwner {
         require(address(token) != address(0), InvalidFeeToken(token));
         _feeTokenAllowed[token] = allowed;
@@ -695,29 +717,14 @@ contract Interfold is
     ///      Uses the per-E3 feeToken stored at request time (survives global token rotation).
     /// @param e3Id The ID of the failed E3
     function processE3Failure(uint256 e3Id) external {
-        E3Stage stage = _e3Stages[e3Id];
-        require(stage == E3Stage.Failed, E3NotFailed(e3Id));
-
-        uint256 payment = e3Payments[e3Id];
-        require(payment > 0, NoPaymentToRefund(e3Id));
-        e3Payments[e3Id] = 0; // Prevent double processing
-
-        address[] memory honestNodes = InterfoldLifecycle.honestNodes(
+        InterfoldPricing.processE3Failure(
+            e3Payments,
+            _e3FeeTokens,
+            uint8(_e3Stages[e3Id]),
             address(_registryFor(e3Id)),
+            _refundManagerFor(e3Id),
             e3Id
         );
-
-        IERC20 paymentToken = _e3FeeTokens[e3Id];
-
-        IE3RefundManager refundManager = _refundManagerFor(e3Id);
-        InterfoldPricing.transferExact(
-            paymentToken,
-            address(refundManager),
-            payment
-        );
-        refundManager.calculateRefund(e3Id, payment, honestNodes, paymentToken);
-
-        emit E3FailureProcessed(e3Id, payment, honestNodes.length);
     }
 
     /// @inheritdoc IInterfold
@@ -821,7 +828,7 @@ contract Interfold is
     /// @dev While `markFailedGracePeriod > 0` and inside the window, only requester /
     ///      owner / active committee member may call; permissionless once
     ///      `block.timestamp > relevantDeadline + markFailedGracePeriod`. Protects
-    ///      against L2 sequencer-hiccup races without giving up liveness.
+    ///      against short chain or RPC delays without giving up liveness.
     /// @param e3Id The E3 ID
     /// @return reason The failure reason
     function markE3Failed(
@@ -847,6 +854,9 @@ contract Interfold is
         );
 
         _markE3FailedWithReason(e3Id, current, reason);
+        if (current == E3Stage.Requested) {
+            _registryFor(e3Id).releaseCommittee(e3Id);
+        }
     }
 
     /// @inheritdoc IInterfold
@@ -855,6 +865,7 @@ contract Interfold is
             _e3Stages,
             _e3FailureReasons,
             _e3Requesters,
+            address(_registryFor(e3Id)),
             e3Id,
             msg.sender
         );
@@ -982,6 +993,18 @@ contract Interfold is
         emit RequestsPausedSet(paused);
     }
 
+    /// @notice Sets the release controller while the protocol is paused and drained.
+    function setNodeReleaseRegistry(
+        INodeReleaseRegistry newNodeReleaseRegistry
+    ) external onlyOwner {
+        if (address(newNodeReleaseRegistry).code.length == 0) {
+            revert DependencyConfigurationMismatch();
+        }
+        nodeReleaseRegistry = newNodeReleaseRegistry;
+        newNodeReleaseRegistry.activate();
+        emit NodeReleaseRegistrySet(newNodeReleaseRegistry);
+    }
+
     /// @notice Set timeout configuration
     /// @param config The new timeout config
     function setTimeoutConfig(
@@ -1054,7 +1077,7 @@ contract Interfold is
         InterfoldLifecycle.validateRequest(
             requestParams.inputWindow,
             block.timestamp,
-            ciphernodeRegistry.sortitionSubmissionWindow(),
+            address(ciphernodeRegistry),
             _timeoutConfig,
             maxDuration
         );
@@ -1201,7 +1224,8 @@ contract Interfold is
             address(ciphernodeRegistry),
             address(bondingRegistry),
             address(slashingManager),
-            address(e3RefundManager)
+            address(e3RefundManager),
+            address(nodeReleaseRegistry)
         );
     }
 
@@ -1242,5 +1266,5 @@ contract Interfold is
     ///      array's length accordingly to preserve storage layout compatibility
     ///      across upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[43] private __gap;
+    uint256[42] private __gap;
 }

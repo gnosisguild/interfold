@@ -46,6 +46,9 @@ Flags:
   --protocol-treasury 0x...
   --slashed-funds-treasury 0x...
   --slasher 0x...
+  --vrf-subscription-id N    Fill a zero VRF subscription placeholder
+  --vrf-coordinator 0x...    Chainlink VRF v2.5 coordinator for rehearsal setup
+  --vrf-key-hash 0x...       Chainlink VRF gas lane for rehearsal setup
 `);
 }
 

@@ -7,6 +7,8 @@ export interface TimeoutConfig {
 }
 
 export interface PricingConfig {
+  /** Non-refundable fee-token amount charged for one accepted randomness request. */
+  randomnessFlatFee: string;
   keyGenFixedPerNode: string;
   keyGenPerEncryptionProof: string;
   coordinationPerPair: string;
@@ -22,6 +24,22 @@ export interface PricingConfig {
   decryptUtilizationBps: string;
   minCommitteeSize: string;
   minThreshold: string;
+}
+
+export interface RandomnessConfig {
+  /** Chainlink VRF v2.5 coordinator for the deployment chain. */
+  coordinator: string;
+  /** Existing, funded subscription owned by the protocol owner. */
+  subscriptionId: string;
+  /** Gas lane key hash published for the deployment chain. */
+  keyHash: string;
+  requestConfirmations: number;
+  callbackGasLimit: number;
+  nativePayment: boolean;
+  /** Admission floor checked at deployment and before each VRF request. */
+  minimumSubscriptionBalance: string;
+  /** Maximum seconds to wait before the requester can cancel a request. */
+  requestTimeout: string;
 }
 
 export interface ProtocolConfigFile {
@@ -52,6 +70,7 @@ export interface ProtocolConfigFile {
   protocolTreasury: string;
   slashedFundsTreasury: string;
   slasher: string;
+  randomness?: RandomnessConfig;
   ticketToken: { lockRegistry: boolean };
   bonding: {
     ticketPrice: string;
@@ -126,6 +145,7 @@ export interface ProtocolDeployment {
   bondingSlashingLib: string;
   bondingRegistrationLib: string;
   bondingOwnershipLib: string;
+  nodeReleaseRegistry: string;
   bondedCheckpoints: string;
   /**
    * Deployed by `--action activate-voting`, after the governance batch initializes the registry: the
@@ -147,6 +167,10 @@ export interface ProtocolDeployment {
   slashingEvidenceLib: string;
   poseidonT3: string;
   registrySortitionLib: string;
+  randomnessProvider: string;
+  /** Exact randomness settings used to deploy and validate the recorded provider. */
+  randomness?: RandomnessConfig;
+  randomnessProviderOwnershipAcceptanceRequired?: boolean;
   ciphernodeRegistry: string;
   ciphernodeRegistryImplementation: string;
   ciphernodeRegistryProxyAdmin: string;
@@ -158,6 +182,43 @@ export interface ProtocolDeployment {
   e3RefundManager: string;
   e3RefundManagerImplementation: string;
   e3RefundManagerProxyAdmin: string;
+  safeTransactions: string;
+  governanceSafeBuilder?: string;
+  safeProposal?: SafeProposal;
+}
+
+export interface VrfSortitionUpgradePlan {
+  name: string;
+  operator: string;
+  protocolOwner: string;
+  registryProxy: string;
+  registryProxyAdmin: string;
+  registryImplementation: string;
+  sortitionLibrary: string;
+  interfoldProxy: string;
+  interfoldProxyAdmin: string;
+  interfoldImplementation: string;
+  lifecycleLibrary: string;
+  pricingLibrary: string;
+  bondingProxy: string;
+  bondingProxyAdmin: string;
+  bondingImplementation: string;
+  bondingAssetLibrary: string;
+  bondingEligibilityLibrary: string;
+  bondingSlashingLibrary: string;
+  bondingRegistrationLibrary: string;
+  bondingOwnershipLibrary: string;
+  nodeReleaseRegistry: string;
+  nodeRelease: {
+    version: string;
+    protocolVersion: number;
+    nodeGeneration: number;
+    releaseId: string;
+  };
+  randomnessProvider: string;
+  randomness: RandomnessConfig;
+  randomnessFlatFee: string;
+  randomnessProviderOwnershipAcceptanceRequired: boolean;
   safeTransactions: string;
   governanceSafeBuilder?: string;
   safeProposal?: SafeProposal;
@@ -189,6 +250,8 @@ export interface ProtocolContracts {
   slashingEvidenceLib: string;
   poseidonT3: string;
   registrySortitionLib: string;
+  randomnessProvider: string;
+  randomnessProviderOwnershipAcceptanceRequired?: boolean;
   ciphernodeRegistry: string;
   ciphernodeRegistryImplementation: string;
   ciphernodeRegistryProxyAdmin: string;
@@ -206,6 +269,7 @@ export interface ProtocolContracts {
   bondingSlashingLib: string;
   bondingRegistrationLib: string;
   bondingOwnershipLib: string;
+  nodeReleaseRegistry: string;
   bondedCheckpoints: string;
   /**
    * Deployed by `--action activate-voting`, after the governance batch initializes the registry: the
@@ -238,6 +302,9 @@ export interface ProtocolInterfaces {
     encodeFunctionData: (name: string, values?: readonly unknown[]) => string;
   };
   bonding: {
+    encodeFunctionData: (name: string, values?: readonly unknown[]) => string;
+  };
+  nodeRelease: {
     encodeFunctionData: (name: string, values?: readonly unknown[]) => string;
   };
 }

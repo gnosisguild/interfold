@@ -17,6 +17,16 @@
   "protocolTreasury": "0x8B43b2852fc5031D01DDfCDF702973D93A2FF593",
   "slashedFundsTreasury": "0x8B43b2852fc5031D01DDfCDF702973D93A2FF593",
   "slasher": "0x0000000000000000000000000000000000000000",
+  "randomness": {
+    "coordinator": "0xD7f86b4b8Cae7D942340FF628F82735b7a20893a",
+    "subscriptionId": "0",
+    "keyHash": "0x8077df514608a09f83e4e8d300645594e5d7234665448ba83f51a50f842bd3d9",
+    "requestConfirmations": 64,
+    "callbackGasLimit": 150000,
+    "nativePayment": true,
+    "minimumSubscriptionBalance": "1000000000000000000",
+    "requestTimeout": "3600"
+  },
   "ticketToken": {
     "lockRegistry": true
   },
@@ -43,6 +53,7 @@
       "decryptionWindow": "21600"
     },
     "pricing": {
+      "randomnessFlatFee": "5000000000000000000",
       "keyGenFixedPerNode": "100000000000000000",
       "keyGenPerEncryptionProof": "100000000000000000",
       "coordinationPerPair": "10000000000000000",

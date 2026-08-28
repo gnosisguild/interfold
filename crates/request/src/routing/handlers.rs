@@ -2,13 +2,18 @@
 
 //! Mailbox entry points and lifecycle hooks.
 
+use super::effects::advance_request_router_cursor;
 use super::*;
-use e3_events::{EventContext, RequestRouterCheckpoint, Sequenced};
+use anyhow::Context as _;
+use e3_events::{EventContext, InterfoldEventData, RequestRouterCheckpoint, Sequenced, SyncEffect};
 
 impl E3Router {
     fn checkpoint_with_context(&mut self, context: &EventContext<Sequenced>) -> Result<()> {
-        self.replay_cursors
-            .insert(context.aggregate_id(), context.seq());
+        advance_request_router_cursor(
+            &mut self.replay_cursors,
+            context.aggregate_id(),
+            context.seq(),
+        );
         let snapshot = self.snapshot()?;
         self.recovery_store.write_with_context(
             &RequestRouterCheckpoint {
@@ -18,6 +23,35 @@ impl E3Router {
             },
             context,
         )?;
+        Ok(())
+    }
+
+    fn reconcile_recovered_selections(&mut self) -> Result<()> {
+        for selection in std::mem::take(&mut self.recovered_selections) {
+            if self.completed.contains(&selection.e3_id) {
+                continue;
+            }
+
+            let e3_id = selection.e3_id.clone();
+            let event = self.bus.event_from(selection, None)?;
+            let sequence = self
+                .replay_cursors
+                .get(&event.aggregate_id())
+                .copied()
+                .unwrap_or_default();
+            let event = event.into_sequenced(sequence);
+            let context = self.contexts.get_mut(&e3_id).with_context(|| {
+                format!(
+                    "cannot restore local selection for E3 {e3_id}: request-router context is missing"
+                )
+            })?;
+
+            for extension in self.extensions.iter() {
+                extension.on_event(context, &event);
+            }
+            context.forward_message(&event, &mut self.buffer);
+            context.repository.write(&context.snapshot()?);
+        }
         Ok(())
     }
 }
@@ -35,6 +69,12 @@ impl Handler<InterfoldEvent> for E3Router {
 
     fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
         trap(EType::Event, &self.bus.with_ec(msg.get_ctx()), || {
+            if matches!(msg.get_data(), InterfoldEventData::SyncEffect(SyncEffect)) {
+                let event_context = msg.get_ctx().clone();
+                let result = self.reconcile_recovered_selections();
+                let checkpoint_result = self.checkpoint_with_context(&event_context);
+                return result.and(checkpoint_result);
+            }
             let event_context = msg.get_ctx().clone();
             let result = match RequestRouter::route_with_context(
                 &msg,

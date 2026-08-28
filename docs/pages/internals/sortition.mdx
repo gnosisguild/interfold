@@ -20,41 +20,44 @@ each E3 request. The design goals are:
 
 ## Sortition Seed
 
-Each request commits the next execution block as its entropy block. After that block is sealed, the
-sortition seed combines its hash with the E3 identifier:
+Each paid E3 request creates one asynchronous randomness request. The request stores the provider,
+provider request ID, and timeout deadline before the E3 request transaction completes. Chainlink
+later verifies the VRF proof, and the provider stores one random word.
+
+The registry accepts only the response bound to that E3 and derives the sortition seed:
 
 ```solidity
-seed = uint256(keccak256(abi.encode(blockhash(entropyBlock), e3Id)));
+seed = uint256(
+  keccak256(abi.encode(randomWord, block.chainid, address(registry), e3Id, requestId))
+);
 ```
 
-The paid request is final before this hash exists, so a requester cannot inspect the committee seed
-and revert an unfavorable request in the same transaction. Rust reads the entropy block through the
-execution RPC. By default, it waits for one block to build on top of the entropy block; operators do
-not configure this depth. Public RPC endpoints use one confirmation automatically, while loopback
-development RPC endpoints read the chain head. The first ticket submission derives and stores the
-same seed on-chain. No separate randomness transaction is required.
+The domain includes the chain, registry, E3, and provider request. A response cannot be reused for
+another request or deployment. The runtime watches provider fulfillment events and asks the registry
+for the accepted seed. The first valid ticket stores that seed and its response-time submission
+deadline on-chain.
 
 The E3 computation seed in `E3Requested` remains separate. It is still used by the cryptographic
-workflow, but it does not rank tickets. A block producer can influence block-hash entropy, so this
-design removes requester-side conditional-revert grinding without claiming the stronger guarantees
-of verifiable randomness. Operators must submit while the committed hash remains available to the
-contract. The contract uses EIP-2935 history when the chain provides it and otherwise relies on the
-EVM's 256-block recent history.
+workflow, but it does not rank tickets. An Ethereum block builder cannot calculate alternate VRF
+outputs by changing block contents. This release supports Ethereum mainnet and Sepolia; it does not
+enable Arbitrum deployments. A provider can delay or withhold a response, but it cannot replace the
+frozen request with a second draw. A timeout fails the E3 instead of selecting a fallback randomness
+source.
 
 ---
 
 ## Ticket Balances and Eligibility
 
 Each operator's weight in the lottery is determined by their available ticket count at the snapshot
-block:
+timepoint:
 
 ```
 availableTickets = floor(ticketTokenBalance / ticketPrice)
 ```
 
-Balances are snapshotted at **`requestBlock - 1`** — the block immediately before the E3 request was
-included. This prevents operators from front-running a request by depositing tickets in the same
-block.
+Balances are snapshotted at **`requestBlock - 1`**. The field name is retained for ABI and storage
+compatibility, but it stores an EIP-6372 timestamp. Ticket changes at the request timestamp or later
+do not affect that E3.
 
 An operator is eligible if and only if:
 
@@ -125,8 +128,8 @@ order does not assign the aggregator.
 
 ## On-chain Submission Window
 
-After `E3Requested` is emitted, there is a configured window during which eligible operators wait
-for the entropy block and submit their winning tickets. New deployments use 60 seconds by default:
+The submission window starts when the registry accepts a timely VRF response. New deployments use 60
+seconds by default. The Ethereum launch configuration uses 600 seconds:
 
 ```solidity
 submitTicket(e3Id, ticketNumber)
@@ -151,11 +154,11 @@ The contract enforces:
 
 After the submission window closes, anyone can call `finalizeCommittee(e3Id)`:
 
-- If ≥ `threshold_n` tickets were submitted → `CommitteeFinalized(e3Id, committee, scores)` is
-  emitted
+- If ≥ `threshold_n` tickets were submitted, `SortitionCommitteeFinalized(e3Id, committee, scores)`
+  is emitted
 - If fewer → `CommitteeFormationFailed` is emitted and the E3 fails with a refund
 
-Before emitting `CommitteeFinalized`, the registry **normalizes** the selected committee by
+Before emitting `SortitionCommitteeFinalized`, the registry **normalizes** the selected committee by
 **sorting it by ascending address**. The Rust runtime repeats that normalization at its trust
 boundary:
 
@@ -213,28 +216,37 @@ authoritative. Operators can choose or ignore local workload limits.
 
 ```mermaid
 sequenceDiagram
-    participant Chain
+    participant Interfold
+    participant Registry
+    participant Provider
     participant NodeA
     participant NodeB
     participant NodeC
 
-    Chain->>NodeA: E3Requested(e3Id, computationSeed, requestBlock)
-    Chain->>NodeB: E3Requested(e3Id, computationSeed, requestBlock)
-    Chain->>NodeC: E3Requested(e3Id, computationSeed, requestBlock)
-    Chain->>NodeA: CommitteeRequested(e3Id, entropyBlock)
-    Chain->>NodeB: CommitteeRequested(e3Id, entropyBlock)
-    Chain->>NodeC: CommitteeRequested(e3Id, entropyBlock)
+    Interfold->>Registry: requestCommittee(e3Id, threshold)
+    Registry->>Provider: requestRandomness(e3Id)
+    Provider-->>Registry: requestId
+    Interfold-->>NodeA: E3Requested(e3Id, computationSeed, requestBlock)
+    Interfold-->>NodeB: E3Requested(e3Id, computationSeed, requestBlock)
+    Interfold-->>NodeC: E3Requested(e3Id, computationSeed, requestBlock)
+    Note over Provider: Coordinator verifies the VRF proof
+    Provider-->>NodeA: RandomnessFulfilled(requestId, e3Id)
+    Provider-->>NodeB: RandomnessFulfilled(requestId, e3Id)
+    Provider-->>NodeC: RandomnessFulfilled(requestId, e3Id)
 
-    Note over NodeA,NodeC: Wait for entropyBlock, derive the committee seed,<br/>snapshot balances at requestBlock-1,<br/>score all tickets, keep best
+    NodeA->>Registry: sortitionSeed(e3Id)
+    NodeB->>Registry: sortitionSeed(e3Id)
+    NodeC->>Registry: sortitionSeed(e3Id)
+    Note over NodeA,NodeC: Use the accepted seed,<br/>snapshot balances at requestBlock-1,<br/>score all tickets, keep best
 
-    NodeA->>Chain: submitTicket(e3Id, ticketId=3)
-    NodeB->>Chain: submitTicket(e3Id, ticketId=0)
+    NodeA->>Registry: submitTicket(e3Id, ticketId=3)
+    NodeB->>Registry: submitTicket(e3Id, ticketId=0)
     Note over NodeC: NodeC's best score isn't low enough → doesn't submit
 
-    Note over Chain: Submission window closes
-    Chain->>Chain: finalizeCommittee(e3Id)
-    Chain->>NodeA: CommitteeFinalized([NodeA, NodeB], [scoreA, scoreB])
-    Chain->>NodeB: CommitteeFinalized([NodeA, NodeB], [scoreA, scoreB])
+    Note over Registry: Submission window closes
+    Registry->>Registry: finalizeCommittee(e3Id)
+    Registry-->>NodeA: SortitionCommitteeFinalized([NodeA, NodeB], [scoreA, scoreB])
+    Registry-->>NodeB: SortitionCommitteeFinalized([NodeA, NodeB], [scoreA, scoreB])
 
     Note over NodeA,NodeB: Both sort by address → same party_ids<br/>Lowest address = party_id 0 (aggregator)
 ```
@@ -243,14 +255,15 @@ sequenceDiagram
 
 ## Security Properties
 
-| Property                | Mechanism                                                           |
-| ----------------------- | ------------------------------------------------------------------- |
-| **Shared seed**         | The committed future block hash and `e3Id` provide the scoring seed |
-| **Proportionality**     | Expected min-score over N tickets scales with N                     |
-| **Sybil-resistance**    | Splitting tickets across wallets doesn't improve expected min-score |
-| **Determinism**         | Hash function is identical on-chain (Solidity) and off-chain (Rust) |
-| **Anti-frontrunning**   | Balances snapshotted at `requestBlock - 1`                          |
-| **Backup availability** | Buffer nodes ensure committee can absorb dropouts without restart   |
+| Property                | Mechanism                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------ |
+| **Unpredictable seed**  | A verified VRF word is bound to the chain, registry, E3, and request ID        |
+| **No reroll fallback**  | A missing or late response fails the E3 instead of requesting replacement data |
+| **Proportionality**     | Expected min-score over N tickets scales with N                                |
+| **Sybil-resistance**    | Splitting tickets across wallets doesn't improve expected min-score            |
+| **Determinism**         | Hash function is identical on-chain (Solidity) and off-chain (Rust)            |
+| **Anti-frontrunning**   | Balances use the timestamp checkpoint at `requestBlock - 1`                    |
+| **Backup availability** | Buffer nodes ensure committee can absorb dropouts without restart              |
 
 ---
 

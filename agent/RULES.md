@@ -30,7 +30,7 @@ message carries `[skip-doc-sync]`.
 - Commits: Conventional Commits, types `feat`/`fix`/`chore` only, description ≤ 72 chars, `!` for
   breaking changes.
 - Never hand-edit generated files (committee/preset files, parity matrices, verifier contracts,
-  `.active-preset.json`) — see `INVARIANTS.md` §Build / config sync.
+  `.active-preset.json`, `deployments/manifest.json`) — see `INVARIANTS.md` §Build / config sync.
 - Every new `.rs`/`.sol`/`.ts` file needs the SPDX `LGPL-3.0-only` header.
 - Before writing or reviewing natural-language technical content, load
   `.agents/skills/asd-ste100/SKILL.md`. Apply it to code comments, doc comments, documentation,
@@ -87,6 +87,21 @@ The current selection is the single source of truth at three places that **must*
 switch with `pnpm build:circuits --committee <name>`; never hand-edit the three files above.
 Supported `(preset, committee)` pairs live in `scripts/circuit-constants.ts`. See
 `scripts/README.md#circuit-builder` and `circuits/benchmarks/README.md` for the full recipe.
+
+## Contract addresses
+
+`packages/interfold-contracts/deployed_contracts.json` records what the deploy scripts put on each
+network. `pnpm gen:manifest` derives `deployments/manifest.json` from it, and that manifest is the
+single source of truth for every published address. It is attached to each release, and
+`interfold config check` fetches it to tell an operator that a redeploy happened.
+
+After a redeploy, update every consumer in the same PR: the operator docs, the dashboard, the
+DAppNode package, and the CRISP example. `pnpm check:addresses` (pre-push) enforces this. It fails
+when a consumer keeps an address the manifest no longer publishes, and when a new file quotes a live
+address without being classified in `scripts/check-addresses.ts`.
+
+A release must carry the current manifest. A tag cut before a redeploy ships dead addresses to every
+node that fetches the asset, and the node then syncs an address that emits no events.
 
 ## Flow-Trace Documentation (`agent/flow-trace/`)
 

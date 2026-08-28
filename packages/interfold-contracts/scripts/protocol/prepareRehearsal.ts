@@ -51,6 +51,55 @@ export async function actionPrepareRehearsal(): Promise<void> {
   );
   await ticketUnderlying.waitForDeployment();
 
+  let randomness: NonNullable<ProtocolConfigFile["randomness"]>;
+  if (chainId === 31337) {
+    const coordinator = await ethers.deployContract(
+      "ChainlinkVrfCoordinatorV2_5Mock",
+      [0, 0, ethers.parseEther("1")],
+    );
+    await coordinator.waitForDeployment();
+    await coordinator.createSubscription();
+    const [subscriptionId] = await coordinator.getActiveSubscriptionIds(0, 1);
+    if (!subscriptionId) throw new Error("VRF subscription was not created");
+    await coordinator.fundSubscription(
+      subscriptionId,
+      ethers.parseEther("100"),
+    );
+    randomness = {
+      coordinator: await deployedAddress(coordinator),
+      subscriptionId: subscriptionId.toString(),
+      keyHash: `0x${"11".repeat(32)}`,
+      requestConfirmations: 3,
+      callbackGasLimit: 150_000,
+      nativePayment: false,
+      minimumSubscriptionBalance: "1000000000000000000",
+      requestTimeout: "3600",
+    };
+  } else {
+    const coordinator = address(
+      arg("vrf-coordinator") ?? "",
+      "vrf-coordinator",
+    );
+    const subscriptionId = arg("vrf-subscription-id") ?? "";
+    const keyHash = arg("vrf-key-hash") ?? "";
+    if (!/^\d+$/.test(subscriptionId) || BigInt(subscriptionId) === 0n) {
+      throw new Error("--vrf-subscription-id must be a positive integer");
+    }
+    if (!ethers.isHexString(keyHash, 32)) {
+      throw new Error("--vrf-key-hash must be a bytes32 value");
+    }
+    randomness = {
+      coordinator,
+      subscriptionId,
+      keyHash,
+      requestConfirmations: 3,
+      callbackGasLimit: 150_000,
+      nativePayment: false,
+      minimumSubscriptionBalance: "1000000000000000000",
+      requestTimeout: "3600",
+    };
+  }
+
   const config: ProtocolConfigFile = {
     name:
       chainId === 11155111
@@ -67,6 +116,7 @@ export async function actionPrepareRehearsal(): Promise<void> {
     protocolTreasury: protocolOwner,
     slashedFundsTreasury: protocolOwner,
     slasher: ZERO,
+    randomness,
     ticketToken: { lockRegistry: true },
     bonding: {
       ticketPrice: "1000000000000000000000",
@@ -87,6 +137,7 @@ export async function actionPrepareRehearsal(): Promise<void> {
         decryptionWindow: "21600",
       },
       pricing: {
+        randomnessFlatFee: "1000000000000000000",
         keyGenFixedPerNode: "100000000000000000",
         keyGenPerEncryptionProof: "100000000000000000",
         coordinationPerPair: "10000000000000000",

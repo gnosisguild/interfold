@@ -121,14 +121,9 @@ async fn broadcast_encrypted_vote(
             ),
         });
     }
-    // `realip_remote_addr` honours `Forwarded`/`X-Forwarded-For`, which is right behind the
-    // deployment's reverse proxy and spoofable without one. Spoofing only widens the per-caller
-    // window though — the global window does not care whose traffic it is.
-    let caller = request
-        .connection_info()
-        .realip_remote_addr()
-        .unwrap_or("unknown")
-        .to_string();
+    // Same identity rule as the read routes, and it matters more here: this window is what stops
+    // one caller spending the relay's gas. A forgeable key is no key at all — see `caller_id`.
+    let caller = super::chain::identify(&request, CONFIG.trust_proxy_headers);
 
     // Caller admission only. The global transaction quota is reserved after parsing and
     // simulation, right before the relay pays — reserving it here would let invalid requests

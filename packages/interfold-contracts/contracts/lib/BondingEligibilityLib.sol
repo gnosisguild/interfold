@@ -15,6 +15,9 @@ import {
     BondingEligibilityStorage
 } from "../storage/BondingEligibilityStorage.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
+import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
+import { INodeReleaseManager } from "../interfaces/INodeReleaseManager.sol";
+import { INodeReleaseRegistry } from "../interfaces/INodeReleaseRegistry.sol";
 import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
 
 /// @notice Stores the request-boundary eligibility history for BondingRegistry.
@@ -27,6 +30,7 @@ library BondingEligibilityLib {
         uint256 ciphernodeBond;
         uint256 requiredCiphernodeBond;
         uint256 ciphernodeBondActiveBps;
+        address registry;
         address ticketToken;
         uint256 ticketPrice;
         uint256 minTicketBalance;
@@ -39,6 +43,25 @@ library BondingEligibilityLib {
     function invalidateConfiguration(
         uint256 configurationVersion
     ) external returns (uint256 newVersion) {
+        return _invalidateConfiguration(configurationVersion);
+    }
+
+    function requireNodeReleaseRegistry(
+        address registry,
+        address caller
+    ) external view {
+        address interfold = address(ICiphernodeRegistry(registry).interfold());
+        if (
+            caller !=
+            address(INodeReleaseManager(interfold).nodeReleaseRegistry())
+        ) {
+            revert INodeReleaseRegistry.OnlyNodeReleaseRegistry();
+        }
+    }
+
+    function _invalidateConfiguration(
+        uint256 configurationVersion
+    ) private returns (uint256 newVersion) {
         newVersion = configurationVersion + 1;
         BondingEligibilityStorage.EligibilityLayout storage state = _layout();
         // Checkpoint value zero means that no configuration existed yet.
@@ -62,8 +85,17 @@ library BondingEligibilityLib {
         InterfoldTicketToken ticketToken = InterfoldTicketToken(
             requirements.ticketToken
         );
+        address releaseRegistry = address(
+            INodeReleaseManager(
+                address(ICiphernodeRegistry(requirements.registry).interfold())
+            ).nodeReleaseRegistry()
+        );
         newActive =
             ticketToken.registry() == address(this) &&
+            releaseRegistry.code.length != 0 &&
+            INodeReleaseRegistry(releaseRegistry).isNodeReleaseReady(
+                operator
+            ) &&
             requirements.registered &&
             !requirements.banned &&
             isCiphernodeBonded(

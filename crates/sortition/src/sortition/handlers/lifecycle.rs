@@ -88,7 +88,13 @@ impl Handler<TypedEvent<E3Failed>> for Sortition {
         let (msg, ec) = msg.into_components();
         trap(EType::Sortition, &self.bus.with_ec(&ec), || {
             let reason = format!("E3Failed: {:?}", msg.reason);
-            self.decrement_jobs_for_e3(&msg.e3_id, &reason, ec)
+            self.decrement_jobs_for_e3(&msg.e3_id, &reason, ec.clone())?;
+            self.recovery.try_mutate(&ec, |mut recovery| {
+                recovery.remove(&msg.e3_id);
+                Ok(recovery)
+            })?;
+            self.processed_requests.remove(&msg.e3_id);
+            Ok(())
         })
     }
 }
@@ -106,9 +112,12 @@ impl Handler<TypedEvent<E3StageChanged>> for Sortition {
             match msg.new_stage {
                 E3Stage::Complete | E3Stage::Failed => {
                     let reason = format!("E3StageChanged to {:?}", msg.new_stage);
-                    self.decrement_jobs_for_e3(&msg.e3_id, &reason, ec)?;
-                    self.sortition_seeds.remove(&msg.e3_id);
-                    self.pending_requests.remove(&msg.e3_id);
+                    self.decrement_jobs_for_e3(&msg.e3_id, &reason, ec.clone())?;
+                    self.recovery.try_mutate(&ec, |mut recovery| {
+                        recovery.remove(&msg.e3_id);
+                        Ok(recovery)
+                    })?;
+                    self.processed_requests.remove(&msg.e3_id);
                 }
                 _ => {
                     // Non-terminal stages, no action needed
@@ -133,10 +142,11 @@ impl Handler<TypedEvent<E3RequestComplete>> for Sortition {
                     FinalizedCommitteeRetention::remove(&mut committees, &msg.e3_id);
                     Ok(committees)
                 })?;
-            self.pending_expulsions.remove(&msg.e3_id);
-            self.pending_exclusions.remove(&msg.e3_id);
-            self.sortition_seeds.remove(&msg.e3_id);
-            self.pending_requests.remove(&msg.e3_id);
+            self.recovery.try_mutate(msg.get_ctx(), |mut recovery| {
+                recovery.remove(&msg.e3_id);
+                Ok(recovery)
+            })?;
+            self.processed_requests.remove(&msg.e3_id);
             Ok(())
         })
     }

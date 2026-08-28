@@ -50,6 +50,14 @@ async function createPrivateSDK(): Promise<InterfoldSDK> {
 // submitted to the runner (so a run is not sent twice).
 const scheduled = new Set<string>()
 const inFlight = new Set<string>()
+const CHAIN_TIME_POLL_INTERVAL_MS = 500
+
+async function waitForChainTimestamp(sdk: InterfoldSDK, target: bigint): Promise<void> {
+  const publicClient = sdk.getPublicClient()
+  while ((await publicClient.getBlock()).timestamp < target) {
+    await new Promise((resolve) => setTimeout(resolve, CHAIN_TIME_POLL_INTERVAL_MS))
+  }
+}
 
 /**
  * Read the params and published inputs for an E3 from chain and forward them to
@@ -147,21 +155,23 @@ async function handleCommitteePublishedEvent(event: { data: CommitteePublishedDa
 
   console.log(`🎯 Committee published for E3 ${e3Id}, input window closes at ${expiration}`)
 
-  const currentTime = (await publicClient.getBlock()).timestamp
-  const sleepSeconds = expiration > currentTime ? Number(expiration - currentTime) : 0
-
   const run = () =>
     runProgram(e3Id).catch((error) => {
       console.error(`❌ Error processing E3 ${e3Id}:`, error)
     })
 
-  if (sleepSeconds > 0) {
-    console.log(`⏰ Scheduling E3 ${e3Id} processing in ${sleepSeconds} seconds...`)
-    setTimeout(run, sleepSeconds * 1000)
-  } else {
+  if ((await publicClient.getBlock()).timestamp >= expiration) {
     console.log(`⚡ E3 ${e3Id} input window already closed, processing immediately...`)
     await run()
+    return
   }
+
+  console.log(`⏰ Waiting for E3 ${e3Id} input window to close on-chain...`)
+  void waitForChainTimestamp(sdk, expiration)
+    .then(run)
+    .catch((error) => {
+      console.error(`❌ Error while waiting for E3 ${e3Id} input window:`, error)
+    })
 }
 
 async function setupEventListeners() {

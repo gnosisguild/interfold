@@ -47,6 +47,11 @@ export type {
   CiphernodeAddedData,
   CiphernodeRemovedData,
   CommitteeRequestedData,
+  CommitteeRandomnessRequestedData,
+  RandomnessCircuitBreakerTrippedData,
+  RandomnessFulfilledData,
+  RandomnessProviderEvent,
+  RandomnessProviderEventCallback,
   CommitteePublishedData,
   CommitteeFinalizedData,
   InterfoldEventData,
@@ -60,6 +65,7 @@ export type {
 // Enums and constants
 export {
   InterfoldEventType,
+  RandomnessProviderEventType,
   RegistryEventType,
   ThresholdBfvParamsPresetNames,
   E3Stage,

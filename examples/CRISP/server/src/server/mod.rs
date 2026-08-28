@@ -7,9 +7,11 @@
 mod app_data;
 mod database;
 mod indexer;
+mod log_repo;
 mod models;
 mod program_server_request;
 mod rate_limit;
+mod read_cache;
 mod repo;
 mod routes;
 pub mod token_holders;
@@ -37,8 +39,30 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let db = SharedStore::new(Arc::new(RwLock::new(SledDB::new(pathdb)?)));
 
     // New indexer
+    // Parsed once here rather than per request: the same list bounds what the indexer watches and
+    // what the read routes will serve, and those two must not be able to disagree.
+    let index_contracts: Vec<String> = CONFIG
+        .index_contracts
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(|entry| entry.trim().to_string())
+        .filter(|entry| !entry.is_empty())
+        .collect();
+
+    let index_log_contracts: Vec<String> = CONFIG
+        .index_log_contracts
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(|entry| entry.trim().to_string())
+        .filter(|entry| !entry.is_empty())
+        .collect();
+
     tokio::spawn({
         let db = db.clone();
+        let index_contracts = index_contracts.clone();
+        let index_log_contracts = index_log_contracts.clone();
         async move {
             if let Err(e) = start_indexer(
                 &CONFIG.ws_rpc_url,
@@ -47,6 +71,10 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 &CONFIG.e3_program_address,
                 db.clone(),
                 &CONFIG.private_key,
+                CONFIG.index_start_block,
+                CONFIG.index_chunk_size,
+                &index_contracts,
+                &index_log_contracts,
             )
             .await
             {
@@ -60,6 +88,11 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Built once, outside the factory closure: the closure runs per worker, and a per-worker
     // limiter would multiply every window by the worker count.
     let rate_limiter = web::Data::new(rate_limit::RateLimiter::new());
+    // Separate window, separate type: the relay's 10-a-minute limit would make the read routes
+    // useless, and actix keys `app_data` by type so one type can only ever be one limiter.
+    let chain_rate_limiter = web::Data::new(rate_limit::ChainRateLimiter::with_trust(
+        CONFIG.trust_proxy_headers,
+    ));
     let server = HttpServer::new(move || {
         let cors = Cors::default()
             .allow_any_origin()
@@ -73,6 +106,7 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .wrap(Logger::new(r#"%a "%r" %s %b %T"#))
             .app_data(web::Data::new(AppData::new(db_clone.clone())))
             .app_data(rate_limiter.clone())
+            .app_data(chain_rate_limiter.clone())
             .configure(routes::setup_routes)
     })
     .bind(bind_addr)?;

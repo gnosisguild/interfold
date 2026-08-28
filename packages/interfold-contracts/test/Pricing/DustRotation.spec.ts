@@ -106,6 +106,7 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
       decryptUtilizationBps: 2500,
       minCommitteeSize: 0,
       minThreshold: 0,
+      randomnessFlatFee: 1n,
     });
 
     await feeToken.mint(ownerAddress, ethers.parseUnits("1000000", 6));

@@ -1,7 +1,7 @@
 {
   "name": "@interfold/contracts",
   "description": "Interfold is an open-source protocol for Encrypted Execution Environments (E3).",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "license": "LGPL-3.0-only",
   "type": "module",
   "author": {
@@ -171,6 +171,10 @@
     "gen:manifest:check": "tsx scripts/genManifest.ts --check",
     "upgrade:ciphernodeRegistryOwnable": "pnpm validate:upgrade && hardhat run scripts/upgrade/ciphernodeRegistryOwnable.ts",
     "upgrade:e3RefundManager": "pnpm validate:upgrade && hardhat run scripts/upgrade/e3RefundManager.ts",
+    "upgrade:vrf-sortition": "pnpm validate:upgrade && tsx scripts/upgrade/vrfSortition.ts",
+    "upgrade:vrf-sortition:validate": "tsx scripts/upgrade/validateVrfSortition.ts",
+    "upgrade:vrf-sortition:resume": "tsx scripts/upgrade/resumeVrfSortition.ts",
+    "upgrade:node-release": "tsx scripts/upgrade/nodeRelease.ts",
     "e3:activate": "hardhat e3:activate",
     "e3:enable": "hardhat interfold:enableE3",
     "ciphernode:add": "hardhat ciphernode:add",
@@ -215,6 +219,7 @@
     "utils:sync-integration-config": "hardhat run scripts/syncIntegrationConfig.ts --network localhost"
   },
   "dependencies": {
+    "@chainlink/contracts": "1.5.0",
     "@openzeppelin/contracts-upgradeable": "^5.0.2",
     "@predicate/contracts": "2.2.3",
     "@safe-global/api-kit": "^5.0.1",

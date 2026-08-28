@@ -74,6 +74,7 @@ const REFERENCE_KEYS = [
   "InterfoldToken",
   "InterfoldTicketToken",
   "E3RefundManager",
+  "NodeReleaseRegistry",
   "MockE3Program",
   "MockComputeProvider",
   "MockDecryptionVerifier",

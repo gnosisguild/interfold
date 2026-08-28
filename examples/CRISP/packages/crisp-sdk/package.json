@@ -44,6 +44,8 @@
     "build:wasm": "pnpm -C ../crisp-zk-inputs build",
     "build": "pnpm build:wasm && pnpm compile:circuits && pnpm stage:preset insecure-512 && tsup",
     "test": "pnpm stage:preset insecure-512 && vitest --run",
+    "test:core-and-ballot-proofs": "pnpm stage:preset insecure-512 && vitest --run -t \"^(?!.*generateMaskVoteProof)\"",
+    "test:mask-proofs": "pnpm stage:preset insecure-512 && vitest --run tests/vote.test.ts -t \"generateMaskVoteProof\"",
     "stage:preset": "node ../../scripts/stage-preset-artifacts.mjs",
     "build:presets": "node ../../scripts/build-presets.mjs",
     "check:presets": "node ../../scripts/check-presets.mjs",

@@ -46,7 +46,7 @@ pnpm add @interfold/sdk @interfold/react
 Create a type-safe client that can interact with Interfold contracts:
 
 ```typescript
-import { InterfoldSDK, InterfoldEventType } from '@interfold/sdk'
+import { CommitteeSize, InterfoldSDK, InterfoldEventType } from '@interfold/sdk'
 import { createPublicClient, createWalletClient, http, custom } from 'viem'
 import { hardhat } from 'viem/chains'
 
@@ -71,17 +71,18 @@ const sdk = new InterfoldSDK({
   },
 })
 
-// Approve the fee token before requesting
-await sdk.approveFeeToken(BigInt(1000000))
-
-// Request a new E3 computation
-const hash = await sdk.requestE3({
-  threshold: [2, 3],
-  inputWindow: [BigInt(0), BigInt(100)],
+const now = BigInt(Math.floor(Date.now() / 1000))
+const requestParams = {
+  committeeSize: CommitteeSize.Minimum,
+  inputWindow: [now, now + 300n] as const,
   e3Program: '0x9A676e781A523b5d0C0e43731313A708CB607508',
-  e3ProgramParams: '0x',
+  paramSet: 0,
   computeProviderParams: '0x',
-})
+}
+const quote = await sdk.getE3Quote(requestParams)
+const approvalHash = await sdk.approveFeeToken(quote)
+await sdk.waitForTransaction(approvalHash)
+const hash = await sdk.requestE3({ ...requestParams, maxFee: quote })
 
 console.log('E3 requested with hash:', hash)
 ```
@@ -93,6 +94,7 @@ For React applications, use the `useInterfoldSDK` hook for seamless integration:
 ```typescript
 import React, { useEffect, useState } from 'react';
 import { useInterfoldSDK } from '@interfold/react';
+import { CommitteeSize } from '@interfold/sdk';
 
 function E3Dashboard() {
   const [e3Data, setE3Data] = useState(null);
@@ -139,13 +141,19 @@ function E3Dashboard() {
 
   const handleRequestE3 = async () => {
     try {
-      const hash = await requestE3({
-        threshold: [2, 3],
-        inputWindow: [BigInt(Date.now()), BigInt(Date.now() + 300000)],
+      if (!sdk) return;
+      const now = BigInt(Math.floor(Date.now() / 1000));
+      const requestParams = {
+        committeeSize: CommitteeSize.Minimum,
+        inputWindow: [now, now + 300n] as const,
         e3Program: '0x9A676e781A523b5d0C0e43731313A708CB607508',
-        e3ProgramParams: '0x',
+        paramSet: 0,
         computeProviderParams: '0x',
-      });
+      };
+      const quote = await sdk.getE3Quote(requestParams);
+      const approvalHash = await sdk.approveFeeToken(quote);
+      await sdk.waitForTransaction(approvalHash);
+      const hash = await requestE3({ ...requestParams, maxFee: quote });
       console.log('E3 requested:', hash);
     } catch (error) {
       console.error('Failed to request E3:', error);

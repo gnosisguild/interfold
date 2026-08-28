@@ -1,0 +1,59 @@
+name: contributors
+
+# Runs on pull_request and commits to the PR's own branch, rather than on push
+# to main. main is covered by the "Main Protection" ruleset: a direct push is
+# rejected, and a PR opened with GITHUB_TOKEN can never merge, because such PRs
+# do not trigger workflow runs and the required template_integration /
+# crisp_e2e checks would never report. PR branches are not covered by the
+# ruleset, so the table reaches main when the PR merges.
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  contrib-readme-job:
+    timeout-minutes: 10
+    runs-on: 'ubuntu-latest'
+    name: Populate Contributors List
+    # Fork PRs get a read-only GITHUB_TOKEN and no write access to the fork's
+    # branch, so the push would fail. Skip them; the list refreshes on the next
+    # same-repo PR.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    concurrency:
+      group: contrib-readme-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          # The default merge ref is detached; the commit below needs the real
+          # branch to push back to.
+          ref: ${{ github.event.pull_request.head.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Render contributors table
+        # Uses the runner's preinstalled Node. The script has no dependencies:
+        # node:fs plus global fetch.
+        run: node .github/scripts/update-contributors.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- README.md; then
+            echo "Contributors table already up to date"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add README.md
+          git commit -m 'docs(contributor): update contributors list'
+          git push origin "HEAD:${HEAD_REF}"
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}

@@ -20,13 +20,14 @@ use e3_evm_helpers::{
         InterfoldContract, InterfoldContractFactory, InterfoldRead, ProviderType, ReadOnly,
         ReadWrite,
     },
-    event_listener::EventListener,
+    event_listener::{EventListener, LiveProgress, NOT_PROCESSING},
     events::{CiphertextOutputPublished, CommitteePublished, PlaintextOutputPublished},
 };
 use e3_fhe_params::{decode_bfv_params, encode_bfv_params, BfvParamSet, BfvPreset};
 use eyre::eyre;
 use eyre::Result;
 use serde::{de::DeserializeOwned, Serialize};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
 use std::{future::Future, time::Duration};
 use thiserror::Error;
@@ -166,6 +167,20 @@ impl<S: DataStore, R: ProviderType> Drop for InterfoldIndexer<S, R> {
     }
 }
 
+/// Store key holding the last block whose logs have been fully applied.
+///
+/// Persisted so a restart resumes where it left off. Its ABSENCE is meaningful: it is what
+/// distinguishes a fresh database (start at the head, preserving the historical behaviour of
+/// this indexer) from a resumable one.
+pub const INDEXER_CURSOR_KEY: &str = "_indexer:cursor";
+
+/// Sentinel for "no backfill start configured" — see [`InterfoldIndexer::configure_backfill`].
+const BACKFILL_UNSET: u64 = u64::MAX;
+
+/// Default `eth_getLogs` window. Hosted providers cap the range, and 2k blocks sits under every
+/// cap we have met.
+const DEFAULT_BACKFILL_CHUNK: u64 = 2_000;
+
 pub struct IndexerContext<S: DataStore, R: ProviderType> {
     store: SharedStore<S>,
     event_listener: EventListener,
@@ -174,6 +189,38 @@ pub struct IndexerContext<S: DataStore, R: ProviderType> {
     contract_address: String,
     chain_id: u64,
     callbacks: CallbackQueue,
+    /// Block to backfill from when there is no cursor, or [`BACKFILL_UNSET`] to begin at the head.
+    backfill_start: AtomicU64,
+    backfill_chunk: AtomicU64,
+    /// Whether [`InterfoldIndexer::configure_backfill`] was ever called.
+    ///
+    /// Gates BOTH the catch-up and the cursor writes. Without this the cursor was written on
+    /// every block for every consumer, so from the second boot onward every indexer replayed its
+    /// downtime — including consumers that had opted into nothing and whose handlers are not pure
+    /// (replaying `E3Requested` re-submits `setMerkleRoot` and resets the stored round).
+    ///
+    /// Separately reference-counted, along with the two below, so the block handler can observe
+    /// them without capturing the context itself: the context owns the block listener, so a
+    /// handler holding an `Arc<IndexerContext>` is a cycle and the indexer is never dropped.
+    backfill_enabled: Arc<AtomicBool>,
+    /// Highest block the cursor has been advanced to in this process.
+    ///
+    /// The block handlers are spawned rather than awaited, so two headers arriving together race
+    /// on the store write and a blind insert could move the cursor BACKWARDS — which on the next
+    /// restart replays blocks already applied. `fetch_max` makes the claim monotonic.
+    cursor_high: Arc<AtomicU64>,
+    /// Whether the catch-up has completed at least once since the last (re)connect.
+    ///
+    /// The cursor is a claim that everything below it has been applied; it must not advance while
+    /// there is a known unreplayed gap beneath it, or the gap is sealed permanently.
+    caught_up: Arc<AtomicBool>,
+    /// How far the live subscription has actually applied. See [`LiveProgress`].
+    ///
+    /// The header stream and the log stream are independent, so a header alone says nothing about
+    /// whether that block's logs have been written. This is what turns "the chain reached N" into
+    /// "everything up to N has been applied", and without it a slow or failed raw handler let the
+    /// cursor claim a block whose logs were still in flight.
+    live_progress: Arc<LiveProgress>,
 }
 
 impl<S: DataStore, R: ProviderType> IndexerContext<S, R> {
@@ -282,13 +329,20 @@ impl<S: DataStore> InterfoldIndexer<S, ReadWrite> {
 
 impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
     pub async fn new(
-        event_listener: EventListener,
+        mut event_listener: EventListener,
         contract: InterfoldContract<R>,
         store: S,
     ) -> Result<Self> {
         let chain_id = contract.provider.get_chain_id().await?;
         let contract_address = contract.address().to_string();
         let block_listener = BlockListener::new(event_listener.provider());
+
+        // The listener reports what it has actually applied; the block handler below reads it
+        // before claiming anything, so a raw handler that is slow or failing holds the cursor back
+        // rather than being raced by the header stream.
+        let live_progress = Arc::new(LiveProgress::default());
+        event_listener.set_progress(live_progress.clone());
+
         let mut instance = Self {
             ctx: Arc::new(IndexerContext {
                 store: SharedStore::new(Arc::new(RwLock::new(store))),
@@ -298,6 +352,12 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                 contract_address,
                 chain_id,
                 callbacks: CallbackQueue::new(),
+                backfill_start: AtomicU64::new(BACKFILL_UNSET),
+                backfill_chunk: AtomicU64::new(DEFAULT_BACKFILL_CHUNK),
+                backfill_enabled: Arc::new(AtomicBool::new(false)),
+                cursor_high: Arc::new(AtomicU64::new(0)),
+                caught_up: Arc::new(AtomicBool::new(false)),
+                live_progress,
             }),
         };
         instance.setup_listeners().await?;
@@ -329,6 +389,37 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                     // if not it must have been destroyed
                     if let Some(ctx) = ctx_weak.upgrade() {
                         handler(e, ctx).await
+                    } else {
+                        warn!("Context was dropped!");
+                        Ok(())
+                    }
+                }
+            })
+            .await;
+    }
+
+    /// Register a handler that receives every log this indexer sees, undecoded.
+    ///
+    /// For consumers that need to retain events this crate has no ABI for — an index serving a
+    /// client's own queries, rather than a reaction to a known event.
+    pub async fn add_raw_log_handler<F, Fut>(&self, handler: F)
+    where
+        F: Fn(alloy::rpc::types::Log, Arc<IndexerContext<S, R>>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        let handler = Arc::new(handler);
+        let ctx = self.ctx.clone();
+        let ctx_weak = Arc::downgrade(&ctx);
+
+        self.ctx
+            .event_listener
+            .add_raw_handler(move |log: alloy::rpc::types::Log| {
+                let handler = Arc::clone(&handler);
+                let ctx_weak = ctx_weak.clone();
+
+                async move {
+                    if let Some(ctx) = ctx_weak.upgrade() {
+                        handler(log, ctx).await
                     } else {
                         warn!("Context was dropped!");
                         Ok(())
@@ -472,14 +563,62 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
 
     async fn register_blocktime_callback_handler(&mut self) -> Result<()> {
         let callbacks = self.ctx.callbacks.clone();
+        let store = self.ctx.store();
+        // Only the shared flags, never `self.ctx`: the context owns this block listener, so a
+        // handler that captured the context would form a cycle and the indexer would never drop.
+        let backfill_enabled = self.ctx.backfill_enabled.clone();
+        let caught_up = self.ctx.caught_up.clone();
+        let cursor_high = self.ctx.cursor_high.clone();
+        let live_progress = self.ctx.live_progress.clone();
         self.ctx
             .block_listener
             .add_block_handler(move |block| {
                 let timestamp = block.timestamp();
                 let blockheight = block.number();
                 let callbacks = callbacks.clone();
+                let mut store = store.clone();
+                let backfill_enabled = backfill_enabled.clone();
+                let caught_up = caught_up.clone();
+                let cursor_high = cursor_high.clone();
+                let live_progress = live_progress.clone();
                 async move {
                     info!("ON BLOCK: {}:{}", blockheight, timestamp);
+
+                    // Advance the cursor as the chain moves, not only during backfill. Without
+                    // this it freezes at the block catch-up ended on: the live subscription keeps
+                    // applying logs, but anything asking "how far has this been applied?" is told
+                    // a number that never grows — so a reader can never trust the index for
+                    // recent blocks, and a restart re-scans everything since boot.
+                    //
+                    // Only for consumers that asked for backfill, and only once the catch-up has
+                    // actually completed. Writing it unconditionally made every consumer resumable
+                    // whether or not they opted in, and writing it with a gap still unreplayed
+                    // beneath would seal that gap permanently.
+                    let tracking = backfill_enabled.load(Ordering::Relaxed)
+                        && caught_up.load(Ordering::Relaxed);
+
+                    // A header says the CHAIN reached this block, not that its logs have been
+                    // applied — those arrive on a separate subscription. `blockheight - 1` is only
+                    // a one-block hedge against that, and it is not enough on its own: a raw
+                    // handler that is slow (or has failed) leaves earlier logs unwritten while
+                    // headers keep arriving, and the cursor would claim them anyway. So the claim
+                    // is capped by what the listener reports it has actually finished.
+                    let ceiling = blockheight
+                        .checked_sub(1)
+                        .and_then(|hedged| live_progress.applied_ceiling(hedged));
+
+                    if let (true, Some(applied)) = (tracking, ceiling) {
+                        // Handlers are spawned, so headers can be processed out of order. Only a
+                        // strictly higher claim is persisted — a lower one would move the cursor
+                        // backwards and make the next restart replay applied blocks.
+                        let previous = cursor_high.fetch_max(applied, Ordering::Relaxed);
+                        if applied > previous {
+                            if let Err(e) = store.insert(INDEXER_CURSOR_KEY, &applied).await {
+                                warn!("Could not advance the indexer cursor: {e}");
+                            }
+                        }
+                    }
+
                     callbacks.execute_until_including(timestamp).await?;
                     Ok(())
                 }
@@ -498,9 +637,226 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
         Ok(())
     }
 
+    /// The current chain head, read through the SAME provider the catch-up uses.
+    ///
+    /// Exposed so a caller can pin `configure_backfill` to a head it has already observed. Reading
+    /// the head from a second endpoint and assuming the two agree is a silent hole: the other read
+    /// is at a different moment, possibly against a different node, and any caller recording where
+    /// indexing begins would record a block the catch-up then starts above.
+    pub async fn head_block(&self) -> Result<u64> {
+        self.ctx.event_listener.head_block().await
+    }
+
+    /// Configure historical catch-up. Call before [`Self::listen`].
+    ///
+    /// **Calling this at all opts in.** An indexer that never calls it keeps the original
+    /// behaviour exactly: no cursor is written, nothing is replayed, and the subscription starts
+    /// at the head. That distinction is the whole safety argument, because the handlers are not
+    /// pure — replaying `E3Requested` re-submits `setMerkleRoot` on chain and resets the stored
+    /// round — so a consumer must never acquire replay by upgrading the crate.
+    ///
+    /// `start_block` is used only when the store holds no cursor — i.e. on a fresh database.
+    /// Passing `None` there starts at the chain head, so a caller can opt into cursor tracking
+    /// (and therefore into resuming after a restart) without asking for history. Once a cursor
+    /// exists it always wins, so a restart replays exactly the gap and nothing else.
+    pub fn configure_backfill(&self, start_block: Option<u64>, chunk: Option<u64>) {
+        self.ctx
+            .backfill_start
+            .store(start_block.unwrap_or(BACKFILL_UNSET), Ordering::Relaxed);
+        if let Some(chunk) = chunk.filter(|c| *c > 0) {
+            self.ctx.backfill_chunk.store(chunk, Ordering::Relaxed);
+        }
+        // Release-ordered so the values above are visible to any thread that observes the flag.
+        self.ctx.backfill_enabled.store(true, Ordering::Release);
+    }
+
+    /// Replay every log between the stored cursor and the current head.
+    ///
+    /// Runs before the subscription on every (re)connect: `subscribe_logs` starts at the head and
+    /// has no memory, so without this each restart or dropped socket leaves a permanent hole in
+    /// the store. The cursor is persisted per window, so an interrupted catch-up resumes from the
+    /// last window that fully applied rather than starting over or skipping ahead.
+    async fn catch_up_to_head(&self) -> Result<()> {
+        let mut store = self.ctx.store();
+
+        let cursor: Option<u64> = store
+            .get(INDEXER_CURSOR_KEY)
+            .await
+            .map_err(|e| eyre!("reading the indexer cursor failed: {e}"))?;
+
+        let mut head = self.ctx.event_listener.head_block().await?;
+
+        let mut window_start = match cursor {
+            Some(cursor) => cursor.saturating_add(1),
+            None => match self.ctx.backfill_start.load(Ordering::Relaxed) {
+                // No history was asked for, so there is nothing to replay yet — but the cursor is
+                // persisted anyway, at `head - 1`. That is what gives the overlap pass a lower
+                // bound to work from: without it the pass would take this same branch again and
+                // the blocks mined before the subscription came up would be replayed by nobody.
+                BACKFILL_UNSET => {
+                    let applied = head.saturating_sub(1);
+                    store
+                        .insert(INDEXER_CURSOR_KEY, &applied)
+                        .await
+                        .map_err(|e| eyre!("persisting the indexer cursor failed: {e}"))?;
+                    self.ctx.cursor_high.fetch_max(applied, Ordering::Relaxed);
+                    return Ok(());
+                }
+                configured => configured,
+            },
+        };
+
+        let chunk = self.ctx.backfill_chunk.load(Ordering::Relaxed).max(1);
+        let mut total = 0u64;
+
+        // Re-reads the head after each pass rather than aiming at the one read at the start.
+        // A backfill from a deployment block takes minutes to hours, and every block mined while
+        // it ran was in neither the replay nor the subscription that starts afterwards — a
+        // permanent hole that the coverage record would then claim was indexed.
+        loop {
+            if window_start > head {
+                let latest = self.ctx.event_listener.head_block().await?;
+                // Converged: the chain has not moved past what has been applied. This is NOT yet
+                // the end of the story — the subscription is not up at this point, so blocks
+                // mined between here and its arrival are still uncovered. `listen` runs this
+                // function a second time once the subscription is live, and that pass is what
+                // makes the overlap real.
+                if latest <= head {
+                    break;
+                }
+                head = latest;
+                continue;
+            }
+
+            info!("Backfilling logs from block {window_start} to {head}...");
+
+            let window_end = window_start.saturating_add(chunk - 1).min(head);
+
+            total += self
+                .ctx
+                .event_listener
+                .catch_up(window_start, window_end, chunk)
+                .await?;
+
+            // Only after the window's handlers have all succeeded: the cursor is a claim that
+            // everything up to here has been applied, and advancing it past a failed handler
+            // would turn a retryable error into a silent gap.
+            store
+                .insert(INDEXER_CURSOR_KEY, &window_end)
+                .await
+                .map_err(|e| eyre!("persisting the indexer cursor failed: {e}"))?;
+            self.ctx
+                .cursor_high
+                .fetch_max(window_end, Ordering::Relaxed);
+
+            window_start = window_end.saturating_add(1);
+        }
+
+        info!("Backfill complete: {total} log(s) applied up to block {head}");
+        Ok(())
+    }
+
     pub async fn listen(&self) -> Result<()> {
         info!("Starting InterfoldIndexer listening...");
+
+        // How many times a backfill may fail before the indexer subscribes anyway.
+        //
+        // `catch_up` propagates handler errors so a failed window does not advance the cursor —
+        // correct on its own, but combined with an unconditional retry it meant one permanently
+        // failing historical event (a revert, an exhausted API key) stopped the indexer from ever
+        // subscribing. That converts a gap into a total outage. After this many attempts, live
+        // indexing resumes with `caught_up` still false, so the cursor stays put and the gap is
+        // replayed on a later attempt rather than being sealed.
+        const MAX_BACKFILL_ATTEMPTS: u32 = 5;
+
+        let mut backfill_failures = 0u32;
+
+        let backfill_enabled = self.ctx.backfill_enabled.clone();
+
         loop {
+            self.ctx.caught_up.store(false, Ordering::Relaxed);
+            // Reset synchronously, before the futures below are built: left set from the previous
+            // iteration, the overlap pass would fire against a subscription that no longer exists.
+            self.ctx.live_progress.mark_unsubscribed();
+            self.ctx.live_progress.healthy.store(true, Ordering::SeqCst);
+            self.ctx
+                .live_progress
+                .processing_block
+                .store(NOT_PROCESSING, Ordering::SeqCst);
+
+            // The bulk of the replay runs before subscribing, so a long backfill is not held open
+            // by a live socket. It cannot close the gap by itself, though: it converges on a head
+            // read taken while nothing is subscribed. The overlap pass below finishes the job.
+            if backfill_enabled.load(Ordering::Acquire) {
+                match self.catch_up_to_head().await {
+                    Ok(()) => backfill_failures = 0,
+                    Err(e) => {
+                        backfill_failures += 1;
+                        if backfill_failures < MAX_BACKFILL_ATTEMPTS {
+                            error!(
+                                "Backfill failed ({backfill_failures}/{MAX_BACKFILL_ATTEMPTS}): \
+                                 {e}. Retrying in 5s..."
+                            );
+                            sleep(Duration::from_secs(5)).await;
+                            continue;
+                        }
+                        error!(
+                            "Backfill has failed {backfill_failures} times: {e}. Subscribing to \
+                             live logs anyway; the cursor stays put, so the unreplayed range is \
+                             NOT claimed as indexed and will be retried on the next reconnect."
+                        );
+                    }
+                }
+            }
+
+            // Replay once more, this time from inside the subscription's lifetime.
+            //
+            // The pass above ends on a head read taken while nothing was subscribed, and the
+            // subscription only comes up a moment later. Blocks mined in between were in NEITHER —
+            // and the cursor then advanced past them from the header stream, so nothing ever went
+            // back for them. Silent, permanent, and reported as covered.
+            //
+            // Waiting for `mark_subscribed` before replaying makes the overlap the code has always
+            // claimed real: this range is now delivered by the subscription, by this replay, or by
+            // both. Duplicates are the intended cost — the store's `append` is idempotent on
+            // (block, log_index) precisely for this.
+            //
+            // `caught_up` is set only when this succeeds, so the cursor cannot advance while the
+            // handoff range is still outstanding.
+            let overlap = async {
+                if !backfill_enabled.load(Ordering::Acquire) {
+                    return std::future::pending::<Result<()>>().await;
+                }
+
+                self.ctx.live_progress.wait_subscribed().await;
+
+                // Retried until it succeeds, rather than attempted once. Giving up here left
+                // `caught_up` false for the life of the connection, and a healthy subscription can
+                // run for days without reconnecting — so the cursor would freeze that whole time,
+                // a restart would replay everything since the last good window, and any reader
+                // asking how far the index has been applied would be told a number hours stale.
+                // Nothing here is worth failing permanently over: the range is still on chain.
+                loop {
+                    match self.catch_up_to_head().await {
+                        Ok(()) => {
+                            info!("Handoff replay complete; the index is live and contiguous.");
+                            self.ctx.caught_up.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                        Err(e) => {
+                            error!(
+                                "Handoff replay failed: {e}. The cursor stays put, so the handoff \
+                                 range is not claimed as indexed. Retrying in 5s..."
+                            );
+                            sleep(Duration::from_secs(5)).await;
+                        }
+                    }
+                }
+
+                // Never resolves, so this branch cannot win the select and cancel the listeners.
+                std::future::pending::<Result<()>>().await
+            };
+
             let res = tokio::select! {
                 res = self.ctx.event_listener.listen() => {
                     match &res {
@@ -516,6 +872,7 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
                     };
                     res
                 }
+                res = overlap => res,
             };
 
             let secs = res.map(|_| 1).unwrap_or(5);

@@ -31,7 +31,13 @@ async fn startup_history_is_fenced_between_effects_and_live_mode() -> anyhow::Re
         .collect::<Vec<_>>();
     assert_eq!(
         types,
-        ["EffectsEnabled", "TestEvent", "TestEvent", "SyncEnded"]
+        [
+            "EffectsEnabled",
+            "SyncEffect",
+            "TestEvent",
+            "TestEvent",
+            "SyncEnded"
+        ]
     );
     Ok(())
 }

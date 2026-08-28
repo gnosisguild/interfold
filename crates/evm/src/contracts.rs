@@ -39,6 +39,12 @@ sol! {
             bytes32 ciphertextCommitment;
         }
 
+        struct E3Deadlines {
+            uint256 dkgDeadline;
+            uint256 computeDeadline;
+            uint256 decryptionDeadline;
+        }
+
         // ── Write functions ─────────────────────────────────────────────────
         function publishPlaintextOutput(
             uint256 e3Id,
@@ -48,8 +54,22 @@ sol! {
 
         function processE3Failure(uint256 e3Id) external;
 
+        function markE3Failed(uint256 e3Id) external returns (uint8 reason);
+
         // ── View functions ──────────────────────────────────────────────────
         function getE3(uint256 e3Id) external view returns (E3 memory e3);
+
+        function getE3Stage(uint256 e3Id) external view returns (uint8 stage);
+
+        function getDeadlines(uint256 e3Id) external view returns (E3Deadlines memory deadlines);
+
+        function checkFailureCondition(
+            uint256 e3Id
+        ) external view returns (bool canFail, uint8 reason);
+
+        function nodeReleaseRegistry() external view returns (address);
+        function bondingRegistry() external view returns (address);
+        function ciphernodeRegistry() external view returns (address);
 
         // ── Events ──────────────────────────────────────────────────────────
         event E3Requested(uint256 e3Id, E3 e3, bytes32 indexed cryptoConfigId);
@@ -71,6 +91,31 @@ sol! {
         error InvalidOutput(bytes output);
         error E3NotFailed(uint256 e3Id);
         error NoPaymentToRefund(uint256 e3Id);
+        error FailureConditionNotMet(uint256 e3Id);
+        error E3AlreadyFailed(uint256 e3Id);
+        error E3AlreadyComplete(uint256 e3Id);
+        error MarkE3FailedInGracePeriod(uint256 e3Id, uint256 gracePeriodEnds);
+    }
+}
+
+// ── INodeReleaseRegistry ───────────────────────────────────────────────────
+
+sol! {
+    #[sol(rpc)]
+    #[derive(Debug)]
+    interface INodeReleaseRegistry {
+        struct OperatorNodeRelease {
+            bytes32 releaseId;
+            uint32 protocolVersion;
+            uint32 nodeGeneration;
+        }
+
+        function acknowledgeNodeRelease(bytes32 releaseId, uint32 protocolVersion, uint32 nodeGeneration) external;
+        function requiredProtocolVersion() external view returns (uint32);
+        function requiredNodeGeneration() external view returns (uint32);
+        function operatorNodeRelease(address operator) external view returns (OperatorNodeRelease memory);
+        function bondingRegistry() external view returns (address);
+        function ciphernodeRegistry() external view returns (address);
     }
 }
 
@@ -191,6 +236,24 @@ sol! {
 
         function numCiphernodes() external view returns (uint256);
 
+        function randomnessProvider() external view returns (address);
+
+        function sortitionSeed(
+            uint256 e3Id
+        ) external view returns (bool ready, uint256 seed);
+
+        function getSortitionRequest(
+            uint256 e3Id
+        )
+            external
+            view
+            returns (
+                uint32[2] memory threshold,
+                uint256 requestBlock,
+                uint256 committeeDeadline,
+                uint256 ticketPrice
+            );
+
         // ── Events ──────────────────────────────────────────────────────────
         event CiphernodeAdded(
             address indexed node,
@@ -214,6 +277,23 @@ sol! {
             uint256 committeeDeadline,
             uint256 ticketPrice
         );
+
+        event CommitteeRandomnessRequested(
+            uint256 indexed e3Id,
+            uint256 indexed requestId,
+            address indexed provider,
+            uint256 randomnessDeadline
+        );
+
+        event RandomnessProviderSet(address indexed randomnessProvider);
+
+        event RandomnessCircuitBreakerTripped(
+            uint256 indexed e3Id,
+            uint256 indexed requestId,
+            address indexed randomnessProvider
+        );
+
+        event RandomnessRequestTimeoutSet(uint256 randomnessRequestTimeout);
 
         event SortitionCommitteeFinalized(
             uint256 indexed e3Id,
@@ -288,6 +368,21 @@ sol! {
         error DkgProofRequired();
         error InvalidDkgProof();
         error FoldAttestationsRequired();
+    }
+}
+
+// ── IRandomnessProvider ────────────────────────────────────────────────────
+
+sol! {
+    #[sol(rpc)]
+    #[derive(Debug)]
+    interface IRandomnessProvider {
+        event RandomnessFulfilled(
+            uint256 indexed requestId,
+            uint256 indexed e3Id,
+            uint256 randomWord,
+            uint256 fulfilledAt
+        );
     }
 }
 

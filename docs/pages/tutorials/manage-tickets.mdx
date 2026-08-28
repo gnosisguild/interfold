@@ -77,11 +77,11 @@ delay, the owner receives the ticket collateral through `claimExitsFor`.
 
 ## The Snapshot Rule
 
-Balances are snapshotted at **`requestBlock - 1`** — the block immediately before each E3 request is
-included. This means:
+Balances are snapshotted at **`requestBlock - 1`**. The field name is retained for compatibility,
+but it stores the EIP-6372 request timestamp. This means:
 
-- Tickets added **before** the request block count for that round
-- Tickets added **in the same block or later** do not count — they apply to future rounds
+- Tickets added **before** the request timestamp count for that round
+- Tickets added **at the request timestamp or later** do not count. They apply to future rounds
 - You cannot front-run a request by depositing tickets at the last moment
 
 **Practical tip:** Add tickets well ahead of anticipated demand. Don't wait for a specific E3

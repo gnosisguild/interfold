@@ -26,6 +26,7 @@ import { RegistrySortitionLib } from "../lib/RegistrySortitionLib.sol";
 import {
     IDkgFoldAttestationVerifier
 } from "../interfaces/IDkgFoldAttestationVerifier.sol";
+import { IRandomnessProvider } from "../interfaces/IRandomnessProvider.sol";
 
 /**
  * @title CiphernodeRegistryOwnable
@@ -46,12 +47,11 @@ contract CiphernodeRegistryOwnable is
     uint256 public constant MIN_SORTITION_SUBMISSION_WINDOW = 60;
 
     /// @notice Maximum permitted value for {sortitionSubmissionWindow}.
-    /// @dev One day fits inside Arbitrum's approximately 27-hour L2 hash history.
+    /// @dev Bounds the time reserved for ticket submission in one E3 lifecycle.
     uint256 public constant MAX_SORTITION_SUBMISSION_WINDOW = 1 days;
 
-    /// @notice EIP-2935 block-hash history contract.
-    address public constant BLOCKHASH_HISTORY =
-        0x0000F90827F1C53a10cb7A02335B175320002935;
+    /// @notice Timeout used by new registries before governance changes it.
+    uint256 private constant DEFAULT_RANDOMNESS_REQUEST_TIMEOUT = 1 hours;
 
     /// @notice Thrown when {setSortitionSubmissionWindow} input is outside the
     ///         permitted window.
@@ -196,11 +196,11 @@ contract CiphernodeRegistryOwnable is
     /// @dev Highest committee deadline created by a request.
     uint256 private _latestCommitteeDeadline;
 
-    /// @notice Future block committed when an E3 requests a committee.
-    mapping(uint256 e3Id => uint256 blockNumber) public sortitionEntropyBlocks;
+    /// @dev Reserved storage from the block-hash sortition implementation.
+    mapping(uint256 e3Id => uint256 blockNumber) private sortitionEntropyBlocks;
 
-    /// @notice Whether the committee seed has been stored for an E3.
-    mapping(uint256 e3Id => bool resolved) public sortitionSeedResolved;
+    /// @dev Whether the request-bound VRF seed has been stored for an E3.
+    mapping(uint256 e3Id => bool resolved) private sortitionSeedResolved;
 
     /// @inheritdoc ICiphernodeRegistry
     uint256 public unreleasedCommitteeCount;
@@ -255,6 +255,12 @@ contract CiphernodeRegistryOwnable is
         __Ownable_init(msg.sender);
         ciphernodes._init(TREE_DEPTH);
         setSortitionSubmissionWindow(_submissionWindow);
+        RegistrySortitionLib.setRandomnessRequestTimeout(
+            DEFAULT_RANDOMNESS_REQUEST_TIMEOUT,
+            0,
+            sortitionSubmissionWindow,
+            bondingRegistry
+        );
         // Seed the off-chain freshness window with a sensible default so new
         // deployments don't immediately need a governance call before slashing
         // becomes operational.
@@ -318,29 +324,22 @@ contract CiphernodeRegistryOwnable is
         sortitionTicketPrices[e3Id] = ticketPrice;
 
         c.stage = ICiphernodeRegistry.CommitteeStage.Requested;
-        uint256 entropyBlock = RegistrySortitionLib.currentBlockNumber(
-            block.chainid
-        ) + 1;
-        sortitionEntropyBlocks[e3Id] = entropyBlock;
         // NOTE: `requestBlock` stores a timepoint per EIP-6372 (mode=timestamp) — its name
         // is kept for storage/event compatibility but it must be compared to
         // {block.timestamp}. This matches the InterfoldTicketToken's timestamp-mode clock so
         // {getPastVotes} lookups resolve consistently.
-        c.committeeDeadline = block.timestamp + sortitionSubmissionWindow;
-        if (c.committeeDeadline > _latestCommitteeDeadline) {
-            _latestCommitteeDeadline = c.committeeDeadline;
+        (, uint256 randomnessDeadline) = RegistrySortitionLib.requestRandomness(
+            e3Id,
+            sortitionSubmissionWindow
+        );
+        c.committeeDeadline = randomnessDeadline;
+        uint256 latestDeadline = randomnessDeadline + sortitionSubmissionWindow;
+        if (latestDeadline > _latestCommitteeDeadline) {
+            _latestCommitteeDeadline = latestDeadline;
         }
         c.threshold = threshold;
         roots[e3Id] = root();
 
-        emit CommitteeRequested(
-            e3Id,
-            entropyBlock,
-            threshold,
-            c.requestBlock,
-            c.committeeDeadline,
-            ticketPrice
-        );
         success = true;
     }
 
@@ -620,6 +619,7 @@ contract CiphernodeRegistryOwnable is
             c.stage == ICiphernodeRegistry.CommitteeStage.Requested,
             CommitteeAlreadyFinalized()
         );
+        uint256 seed = _resolveSortitionSeed(e3Id, c);
         require(
             block.timestamp <= c.committeeDeadline,
             CommitteeDeadlineReached()
@@ -637,13 +637,17 @@ contract CiphernodeRegistryOwnable is
         );
 
         // Validate node eligibility and ticket number
-        _validateNodeEligibility(msg.sender, ticketNumber, e3Id);
+        RegistrySortitionLib.validateTicket(
+            address(_bondingFor(e3Id)),
+            msg.sender,
+            ticketNumber,
+            c.requestBlock,
+            sortitionTicketPrices[e3Id]
+        );
 
-        uint256 seed = _resolveSortitionSeed(e3Id, c);
-
-        // The ticket snapshot predates the request, while the seed comes from
-        // a block that is committed only after the request succeeds.
-        uint256 score = _computeTicketScore(
+        // The ticket snapshot predates the request, while VRF fulfills the seed
+        // only after the request is final.
+        uint256 score = RegistrySortitionLib.ticketScore(
             msg.sender,
             ticketNumber,
             e3Id,
@@ -664,41 +668,56 @@ contract CiphernodeRegistryOwnable is
         emit TicketSubmitted(e3Id, msg.sender, ticketNumber, score);
     }
 
-    /// @notice Returns the request-bound sortition seed after its entropy block is sealed.
+    /// @notice Returns the request-bound sortition seed after VRF fulfillment.
     /// @param e3Id ID of the E3 computation.
     /// @return ready Whether the seed is available.
     /// @return seed Seed used to score committee tickets.
     function sortitionSeed(
         uint256 e3Id
-    ) public view returns (bool ready, uint256 seed) {
-        Committee storage c = committees[e3Id];
-        if (sortitionSeedResolved[e3Id]) return (true, c.seed);
-
-        uint256 entropyBlock = sortitionEntropyBlocks[e3Id];
-        bytes32 entropy;
-        (ready, entropy) = RegistrySortitionLib.entropyBlockHash(
-            block.chainid,
-            entropyBlock
-        );
-        if (!ready) return (false, 0);
-
-        seed = uint256(keccak256(abi.encode(entropy, e3Id)));
+    ) external view returns (bool ready, uint256 seed) {
+        (ready, seed, ) = _sortitionState(e3Id);
     }
 
     function _resolveSortitionSeed(
         uint256 e3Id,
         Committee storage c
     ) internal returns (uint256 seed) {
-        (bool ready, uint256 resolvedSeed) = sortitionSeed(e3Id);
-        require(
-            ready,
-            SortitionSeedUnavailable(e3Id, sortitionEntropyBlocks[e3Id])
+        (bool ready, uint256 resolvedSeed, uint256 deadline) = _sortitionState(
+            e3Id
         );
+        if (!ready) {
+            (, uint256 requestId, ) = RegistrySortitionLib.requestContext(e3Id);
+            revert SortitionSeedUnavailable(e3Id, requestId);
+        }
         if (!sortitionSeedResolved[e3Id]) {
             c.seed = resolvedSeed;
+            c.committeeDeadline = deadline;
             sortitionSeedResolved[e3Id] = true;
         }
         return resolvedSeed;
+    }
+
+    function _sortitionState(
+        uint256 e3Id
+    )
+        internal
+        view
+        returns (bool ready, uint256 seed, uint256 committeeDeadline)
+    {
+        return
+            RegistrySortitionLib.sortitionState(
+                e3Id,
+                sortitionSeedResolved[e3Id],
+                committees[e3Id].seed,
+                committees[e3Id].committeeDeadline
+            );
+    }
+
+    function _requireCommitteeRequested(uint256 e3Id) private view {
+        require(
+            committees[e3Id].stage != CommitteeStage.None,
+            CommitteeNotRequested()
+        );
     }
 
     /// @notice Finalize the committee after submission window closes
@@ -707,38 +726,38 @@ contract CiphernodeRegistryOwnable is
     /// @return success True if committee formed successfully, false if threshold not met
     function finalizeCommittee(uint256 e3Id) external returns (bool success) {
         Committee storage c = committees[e3Id];
-        require(
-            c.stage != ICiphernodeRegistry.CommitteeStage.None,
-            CommitteeNotRequested()
-        );
+        _requireCommitteeRequested(e3Id);
         require(
             c.stage == ICiphernodeRegistry.CommitteeStage.Requested,
             CommitteeAlreadyFinalized()
         );
-        require(
-            block.timestamp > c.committeeDeadline,
-            SubmissionWindowNotClosed()
-        );
-        bool thresholdMet = c.topNodes.length >= c.threshold[1];
-
-        if (!thresholdMet) {
-            c.stage = ICiphernodeRegistry.CommitteeStage.Failed;
+        (bool randomnessReady, , uint256 deadline) = _sortitionState(e3Id);
+        if (randomnessReady) {
+            _resolveSortitionSeed(e3Id, c);
+        } else {
+            (, , deadline) = RegistrySortitionLib.requestContext(e3Id);
+        }
+        require(block.timestamp > deadline, SubmissionWindowNotClosed());
+        if (!randomnessReady || c.topNodes.length < c.threshold[1]) {
+            uint8 reason = uint8(
+                IInterfold.FailureReason.CommitteeFormationTimeout
+            );
+            if (randomnessReady) {
+                reason = uint8(
+                    IInterfold.FailureReason.InsufficientCommitteeMembers
+                );
+            }
             emit CommitteeFormationFailed(
                 e3Id,
                 c.topNodes.length,
                 c.threshold[1]
             );
-            _interfoldFor(e3Id).onE3Failed(
-                e3Id,
-                uint8(IInterfold.FailureReason.InsufficientCommitteeMembers)
-            );
-            c.obligationsReleased = true;
-            _releaseCommitteeObligations(e3Id, c);
-            unreleasedCommitteeCount--;
+            _interfoldFor(e3Id).onE3Failed(e3Id, reason);
+            releaseCommittee(e3Id);
             return false;
         }
 
-        _sortTopNodesByAscendingAddress(c);
+        RegistrySortitionLib.sortTopNodes(c);
 
         c.stage = ICiphernodeRegistry.CommitteeStage.Finalized;
         c.activeCount = c.topNodes.length;
@@ -758,7 +777,7 @@ contract CiphernodeRegistryOwnable is
     }
 
     /// @inheritdoc ICiphernodeRegistry
-    function releaseCommittee(uint256 e3Id) external {
+    function releaseCommittee(uint256 e3Id) public {
         Committee storage c = committees[e3Id];
         require(
             c.stage == ICiphernodeRegistry.CommitteeStage.Requested ||
@@ -776,9 +795,7 @@ contract CiphernodeRegistryOwnable is
         ) revert E3NotTerminal(e3Id);
 
         c.obligationsReleased = true;
-        if (c.stage == ICiphernodeRegistry.CommitteeStage.Requested) {
-            c.stage = ICiphernodeRegistry.CommitteeStage.Failed;
-        }
+        RegistrySortitionLib.failRequestedCommittee(c, e3Id);
         _releaseCommitteeObligations(e3Id, c);
         unreleasedCommitteeCount--;
         emit CommitteeActivationChanged(e3Id, false);
@@ -846,7 +863,7 @@ contract CiphernodeRegistryOwnable is
     }
 
     /// @notice Disabled. Reverts unconditionally.
-    function renounceOwnership() public view override onlyOwner {
+    function renounceOwnership() public pure override {
         revert RenounceOwnershipDisabled();
     }
 
@@ -860,8 +877,10 @@ contract CiphernodeRegistryOwnable is
             SortitionSubmissionWindowOutOfBounds(_sortitionSubmissionWindow)
         );
         uint256 requiredDelay = exitDelayFloor();
-        if (_sortitionSubmissionWindow > requiredDelay) {
-            requiredDelay = _sortitionSubmissionWindow;
+        uint256 futureWindow = _sortitionSubmissionWindow +
+            randomnessRequestTimeout();
+        if (futureWindow > requiredDelay) {
+            requiredDelay = futureWindow;
         }
         _validateExitTiming(bondingRegistry, requiredDelay);
         sortitionSubmissionWindow = _sortitionSubmissionWindow;
@@ -869,8 +888,38 @@ contract CiphernodeRegistryOwnable is
     }
 
     /// @inheritdoc ICiphernodeRegistry
+    function setRandomnessProvider(
+        IRandomnessProvider provider
+    ) external onlyOwner {
+        RegistrySortitionLib.setRandomnessProvider(
+            provider,
+            unreleasedCommitteeCount
+        );
+    }
+
+    /// @inheritdoc ICiphernodeRegistry
+    function setRandomnessRequestTimeout(uint256 timeout) external onlyOwner {
+        RegistrySortitionLib.setRandomnessRequestTimeout(
+            timeout,
+            unreleasedCommitteeCount,
+            sortitionSubmissionWindow,
+            bondingRegistry
+        );
+    }
+
+    /// @inheritdoc ICiphernodeRegistry
+    function randomnessProvider() external view returns (address) {
+        return RegistrySortitionLib.randomnessProvider();
+    }
+
+    /// @inheritdoc ICiphernodeRegistry
+    function randomnessRequestTimeout() public view returns (uint256) {
+        return RegistrySortitionLib.randomnessRequestTimeout();
+    }
+
+    /// @inheritdoc ICiphernodeRegistry
     function exitDelayFloor() public view returns (uint256 floor) {
-        floor = sortitionSubmissionWindow;
+        floor = sortitionSubmissionWindow + randomnessRequestTimeout();
         uint256 deadline = _latestCommitteeDeadline;
         if (deadline > block.timestamp) {
             uint256 remaining = deadline - block.timestamp;
@@ -983,11 +1032,13 @@ contract CiphernodeRegistryOwnable is
     /// @notice Check if submission window is still open for an E3
     /// @param e3Id ID of the E3 computation
     /// @return Whether the submission window is open
-    function isOpen(uint256 e3Id) public view returns (bool) {
-        Committee storage c = committees[e3Id];
-        if (c.stage != ICiphernodeRegistry.CommitteeStage.Requested)
-            return false;
-        return block.timestamp <= c.committeeDeadline;
+    function isOpen(uint256 e3Id) external view returns (bool) {
+        (bool ready, , uint256 deadline) = _sortitionState(e3Id);
+        return
+            committees[e3Id].stage ==
+            ICiphernodeRegistry.CommitteeStage.Requested &&
+            ready &&
+            block.timestamp <= deadline;
     }
 
     /// @inheritdoc ICiphernodeRegistry
@@ -1024,14 +1075,14 @@ contract CiphernodeRegistryOwnable is
     /// @notice Returns the IMT root at the time a committee was requested
     /// @param e3Id ID of the E3
     /// @return IMT root at time of committee request
-    function rootAt(uint256 e3Id) public view returns (uint256) {
+    function rootAt(uint256 e3Id) external view returns (uint256) {
         return roots[e3Id];
     }
 
     /// @inheritdoc ICiphernodeRegistry
     function getCommitteeNodes(
         uint256 e3Id
-    ) public view returns (address[] memory nodes) {
+    ) external view returns (address[] memory nodes) {
         Committee storage c = committees[e3Id];
         require(c.publicKey != bytes32(0), CommitteeNotPublished());
         nodes = c.topNodes;
@@ -1040,7 +1091,7 @@ contract CiphernodeRegistryOwnable is
     /// @inheritdoc ICiphernodeRegistry
     function getCommitteeHash(
         uint256 e3Id
-    ) public view returns (bytes32 committeeHash) {
+    ) external view returns (bytes32 committeeHash) {
         Committee storage c = committees[e3Id];
         require(c.publicKey != bytes32(0), CommitteeNotPublished());
         committeeHash = c.committeeHash;
@@ -1058,17 +1109,18 @@ contract CiphernodeRegistryOwnable is
             bytes32[] memory esmAggCommits
         )
     {
-        require(publicKeyHashes[e3Id] != bytes32(0), CommitteeNotPublished());
-        return (
-            dkgPartyIds[e3Id],
-            dkgSkAggCommits[e3Id],
-            dkgEsmAggCommits[e3Id]
-        );
+        return
+            RegistrySortitionLib.dkgAnchors(
+                publicKeyHashes[e3Id] != bytes32(0),
+                dkgPartyIds[e3Id],
+                dkgSkAggCommits[e3Id],
+                dkgEsmAggCommits[e3Id]
+            );
     }
 
     /// @notice Returns the current size of the ciphernode IMT
     /// @return Size of the IMT
-    function treeSize() public view returns (uint256) {
+    function treeSize() external view returns (uint256) {
         return ciphernodes.numberOfLeaves;
     }
 
@@ -1082,12 +1134,29 @@ contract CiphernodeRegistryOwnable is
     function getCommitteeDeadline(
         uint256 e3Id
     ) external view returns (uint256) {
+        _requireCommitteeRequested(e3Id);
+        (, , uint256 deadline) = _sortitionState(e3Id);
+        return deadline;
+    }
+
+    /// @inheritdoc ICiphernodeRegistry
+    function getSortitionRequest(
+        uint256 e3Id
+    )
+        external
+        view
+        returns (
+            uint32[2] memory threshold,
+            uint256 requestBlock,
+            uint256 committeeDeadline,
+            uint256 ticketPrice
+        )
+    {
         Committee storage c = committees[e3Id];
-        require(
-            c.stage != ICiphernodeRegistry.CommitteeStage.None,
-            CommitteeNotRequested()
-        );
-        return c.committeeDeadline;
+        threshold = c.threshold;
+        requestBlock = c.requestBlock;
+        (, , committeeDeadline) = _sortitionState(e3Id);
+        ticketPrice = sortitionTicketPrices[e3Id];
     }
 
     ////////////////////////////////////////////////////////////
@@ -1176,35 +1245,7 @@ contract CiphernodeRegistryOwnable is
     function getActiveCommitteeNodes(
         uint256 e3Id
     ) external view returns (address[] memory nodes, uint256[] memory scores) {
-        Committee storage c = committees[e3Id];
-        if (c.stage != ICiphernodeRegistry.CommitteeStage.Finalized) {
-            return (new address[](0), new uint256[](0));
-        }
-
-        uint256 total = c.topNodes.length;
-        uint256 actCount = 0;
-        for (uint256 i = 0; i < total; ++i) {
-            if (
-                c.memberStatus[c.topNodes[i]] ==
-                ICiphernodeRegistry.MemberStatus.Active
-            ) {
-                actCount++;
-            }
-        }
-
-        nodes = new address[](actCount);
-        scores = new uint256[](actCount);
-        uint256 idx = 0;
-        for (uint256 i = 0; i < total; ++i) {
-            address node = c.topNodes[i];
-            if (
-                c.memberStatus[node] == ICiphernodeRegistry.MemberStatus.Active
-            ) {
-                nodes[idx] = node;
-                scores[idx] = c.scoreOf[node];
-                idx++;
-            }
-        }
+        return RegistrySortitionLib.activeCommitteeNodes(committees[e3Id]);
     }
 
     /// @inheritdoc ICiphernodeRegistry
@@ -1232,61 +1273,6 @@ contract CiphernodeRegistryOwnable is
     //                   Internal Functions                   //
     //                                                        //
     ////////////////////////////////////////////////////////////
-
-    /// @notice Computes ticket score as keccak256(node || ticketNumber || e3Id || seed)
-    /// @param node Address of the ciphernode
-    /// @param ticketNumber The ticket number
-    /// @param e3Id ID of the E3 computation
-    /// @param seed Random seed for the E3
-    /// @return score The computed score
-    function _computeTicketScore(
-        address node,
-        uint256 ticketNumber,
-        uint256 e3Id,
-        uint256 seed
-    ) internal pure returns (uint256) {
-        bytes32 hash = keccak256(
-            abi.encodePacked(node, ticketNumber, e3Id, seed)
-        );
-        return uint256(hash);
-    }
-
-    /// @notice Validates that a node is eligible to submit a ticket
-    /// @dev Uses ticket voting power at `requestBlock - 1` for deterministic validation.
-    ///      The ticket token uses an EIP-6372 timestamp clock, so changes at the request timestamp
-    ///      are excluded even when their logs precede the request event.
-    /// @param node Address of the ciphernode
-    /// @param ticketNumber The ticket number being submitted
-    /// @param e3Id ID of the E3 computation
-    function _validateNodeEligibility(
-        address node,
-        uint256 ticketNumber,
-        uint256 e3Id
-    ) internal view {
-        require(ticketNumber > 0, InvalidTicketNumber());
-        IBondingRegistry e3Bonding = _bondingFor(e3Id);
-        require(address(e3Bonding) != address(0), BondingRegistryNotSet());
-
-        Committee storage c = committees[e3Id];
-
-        // Bind ticket weight to the request-time snapshot through the ticket
-        // token's EIP-6372 ERC20Votes checkpoints. {submitTicket} uses this
-        // E3's saved bonding registry for the current `isActive` check. The
-        // score and selection weight below use only the historical ticket
-        // balance at `c.requestBlock - 1`. Later balance changes cannot
-        // increase the saved weight.
-        uint256 ticketBalance = e3Bonding.ticketToken().getPastVotes(
-            node,
-            c.requestBlock - 1
-        );
-        uint256 ticketPrice = sortitionTicketPrices[e3Id];
-
-        require(ticketPrice > 0, InvalidTicketNumber());
-        uint256 availableTickets = ticketBalance / ticketPrice;
-
-        require(availableTickets > 0, NodeNotEligible());
-        require(ticketNumber <= availableTickets, InvalidTicketNumber());
-    }
 
     function _bondingFor(
         uint256 e3Id
@@ -1321,27 +1307,6 @@ contract CiphernodeRegistryOwnable is
         uint256 e3Id
     ) external view returns (IDkgFoldAttestationVerifier) {
         return _dkgFoldAttestationVerifierFor(e3Id);
-    }
-
-    /// @notice Sort `topNodes` by ascending address before committee finalization.
-    /// @dev Canonical address-ascending order so `CommitteeHashLib.hash(topNodes)`
-    ///      matches what off-chain aggregators independently compute over the same
-    ///      address set (Rust uses `BTreeSet<String>` which iterates lexicographically,
-    ///      equivalent to numeric address-ascending for hex-encoded addresses).
-    ///      This also defines `party_id` = position in the address-sorted committee.
-    /// @param c Committee storage reference
-    function _sortTopNodesByAscendingAddress(Committee storage c) internal {
-        uint256 len = c.topNodes.length;
-        for (uint256 i = 0; i < len; ++i) {
-            for (uint256 j = i + 1; j < len; ++j) {
-                address left = c.topNodes[i];
-                address right = c.topNodes[j];
-                if (right < left) {
-                    c.topNodes[i] = right;
-                    c.topNodes[j] = left;
-                }
-            }
-        }
     }
 
     ////////////////////////////////////////////////////////////

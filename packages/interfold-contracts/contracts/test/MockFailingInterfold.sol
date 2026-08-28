@@ -10,6 +10,16 @@ import { IInterfold } from "../interfaces/IInterfold.sol";
 contract MockFailingInterfold {
     error FailureCallbackRejected();
 
+    address public immutable nodeReleaseRegistry;
+    address public immutable bondingRegistry;
+    address public immutable ciphernodeRegistry;
+
+    constructor(address nodeReleaseRegistry_, address bondingRegistry_) {
+        nodeReleaseRegistry = nodeReleaseRegistry_;
+        bondingRegistry = bondingRegistry_;
+        ciphernodeRegistry = address(0);
+    }
+
     function getE3Stage(uint256) external pure returns (IInterfold.E3Stage) {
         return IInterfold.E3Stage.KeyPublished;
     }

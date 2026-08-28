@@ -3,13 +3,14 @@
 //! SlashingManager contract effects.
 
 use super::*;
+use e3_events::ProofType;
 
 pub(in crate::actors::slashing_manager_sol_writer) async fn read_slash_policy<
     P: Provider + WalletProvider + Clone,
 >(
     provider: EthProvider<P>,
     contract_address: Address,
-    proof_type: u8,
+    proof_type: ProofType,
 ) -> Result<ISlashingManager::SlashPolicy> {
     let contract = ISlashingManager::new(contract_address, provider.provider());
     Ok(contract

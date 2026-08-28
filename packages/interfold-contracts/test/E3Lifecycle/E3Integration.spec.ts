@@ -7,6 +7,7 @@ import { expect } from "chai";
 import type { Signer } from "ethers";
 
 import InterfoldModule from "../../ignition/modules/interfold";
+import { localPricingConfig } from "../../scripts/pricingConfig";
 import type {
   MockBlacklistUSDC,
   MockFeeOnTransferToken,
@@ -96,14 +97,17 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       bondingRegistry,
       ciphernodeRegistry: registry,
       slashingManager,
+      nodeReleaseRegistry,
       usdcToken,
       ciphernodeBondToken: foldToken,
       mocks: {
         e3Program,
         decryptionVerifier,
+        randomnessProvider,
         circuitVerifier: _circuitVerifier,
       },
     } = sys;
+    if (!randomnessProvider) throw new Error("randomness provider missing");
 
     const interfoldAddress = await interfold.getAddress();
     firstE3Id = await interfold.nexte3Id();
@@ -182,6 +186,13 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await usdcToken.mint(bondOwnerAddress, ethers.parseUnits("100000", 6));
 
       await bondingRegistry.connect(operator).setBondOwner(bondOwnerAddress);
+      await nodeReleaseRegistry
+        .connect(operator)
+        .acknowledgeNodeRelease(
+          ethers.id("interfold.node.release:v1:test"),
+          1,
+          1,
+        );
       await foldToken
         .connect(computeProvider)
         .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));
@@ -252,6 +263,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       foldToken,
       e3Program,
       decryptionVerifier,
+      randomnessProvider,
       owner,
       requester,
       treasury,
@@ -376,9 +388,16 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       ).to.be.revertedWithCustomError(e3RefundManager, "InvalidFailureReason");
     });
 
-    it("allows only the requester to cancel an active E3", async function () {
-      const { interfold, makeReadyRequest, owner, requester } =
-        await loadFixture(setup);
+    it("allows only the requester to cancel after the randomness timeout", async function () {
+      const {
+        interfold,
+        makeReadyRequest,
+        owner,
+        requester,
+        randomnessProvider,
+        registry,
+      } = await loadFixture(setup);
+      await randomnessProvider.setAutoFulfill(false);
       await makeReadyRequest();
 
       await expect(interfold.connect(owner).cancelE3(firstE3Id))
@@ -386,77 +405,123 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         .withArgs(firstE3Id, await owner.getAddress());
 
       await expect(interfold.connect(requester).cancelE3(firstE3Id))
+        .to.be.revertedWithCustomError(interfold, "E3NotCancellable")
+        .withArgs(firstE3Id, 1);
+
+      const deadline = await registry.getCommitteeDeadline(firstE3Id);
+      await time.increaseTo(deadline + 1n);
+      await expect(interfold.connect(requester).cancelE3(firstE3Id))
         .to.emit(interfold, "E3Failed")
-        .withArgs(firstE3Id, 1, 9);
-      expect(await interfold.getFailureReason(firstE3Id)).to.equal(9);
+        .withArgs(firstE3Id, 1, 1);
+      expect(await interfold.getFailureReason(firstE3Id)).to.equal(1);
 
       await expect(interfold.connect(requester).cancelE3(firstE3Id))
         .to.be.revertedWithCustomError(interfold, "E3NotCancellable")
         .withArgs(firstE3Id, 6);
     });
 
-    it("pays only completed milestones when the requester cancels", async function () {
-      const scenarios = [
-        { stage: 1, requesterBps: 9500n, nodeBps: 0n },
-        { stage: 2, requesterBps: 8500n, nodeBps: 1000n },
-        { stage: 3, requesterBps: 4500n, nodeBps: 5000n },
-        { stage: 4, requesterBps: 4500n, nodeBps: 5000n },
-      ] as const;
+    it("refunds service fees after a randomness timeout", async function () {
+      const ctx = await loadFixture(setup);
+      await ctx.randomnessProvider.setAutoFulfill(false);
+      const requesterAddress = await ctx.requester.getAddress();
+      const requesterBalanceBefore =
+        await ctx.usdcToken.balanceOf(requesterAddress);
+      await ctx.makeReadyRequest();
+      const serviceFee = await ctx.interfold.e3Payments(firstE3Id);
+      const randomnessFee = (await ctx.interfold.getPricingConfig())
+        .randomnessFlatFee;
+      const requesterBalanceAfterRequest =
+        await ctx.usdcToken.balanceOf(requesterAddress);
+      expect(requesterBalanceBefore - requesterBalanceAfterRequest).to.equal(
+        serviceFee + randomnessFee,
+      );
 
-      for (const scenario of scenarios) {
-        const ctx = await loadFixture(setup);
+      const pricing = await ctx.interfold.getPricingConfig();
+      expect(
+        await ctx.interfold.pendingTreasuryClaim(
+          pricing.protocolTreasury,
+          await ctx.usdcToken.getAddress(),
+        ),
+      ).to.equal(randomnessFee);
 
-        if (scenario.stage === 1) {
-          await ctx.makeReadyRequest();
-        } else if (scenario.stage === 2) {
-          await ctx.finalizeReadyCommittee();
-        } else {
-          await ctx.makeReadyRequest();
-          await ctx.finalizeAndPublishCommittee();
-          if (scenario.stage === 4) {
-            const e3 = await ctx.interfold.getE3(firstE3Id);
-            await time.increaseTo(e3.inputWindow[1]);
-            const ciphertext = "0x" + "ab".repeat(100);
-            await ctx.interfold.publishCiphertextOutput(
-              firstE3Id,
-              ciphertext,
-              ethers.keccak256(ciphertext),
-              "0x1337",
-            );
-          }
-        }
+      const deadline = await ctx.registry.getCommitteeDeadline(firstE3Id);
+      await time.increaseTo(deadline + 1n);
+      await ctx.interfold.connect(ctx.requester).cancelE3(firstE3Id);
+      expect(await ctx.registry.unreleasedCommitteeCount()).to.equal(0);
+      expect(await ctx.registry.randomnessProvider()).to.equal(
+        ethers.ZeroAddress,
+      );
 
-        expect(await ctx.interfold.getE3Stage(firstE3Id)).to.equal(
-          scenario.stage,
-        );
-        await ctx.interfold.connect(ctx.requester).cancelE3(firstE3Id);
-        await ctx.interfold.processE3Failure(firstE3Id);
+      const requestId = await ctx.randomnessProvider.requestIdByE3Id(firstE3Id);
+      await ctx.randomnessProvider.fulfill(requestId, 123n);
+      expect(await ctx.registry.sortitionSeed(firstE3Id)).to.deep.equal([
+        false,
+        0n,
+      ]);
 
-        const distribution =
-          await ctx.e3RefundManager.getRefundDistribution(firstE3Id);
-        expect(distribution.requesterAmount).to.equal(
-          (distribution.originalPayment * scenario.requesterBps) / 10000n,
-        );
-        expect(distribution.honestNodeAmount).to.equal(
-          (distribution.originalPayment * scenario.nodeBps) / 10000n,
-        );
-        expect(distribution.protocolAmount).to.equal(
-          distribution.originalPayment -
-            distribution.requesterAmount -
-            distribution.honestNodeAmount,
-        );
+      await ctx.interfold.processE3Failure(firstE3Id);
 
-        const before = await ctx.usdcToken.balanceOf(
-          await ctx.requester.getAddress(),
-        );
-        await ctx.e3RefundManager
-          .connect(ctx.requester)
-          .claimRequesterRefund(firstE3Id);
-        const after = await ctx.usdcToken.balanceOf(
-          await ctx.requester.getAddress(),
-        );
-        expect(after - before).to.equal(distribution.requesterAmount);
-      }
+      const distribution =
+        await ctx.e3RefundManager.getRefundDistribution(firstE3Id);
+      expect(distribution.requesterAmount).to.equal(
+        distribution.originalPayment,
+      );
+      expect(distribution.honestNodeAmount).to.equal(0);
+      expect(distribution.protocolAmount).to.equal(0);
+
+      await ctx.e3RefundManager
+        .connect(ctx.requester)
+        .claimRequesterRefund(firstE3Id);
+      const requesterBalanceAfterRefund =
+        await ctx.usdcToken.balanceOf(requesterAddress);
+      expect(
+        requesterBalanceAfterRefund - requesterBalanceAfterRequest,
+      ).to.equal(serviceFee);
+    });
+
+    it("rejects cancellation after the committee randomness is known", async function () {
+      const ctx = await loadFixture(setup);
+      await ctx.makeReadyRequest();
+
+      await expect(ctx.interfold.connect(ctx.requester).cancelE3(firstE3Id))
+        .to.be.revertedWithCustomError(ctx.interfold, "E3NotCancellable")
+        .withArgs(firstE3Id, 1);
+    });
+
+    it("keeps timely randomness available for replay after failure", async function () {
+      const ctx = await loadFixture(setup);
+      await ctx.makeReadyRequest();
+
+      const acceptedSeed = await ctx.registry.sortitionSeed(firstE3Id);
+      expect(acceptedSeed[0]).to.equal(true);
+      const deadline = await ctx.registry.getCommitteeDeadline(firstE3Id);
+      await time.increaseTo(deadline + 1n);
+      await ctx.interfold.markE3Failed(firstE3Id);
+
+      expect(await ctx.registry.sortitionSeed(firstE3Id)).to.deep.equal(
+        acceptedSeed,
+      );
+      expect(await ctx.registry.randomnessProvider()).to.equal(
+        await ctx.randomnessProvider.getAddress(),
+      );
+    });
+
+    it("does not expose an unresolved seed after the E3 times out", async function () {
+      const ctx = await loadFixture(setup);
+      await ctx.randomnessProvider.setAutoFulfill(false);
+      await ctx.makeReadyRequest();
+
+      const deadline = await ctx.registry.getCommitteeDeadline(firstE3Id);
+      await time.increaseTo(deadline + 1n);
+      await ctx.interfold.markE3Failed(firstE3Id);
+
+      expect(await ctx.registry.sortitionSeed(firstE3Id)).to.deep.equal([
+        false,
+        0n,
+      ]);
+      expect(await ctx.registry.randomnessProvider()).to.equal(
+        ethers.ZeroAddress,
+      );
     });
 
     it("rejects invalid failure reasons from an authorized dependency", async function () {
@@ -506,6 +571,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         decryptUtilizationBps: 0,
         minCommitteeSize: 0,
         minThreshold: 0,
+        randomnessFlatFee: 1,
       });
 
       await finalizeReadyCommittee();
@@ -801,6 +867,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
             bondingRegistry: await interfold.bondingRegistry(),
             e3RefundManager: addressOne,
             feeToken: await interfold.feeToken(),
+            pricingConfig: localPricingConfig(await owner.getAddress()),
             initialE3Program: await e3Program.getAddress(),
           },
         },
@@ -993,7 +1060,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await interfold.setFeeAssetConfig({
         token: tokenAddress,
         expectedDecimals: 18,
-        pricing: await currentPricingConfig(interfold),
+        pricing: {
+          ...(await currentPricingConfig(interfold)),
+          randomnessFlatFee: ethers.parseEther("1"),
+        },
       });
 
       await makeRequest(requester, 0, token);
@@ -1476,7 +1546,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await interfold.connect(owner).setFeeAssetConfig({
         token: await feeToken.getAddress(),
         expectedDecimals: 6,
-        pricing: await currentPricingConfig(interfold),
+        pricing: {
+          ...(await currentPricingConfig(interfold)),
+          randomnessFlatFee: 1_000_000,
+        },
       });
 
       await makeRequest(requester, 0, feeToken);
@@ -1761,11 +1834,13 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         await operator1.getAddress(),
         await slashingManager.getAddress(),
       );
+      const proposalId = await slashingManager.totalProposals();
       await slashingManager.proposeSlash(
         firstE3Id,
         await operator1.getAddress(),
         proof,
       );
+      await slashingManager.retrySlashRoute(proposalId);
 
       const token = await usdcToken.getAddress();
       const targetRecipient = await requester.getAddress();

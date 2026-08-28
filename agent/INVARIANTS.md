@@ -148,10 +148,13 @@ design citation alone does not establish current runtime behavior.
   rotation atomically sends any balance above `totalCiphernodeBondLiability` to the treasury before
   validating the replacement, so an unsolicited transfer cannot interleave with rotation. —
   `flow-trace/02`, `05`; INDEX concern #23
-- The fee token, expected decimals, and every raw-unit pricing term change as one configuration.
-  Each request states its expected token and maximum fee. Each E3 snapshots its fee token at request
-  time. Decimal validation checks the unit scale only; it does not establish the token's economic
-  value. — `Interfold.setFeeAssetConfig`; `flow-trace/03`
+- The fee token, expected decimals, and every raw-unit service price change as one configuration.
+  `setRandomnessFlatFee` is the only narrow pricing update: it changes only the nonzero flat fee and
+  preserves the token, decimal scale, treasury, margin, protocol share, and service prices. The flat
+  randomness fee uses the fee token's raw units. Each request states its expected token and maximum
+  fee. Each E3 snapshots its fee token at request time. Decimal validation checks the unit scale
+  only; it does not establish the token's economic value. — `Interfold.setFeeAssetConfig`;
+  `Interfold.setRandomnessFlatFee`; `flow-trace/03`
 - **Custody assets use exact, non-rebasing accounting:** the fee token, ticket underlying, and
   ciphernode bond token must transfer exact amounts and must not rebase account balances. Every
   custody deposit checks the custody increase. Every outbound transfer checks the recipient increase
@@ -161,7 +164,8 @@ design citation alone does not establish current runtime behavior.
 
 ### Activation (auto-evaluated in `_updateOperatorStatus`, never a standalone call)
 
-- Operator active ⇔ `registered` AND
+- Operator active ⇔ its acknowledged release has exactly the required `protocolVersion`, meets the
+  minimum `nodeGeneration`, AND `registered` AND
   `ciphernodeBond >= requiredCiphernodeBond × ciphernodeBondActiveBps/10000` (default 80%) AND
   `ticketBalance / ticketPrice >= minTicketBalance`. — `BondingRegistry.sol`; `flow-trace/01`, `02`
 - `minTicketBalance` must remain nonzero. — `flow-trace/02`
@@ -171,6 +175,15 @@ design citation alone does not establish current runtime behavior.
   statuses in O(1). Rust sortition consumes the same `ConfigurationUpdated` event and marks
   operators inactive until a matching `OperatorActivationChanged` arrives. — `BondingRegistry.sol`;
   INDEX concern #24
+- **Mandatory release policy changes are paused, drained, and monotonic:** governance may raise the
+  required protocol version or node generation only while requests are paused, `activeE3Count == 0`,
+  and `unreleasedCommitteeCount == 0`. The change invalidates every cached operator status in O(1).
+  A node becomes active again only after it acknowledges compatible values. Never lower either
+  required counter; roll back code under a new release ID and a higher generation. —
+  `NodeReleaseRegistry.sol`; `flow-trace/07`
+- **Release acknowledgement is not remote attestation:** it prevents accidental stale software
+  participation. Byzantine safety still depends on threshold cryptography, proof verification,
+  slashing, and committee validation. — `flow-trace/07`
 
 ### E3 request and committee selection
 
@@ -185,13 +198,22 @@ design citation alone does not establish current runtime behavior.
   differs from its local build. Pricing uses circuit threshold `T`, not on-chain viability value
   `H`. `N <= numActiveOperators` at `requestCommittee`. — `flow-trace/03`
 - Sortition score is deterministic and identical on- and off-chain:
-  `score = keccak256(address ‖ ticket ‖ e3Id ‖ seed)`,
-  `seed = uint256(keccak256(chainBlockHash(entropyBlock), e3Id))`; top-N lowest win. `entropyBlock`
-  is the chain block after the request. Public Arbitrum chains use the L2 block number from `ArbSys`
-  and read its L2 hash from EIP-2935. Other chains use the execution block number and prefer the
-  `BLOCKHASH` opcode. The one-day submission cap fits inside Arbitrum's approximately 27-hour L2
-  hash history. The requester must commit the paid request before that block hash exists. The E3
-  computation seed remains separate. — `flow-trace/03`
+  `score = keccak256(address ‖ ticket ‖ e3Id ‖ seed)`, where
+  `seed = keccak256(randomWord ‖ chainId ‖ registry ‖ e3Id ‖ requestId)`; top-N lowest win. Each E3
+  freezes one `IRandomnessProvider` request, response deadline, and submission window after the paid
+  request is stored. The production provider uses Chainlink VRF v2.5 subscription funding. It never
+  re-requests an E3, checks the configured subscription balance floor before requesting, and the
+  Registry rejects responses from the Ethereum request block, future-dated responses, and late
+  responses. This release supports Ethereum mainnet, Sepolia, and local development chains only. The
+  first request that expires without a usable response clears the active provider. This blocks new
+  requests until governance pauses the protocol and restores a provider. A timely accepted response
+  remains readable after terminal cleanup so fresh historical replay derives the same committee
+  request; late responses remain unusable. Rust reads the accepted seed and request context at the
+  fulfillment block. If historical block state is unavailable, it accepts retained current state
+  only when the Registry still reports the seed as ready. Unverifiable state rejects the log and
+  fails closed for replay. Governance can change the provider or response timeout only while
+  requests are paused and all committee obligations are released. The E3 computation seed remains
+  separate. — `flow-trace/03`
 - **Per-E3 sortition state is immutable:** for request timestamp `T`, the request-time eligible
   count, each operator's eligibility, and each ticket balance come from `T-1`. The request also
   freezes `ticketPrice`, and Rust consumes the same timepoint and price. Current registration and
@@ -201,9 +223,10 @@ design citation alone does not establish current runtime behavior.
   locks the canonical on-chain committee order. A ready committee must finalize by its absolute
   request-time DKG cutoff. Delayed finalization cannot extend the paid lifecycle. — `flow-trace/03`
 - **Exit timing strictly covers sortition:** `BondingRegistry.exitDelay` must remain greater than
-  `CiphernodeRegistryOwnable.sortitionSubmissionWindow`. Both value setters and registry-pointer
-  setters enforce the relationship; equality is invalid because ticket submission includes the
-  deadline. — `BondingRegistry.sol`; `CiphernodeRegistryOwnable.sol`; `flow-trace/02`, `03`
+  `CiphernodeRegistryOwnable.randomnessRequestTimeout + sortitionSubmissionWindow`. Value setters
+  and registry-pointer setters enforce the relationship; equality is invalid because ticket
+  submission includes the deadline. — `BondingRegistry.sol`; `CiphernodeRegistryOwnable.sol`;
+  `flow-trace/02`, `03`
 - **One coherent dependency generation:** each request validates and snapshots the complete
   Interfold, registry, bonding, slashing, refund, treasury, and policy graph. Governance must pause
   requests and drain all E3s, committees, operators, bans, and slash routes before it replaces any
@@ -229,19 +252,22 @@ design citation alone does not establish current runtime behavior.
 ### Deadlines
 
 - Every stage has a deadline. Once a deadline is missed, **anyone** may call `markE3Failed(e3Id)`.
-  The request snapshots all timeout windows. The DKG deadline equals the request-time committee
-  deadline plus the DKG window. The compute deadline starts at the later of key publication and the
-  end of the input window. Request validation reserves the full worst-case sortition, DKG, compute,
-  and decryption lifecycle. — `flow-trace/03`
+  The request snapshots all timeout windows. The randomness response starts the full ticket
+  submission window; the DKG deadline equals that resolved committee deadline plus the DKG window.
+  The compute deadline starts at the later of key publication and the end of the input window.
+  Request validation reserves the full worst-case randomness, sortition, DKG, compute, and
+  decryption lifecycle. — `flow-trace/03`
 - Known open issue: `gracePeriod` is stored/validated but never applied in any deadline check (dead
   code). — `Interfold.sol`; INDEX concern #3
 
 ### Slashing and failure settlement
 
 - Fault attribution drives payout direction: requester/DP/CP failures pay completed work + protocol
-  share from the request-time fee escrow; supplier/ciphernode failures return **100% of fee escrow
-  to the requester with no protocol cut**, honest nodes compensated only from actual ticket slashes.
-  — `flow-trace/05`
+  share from the request-time service fee escrow; supplier/ciphernode failures return **100% of
+  service fee escrow to the requester with no protocol cut**, honest nodes compensated only from
+  actual ticket slashes. The request-time randomness fee is not fee escrow. It remains a treasury
+  claim after any accepted randomness request, including a request that later times out. —
+  `flow-trace/05`
 - Slash assets keep their own ERC-20 denomination — independent pull claims, no conversion;
   different decimals never mix. — `flow-trace/05`
 - Slashed **ticket** funds are always escrowed first; destination depends on terminal outcome
@@ -254,9 +280,10 @@ design citation alone does not establish current runtime behavior.
 - Requester refunds are decoupled from slash execution; `protocolShareBps` and per-node payouts are
   snapshotted at `calculateRefund` and never altered by slashed assets; base refunds never consume
   the protected reserve. — `flow-trace/05`
-- Only the original requester can cancel an active E3. Cancellation records the pre-failure stage;
-  nodes receive only fully completed milestone allocations, while the requester receives the
-  remaining work allocation. Cancellation does not wait for refund processing. — `flow-trace/05`
+- Only the original requester can cancel an E3, and only after its request-bound randomness deadline
+  passes without a usable seed. Cancellation records `CommitteeFormationTimeout`, releases the
+  Registry obligation, and leaves refund processing permissionless. A timely or pending VRF result
+  cannot be selectively canceled. — `flow-trace/05`
 - Dual-role accounts (requester + honest node) claim via independent ledgers, each once. —
   `flow-trace/05`
 - Committee finalization freezes each operator's reward recipient for that E3. Success rewards,
@@ -334,6 +361,9 @@ design citation alone does not establish current runtime behavior.
   zero-indexed. Circuit-side Shamir coordinates are `party_id + 1` and must be strictly increasing.
   The active aggregator is the lowest eligible runtime `party_id` after exclusions and the current
   phase's durable unresponsive-party set. — `ARCHITECTURE.md`; `flow-trace/04`
+- Every committee member persists validated aggregation inputs. Failover starts only after
+  `AggregationInputsReady` confirms that the phase can resume from durable state. Only the active
+  party can launch aggregation effects or accept their results. — `flow-trace/04`; INDEX concern #42
 - DKG aggregation receives **exactly H** canonical honest NodeFold proofs (unique in-range party
   IDs) and **exactly N** ordered committee addresses; every preset has `H < N` — never assert
   `H == N`. A mixed Some/None NodeFold set is terminal DKG failure. — `ARCHITECTURE.md`;
@@ -455,6 +485,20 @@ design citation alone does not establish current runtime behavior.
 
 ## Node / actor runtime
 
+### Release compatibility
+
+- Before EVM readers and protocol actors start, each enabled ciphernode chain reads the
+  governance-selected `NodeReleaseRegistry`, verifies that the compiled compatibility values meet
+  the required policy, and acknowledges its exact release ID and values on-chain. A missing
+  controller or stale protocol/generation is a startup error. — `e3_evm::node_release`;
+  `flow-trace/07`
+- `protocol_version` covers incompatible contracts, events, cryptography, protocol behavior, and
+  scopes every P2P protocol name. Nodes on different protocol versions do not discover, gossip, or
+  synchronize with each other. `node_generation` covers a mandatory node-only release. P2P
+  serialization compatibility within one protocol version remains separately gated by
+  `GOSSIP_WIRE_MAJOR` and `SYNC_WIRE_MAJOR`. — `crates/config/protocol-release.toml`;
+  `flow-trace/07`
+
 ### Layering
 
 - Actors are **concurrency boundaries only**: deterministic reducers own protocol decisions; effect
@@ -483,6 +527,21 @@ design citation alone does not establish current runtime behavior.
   fail closed. — INDEX concern #15
 - Crash-torn log tails: truncate only an unindexed CRC/length-invalid physical suffix; indexed
   corruption is fatal. — INDEX concern #16
+- Process-infrastructure events belong to one boot and are never EventStore replay inputs. The
+  current boot must publish fresh sync, readiness, effect, and shutdown phase events; otherwise a
+  payload-derived event ID can suppress the event that startup is waiting for. The `NetReady`
+  listener is armed before the network transport starts. — INDEX concern #44
+- The request-router recovery checkpoint has one canonical root key. Every live or recovery update
+  retains the highest sequence observed for each aggregate. Startup advances a trailing checkpoint
+  from its missing EventStore suffix, and the final snapshot drain preserves event order. An older
+  contextual write must never replace newer admission state or move a covered-prefix cursor
+  backward. — INDEX concern #43
+- EventStore replay preserves durable sequence inside each aggregate. It uses HLC order only to
+  choose between the next events of different aggregates. A late event can have an older remote HLC
+  and must not move ahead of an earlier local sequence from the same aggregate. — INDEX concern #43
+- Snapshot-derived participation state is injected directly. Restart must not append synthetic
+  `CiphernodeSelected` or `AggregatorChanged` events. A derived local selection resumes only at the
+  fenced `SyncEffect` boundary. — INDEX concern #45
 - Every state field is classified **Durable / Derivable / Ephemeral**. Pending proof bundles,
   decrypted-share progress, accusation votes/timeouts, retry state, active-aggregator designation,
   deadlines, and undispatched external effects are durable unless a stronger authority can
@@ -504,7 +563,12 @@ design citation alone does not establish current runtime behavior.
 - Timers: persist the absolute deadline + purpose, not an in-memory handle; on restart, compare to
   the injected clock and deterministically re-arm or fire overdue. — `ARCHITECTURE.md`
 - Effects stay disabled until durable replay completes and both historical sources merge in HLC
-  order; `ComputeEffectGate` buffers/dedups until `EffectsEnabled`. — `CRATES_ARCHITECTURE.md`
+  order. Startup fences `EffectsEnabled` → `SyncEffect` → canonical history → `SyncEnded` in that
+  order. `ComputeEffectGate` buffers and deduplicates until `EffectsEnabled`. —
+  `CRATES_ARCHITECTURE.md`
+- Sortition delays, committee-finalization timers, and slash submissions persist their semantic
+  inputs before effects run. Restart re-arms them only after `EffectsEnabled`; an additive migration
+  may backfill a missing versioned record but must not replace an existing one. — INDEX concern #46
 - Durable EVM settlement receipts (`RewardCredited`, `RewardClaimed`) are global facts — never
   routed into a completed per-E3 context. — INDEX concern #8
 - Replayed committee events must not replace a restored per-E3 actor with a fresh instance; the

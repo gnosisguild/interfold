@@ -163,13 +163,35 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(())
     }
 
+    /// The round's CRISP record, or `None` when there is no such round.
+    ///
+    /// The distinction between "absent" and "broken" only exists here: every caller below that
+    /// flattens it into an error loses it, and a handler that cannot tell the two apart has to
+    /// answer 500 to a client that asked for a round that was simply never requested.
+    async fn try_get_crisp(&self) -> Result<Option<E3Crisp>> {
+        let key = self.crisp_key();
+        self.store
+            .get::<E3Crisp>(&key)
+            .await
+            .map_err(|e| eyre::eyre!("Could get crisp at '{key}' due to error: {e}"))
+    }
+
+    /// Whether this server has a record of the round at all.
+    ///
+    /// The CRISP record is written when `E3Requested` is indexed; the indexer's `_e3:` record only
+    /// lands on `CommitteePublished`. So a round mid-DKG — or one whose committee never formed —
+    /// has the first and not the second, and reads needing both come back empty. Without this the
+    /// two are indistinguishable, and "the committee has not published a key" reads as "no such
+    /// round", which is a very different thing to debug.
+    pub async fn has_crisp_record(&self) -> Result<bool> {
+        Ok(self.try_get_crisp().await?.is_some())
+    }
+
     async fn get_crisp(&self) -> Result<E3Crisp> {
         let key = self.crisp_key();
         let e3_crisp = self
-            .store
-            .get::<E3Crisp>(&key)
-            .await
-            .map_err(|e| eyre::eyre!("Could get crisp at '{key}' due to error: {e}"))?
+            .try_get_crisp()
+            .await?
             .ok_or(eyre::eyre!("No data found at {key}"))?;
         Ok(e3_crisp)
     }
@@ -287,6 +309,19 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(e3)
     }
 
+    /// The indexer's E3 record, or `None` when the round has none yet.
+    ///
+    /// Read straight from the store rather than through `E3Repository::get_e3`, which folds the
+    /// missing case into an error string. The key mirrors `E3Repository::e3_key` — the same
+    /// convention `crisp_key` already follows one level down.
+    async fn try_get_e3(&self) -> Result<Option<InterfoldE3>> {
+        let key = format!("_e3:{}", self.e3_id);
+        self.store
+            .get::<InterfoldE3>(&key)
+            .await
+            .map_err(|e| eyre::eyre!("Could get e3 at '{key}' due to error: {e}"))
+    }
+
     pub async fn get_num_options(&self) -> Result<usize> {
         let e3_crisp = self.get_crisp().await?;
         Ok(e3_crisp.num_options.parse::<usize>()?)
@@ -387,9 +422,19 @@ impl<S: DataStore> CrispE3Repository<S> {
     }
 
     pub async fn get_web_result_request(&self) -> Result<WebResultRequest> {
-        let e3 = self.get_e3().await?;
-        let e3_crisp = self.get_crisp().await?;
-        Ok(WebResultRequest {
+        self.try_get_web_result_request()
+            .await?
+            .ok_or_else(|| eyre::eyre!("No state stored for round {}", self.e3_id))
+    }
+
+    /// The round's result, or `None` when the round is not in the store. See
+    /// [`Self::try_get_e3_state_lite`] for why both records have to be present.
+    pub async fn try_get_web_result_request(&self) -> Result<Option<WebResultRequest>> {
+        let (Some(e3), Some(e3_crisp)) = (self.try_get_e3().await?, self.try_get_crisp().await?)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(WebResultRequest {
             round_id: e3.id,
             tally: e3_crisp.tally,
             option_1_emoji: e3_crisp.emojis[0].clone(),
@@ -397,14 +442,28 @@ impl<S: DataStore> CrispE3Repository<S> {
             end_time: e3.input_window[1],
             total_votes: self.get_vote_count().await?,
             requester: e3_crisp.requester,
-        })
+        }))
     }
 
     pub async fn get_e3_state_lite(&self) -> Result<E3StateLite> {
-        let e3 = self.get_e3().await?;
-        let e3_crisp = self.get_crisp().await?;
+        self.try_get_e3_state_lite()
+            .await?
+            .ok_or_else(|| eyre::eyre!("No state stored for round {}", self.e3_id))
+    }
+
+    /// The round's public state, or `None` when the round is not in the store.
+    ///
+    /// Both records are needed and they are written at different points in a round's life: the
+    /// `_e3:` record lands when the committee is published, the `_e3:crisp:` record when the
+    /// request is indexed. A round mid-flight legitimately has one and not the other, and that is
+    /// "not ready", not a failure.
+    pub async fn try_get_e3_state_lite(&self) -> Result<Option<E3StateLite>> {
+        let (Some(e3), Some(e3_crisp)) = (self.try_get_e3().await?, self.try_get_crisp().await?)
+        else {
+            return Ok(None);
+        };
         let snapshot_block = snapshot_block(e3.request_block, e3_crisp.snapshot_block);
-        Ok(E3StateLite {
+        Ok(Some(E3StateLite {
             emojis: e3_crisp.emojis,
             id: self.e3_id.clone(),
             status: e3_crisp.status,
@@ -423,7 +482,7 @@ impl<S: DataStore> CrispE3Repository<S> {
             credit_mode: e3_crisp.credit_mode,
             credits: e3_crisp.credits,
             census_mode: e3_crisp.census_mode,
-        })
+        }))
     }
 
     /// Get the input deadline for the current round
@@ -576,9 +635,12 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(())
     }
 
-    pub async fn get_token_holder_hashes(&self) -> Result<Vec<String>> {
-        let e3_crisp = self.get_crisp().await?;
-        Ok(e3_crisp.token_holder_hashes)
+    /// `None` when the round is not in the store; an empty vec when it is but has no census yet.
+    pub async fn try_get_token_holder_hashes(&self) -> Result<Option<Vec<String>>> {
+        Ok(self
+            .try_get_crisp()
+            .await?
+            .map(|e3_crisp| e3_crisp.token_holder_hashes))
     }
 
     pub async fn set_eligible_addresses(&mut self, holders: Vec<TokenHolder>) -> Result<()> {
@@ -596,9 +658,12 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(())
     }
 
-    pub async fn get_eligible_addresses(&self) -> Result<Vec<TokenHolder>> {
-        let e3_crisp = self.get_crisp().await?;
-        Ok(e3_crisp.eligible_addresses)
+    /// `None` when the round is not in the store; an empty vec when it is but has no census yet.
+    pub async fn try_get_eligible_addresses(&self) -> Result<Option<Vec<TokenHolder>>> {
+        Ok(self
+            .try_get_crisp()
+            .await?
+            .map(|e3_crisp| e3_crisp.eligible_addresses))
     }
 
     fn crisp_key(&self) -> String {

@@ -11,11 +11,12 @@ fi
 
 # Run all processes concurrently using pnpm
 pnpm concurrently \
-    --names "FRONTEND,EVM,CIPHER,SERVER,PROGRAM" \
-    --prefix-colors "blue,cyan,magenta,yellow,green" \
+    --names "FRONTEND,EVM,CHAIN,CIPHER,SERVER,PROGRAM" \
+    --prefix-colors "blue,cyan,gray,magenta,yellow,green" \
     --kill-others-on-fail \
     "pnpm dev:frontend" \
     "anvil --host 0.0.0.0 --chain-id 31337 --block-time 1 --mnemonic 'test test test test test test test test test test test junk' --silent" \
+    "pnpm wait-on tcp:localhost:8545 && node ./scripts/anvil-automine.mjs" \
     "pnpm dev:ciphernodes" \
     "TEST_MODE=1 pnpm dev:server" \
     "pnpm dev:program"

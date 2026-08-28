@@ -19,23 +19,7 @@ export default buildModule("Interfold", (m) => {
     computeWindow: 86400,
     decryptionWindow: 3600,
   });
-  const pricingConfig = m.getParameter("pricingConfig", {
-    keyGenFixedPerNode: 100000,
-    keyGenPerEncryptionProof: 50000,
-    coordinationPerPair: 10000,
-    availabilityPerNodePerSec: 50,
-    decryptionPerNode: 300000,
-    publicationBase: 1000000,
-    verificationPerProof: 5000,
-    protocolTreasury: "0x0000000000000000000000000000000000000000",
-    marginBps: 1000,
-    protocolShareBps: 0,
-    dkgUtilizationBps: 2500,
-    computeUtilizationBps: 5000,
-    decryptUtilizationBps: 2500,
-    minCommitteeSize: 0,
-    minThreshold: 0,
-  });
+  const pricingConfig = m.getParameter("pricingConfig");
 
   // External libraries keep pricing and lifecycle helpers out of the
   // size-constrained Interfold runtime.

@@ -177,13 +177,10 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+        uses: ./.github/actions/install-solc
 
       - name: pnpm-setup
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -233,13 +230,10 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+        uses: ./.github/actions/install-solc
 
       - name: pnpm-setup
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -289,10 +283,7 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+        uses: ./.github/actions/install-solc
 
       - name: pnpm-setup
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -531,10 +522,7 @@ jobs:
           chmod +x /usr/local/bin/bb
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+        uses: ./.github/actions/install-solc
 
       - name: 'Install the dependencies'
         run: 'pnpm install --frozen-lockfile'
@@ -608,7 +596,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
       - name: 'Install the dependencies'
         run: 'pnpm install --frozen-lockfile'
       - name: 'Download build artifacts'
@@ -678,10 +666,7 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+        uses: ./.github/actions/install-solc
 
       - name: Build interfold CLI
         run: cargo install --locked --path crates/cli --bin interfold --features test-only-skip-proof-aggregation
@@ -712,9 +697,15 @@ jobs:
           - test-suite: test:circuits
             command: pnpm test:circuits
             timeout: 15
-          - test-suite: test:sdk
-            command: pnpm test:sdk
-            timeout: 45
+          # The SDK's six proof tests took 19m35s in one process. The mask group and its
+          # complement run in parallel. The negative match keeps new tests in the core group.
+          - test-suite: test:sdk:core-and-ballot-proofs
+            command: pnpm test:sdk:core-and-ballot-proofs
+            timeout: 30
+            needs-sdk: true
+          - test-suite: test:sdk:mask-proofs
+            command: pnpm test:sdk:mask-proofs
+            timeout: 30
             needs-sdk: true
           # The contract suite is split by proving cost, not by subject. Run whole it took 27m54s
           # against a 30m cap and started dying to ordinary runner variance, and it grows by minutes
@@ -729,9 +720,16 @@ jobs:
           # Every contract leg needs both capabilities: `hardhat.config.ts` imports
           # `@interfold/contracts/tasks/*`, which only resolves once `evm:build` has emitted `dist/`,
           # and each leg contains at least one test that imports `@crisp-e3/sdk`.
-          - test-suite: test:contracts:input-tree
-            command: pnpm test:contracts:input-tree
-            timeout: 45
+          # The input-tree file took 25m20s. Run its poisoning cases and their complement in
+          # parallel. The negative match keeps every new test in the canonical group.
+          - test-suite: test:contracts:input-tree:poisoning
+            command: pnpm test:contracts:input-tree:poisoning
+            timeout: 30
+            needs-evm: true
+            needs-sdk: true
+          - test-suite: test:contracts:input-tree:canonical
+            command: pnpm test:contracts:input-tree:canonical
+            timeout: 30
             needs-evm: true
             needs-sdk: true
           - test-suite: test:contracts:ballots
@@ -768,14 +766,11 @@ jobs:
 
       - name: Install Foundry
         if: matrix.test-suite == 'cargo test'
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
 
       - name: Install solc
         if: matrix.test-suite == 'cargo test'
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+        uses: ./.github/actions/install-solc
 
       - name: Install Nargo
         if: matrix.test-suite == 'test:circuits'
@@ -848,7 +843,7 @@ jobs:
           sudo chmod -R 777 $GITHUB_WORKSPACE/examples/CRISP/.cache-synpress
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -861,10 +856,7 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+        uses: ./.github/actions/install-solc
 
       - name: Install yq
         run: |
@@ -1092,10 +1084,7 @@ jobs:
           key: bb-bin-${{ env.BB_VERSION }}-amd64-linux
 
       - name: Install solc
-        run: |
-          sudo add-apt-repository ppa:ethereum/ethereum \
-          && sudo apt-get update -y \
-          && sudo apt-get install -y solc protobuf-compiler
+        uses: ./.github/actions/install-solc
 
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'
@@ -1357,7 +1346,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
 
       - name: Download interfold binary
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -1475,37 +1464,3 @@ jobs:
             TEMPLATE_REPO="$UPSTREAM_REPO_URL"
           fi
           interfold init mycitest --verbose --template="${TEMPLATE_REPO}#${BRANCH}:templates/default"
-
-  contrib-readme-job:
-    timeout-minutes: 10
-    runs-on: 'ubuntu-latest'
-    name: Populate Contributors List
-    # Only run on main branch to avoid branch conflicts
-    if: github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, 'contrib-readme-action')
-    concurrency:
-      group: contrib-readme-${{ github.ref }}
-      cancel-in-progress: true
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Contribute List
-        uses: akhilmhdh/contributors-readme-action@1ff4c56187458b34cd602aee93e897344ce34bfc # v1.4.0
-        with:
-          image_size: 100
-          readme_path: README.md
-          use_username: false
-          columns_per_row: 6
-          collaborators: direct
-          commit_message: 'docs(contributor): contrib-readme-action has updated readme'
-          committer_username: 'github-actions[bot]'
-          committer_email: 'github-actions[bot]@users.noreply.github.com'
-          auto_detect_branch_protection: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

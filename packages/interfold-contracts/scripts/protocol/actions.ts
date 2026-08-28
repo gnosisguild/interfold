@@ -13,6 +13,7 @@ import {
   safeBatchPath,
   writeJson,
 } from "./files";
+import { assertVrfSubscription, requireRandomnessConfig } from "./randomness";
 import {
   aragonAdminSafeBatch,
   aragonAdminSafeTransactions,
@@ -108,6 +109,7 @@ async function assertPreconditions(
   ethers: any,
   config: ReturnType<typeof loadConfig>,
 ) {
+  const randomness = requireRandomnessConfig(config);
   const contracts = [
     requireContract(ethers.provider, config.fold, "fold"),
     requireContract(ethers.provider, config.feeToken, "feeToken"),
@@ -125,6 +127,11 @@ async function assertPreconditions(
       ethers.provider,
       config.bondingRegistryProxyAdmin,
       "bondingRegistryProxyAdmin",
+    ),
+    requireContract(
+      ethers.provider,
+      randomness.coordinator,
+      "randomness.coordinator",
     ),
   ];
   if (config.escrowVotesAdapter) {
@@ -190,6 +197,7 @@ async function assertPreconditions(
       `BondingRegistry ProxyAdmin owner mismatch: expected ${config.protocolOwner}, got ${proxyAdminOwner}`,
     );
   }
+  await assertVrfSubscription(ethers, config);
   await assertAragonGovernancePreconditions(ethers, config);
 }
 
@@ -235,6 +243,7 @@ export async function actionDeploy(): Promise<void> {
     fold: config.fold,
     feeToken: config.feeToken,
     ticketUnderlyingToken: config.ticketUnderlyingToken,
+    randomness: config.randomness ? { ...config.randomness } : undefined,
     bondingRegistryProxy: config.bondingRegistryProxy,
     bondingRegistryProxyAdmin: config.bondingRegistryProxyAdmin,
     ...result.contracts,
@@ -280,6 +289,7 @@ Protocol contracts deployed
   bondingEligibilityLib:  ${deployment.bondingEligibilityLib}
   bondingSlashingLib:     ${deployment.bondingSlashingLib}
   bonding implementation: ${deployment.bondingRegistryImplementation}
+  nodeReleaseRegistry:     ${deployment.nodeReleaseRegistry}
   bondedCheckpoints:      ${deployment.bondedCheckpoints}
   bondedVotes:            (run --action activate-voting after the governance batch)
 

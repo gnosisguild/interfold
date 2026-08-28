@@ -9,7 +9,9 @@ import { testWithSynpress } from '@synthetixio/synpress'
 import { MetaMask, metaMaskFixtures } from '@synthetixio/synpress/playwright'
 import basicSetup from './wallet-setup/basic.setup'
 import { execFileSync } from 'child_process'
+import { readFileSync } from 'fs'
 import { config } from 'dotenv'
+import { Contract, JsonRpcProvider } from 'ethers'
 import path from 'path'
 
 const CLI = path.join(process.cwd(), 'target', 'debug', 'cli')
@@ -17,8 +19,23 @@ const CLI = path.join(process.cwd(), 'target', 'debug', 'cli')
 config({ path: path.join(process.cwd(), 'server', '.env') })
 config({ path: path.join(process.cwd(), 'client', '.env') })
 
-const E3_DURATION = parseInt(process.env.E3_DURATION as string, 10) * 1000
-const OUTPUT_DECRYPTION_WAIT = 80_000 // A small buffer for decryption
+const RANDOMNESS_ACCEPTANCE_WAIT = 30_000
+const DKG_READY_GRACE = 90_000
+const VOTE_PUBLICATION_WAIT = 180_000
+const E3_COMPLETION_WAIT = 180_000
+const E3_STAGE_COMPLETE = 5n
+const E3_STAGE_FAILED = 6n
+const REGISTRY_READ_ABI = [
+  'function sortitionSeed(uint256 e3Id) view returns (bool ready, uint256 seed)',
+  'function getCommitteeDeadline(uint256 e3Id) view returns (uint256)',
+]
+const INTERFOLD_READ_ABI = [
+  'function getE3(uint256 e3Id) view returns ((uint256 seed,uint8 committeeSize,uint256 requestBlock,uint256[2] inputWindow,bytes32 encryptionSchemeId,address e3Program,uint8 paramSet,bytes customParams,address decryptionVerifier,address pkVerifier,bytes32 committeePublicKey,bytes32 ciphertextOutput,bytes plaintextOutput,address requester,bytes32 ciphertextCommitment) e3)',
+  'function getE3Stage(uint256 e3Id) view returns (uint8 stage)',
+]
+const CRISP_READ_ABI = [
+  'function getRoundData(uint256 e3Id) view returns (uint256 merkleRoot,bytes32 paramsHash,uint256 numOptions,uint8 creditMode,uint256 inputRoot,uint40 numberOfVotes)',
+]
 
 function crispTokenAddress(): string {
   const tokenAddress = process.env.VITE_CRISP_TOKEN
@@ -58,7 +75,7 @@ async function checkE3Ready(e3id: string): Promise<boolean> {
   }
 }
 
-async function waitForE3Ready(e3id: string, maxWaitMs: number = E3_DURATION): Promise<void> {
+async function waitForE3Ready(e3id: string, maxWaitMs: number): Promise<void> {
   const startTime = Date.now()
   while (Date.now() - startTime < maxWaitMs) {
     const isActivated = await checkE3Ready(e3id)
@@ -69,6 +86,117 @@ async function waitForE3Ready(e3id: string, maxWaitMs: number = E3_DURATION): Pr
     await new Promise((resolve) => setTimeout(resolve, 5000))
   }
   throw new Error(`E3 ${e3id} was not ready within ${maxWaitMs}ms`)
+}
+
+async function committeeReadyTimeout(e3id: string): Promise<number> {
+  const { provider, registry } = protocolReader()
+  const [committeeDeadline, latestBlock] = await Promise.all([registry.getCommitteeDeadline(e3id), provider.getBlock('latest')])
+  if (!latestBlock) throw new Error('Latest block is unavailable while deriving the committee wait')
+
+  const submissionTimeRemaining = Math.max(0, Number(committeeDeadline) - latestBlock.timestamp) * 1000
+  return submissionTimeRemaining + DKG_READY_GRACE
+}
+
+function protocolReader(): { provider: JsonRpcProvider; registry: Contract; interfold: Contract; crispProgram: Contract } {
+  const deploymentsPath = path.join(process.cwd(), 'packages', 'crisp-contracts', 'deployed_contracts.json')
+  const deployments = JSON.parse(readFileSync(deploymentsPath, 'utf8'))
+  const local = deployments.localhost
+  const registryAddress = local?.CiphernodeRegistryOwnable?.address
+  const interfoldAddress = local?.Interfold?.address
+  const crispProgramAddress = local?.CRISPProgram?.address
+  if (!registryAddress) throw new Error(`CiphernodeRegistryOwnable is missing from ${deploymentsPath}`)
+  if (!interfoldAddress) throw new Error(`Interfold is missing from ${deploymentsPath}`)
+  if (!crispProgramAddress) throw new Error(`CRISPProgram is missing from ${deploymentsPath}`)
+
+  const provider = new JsonRpcProvider('http://127.0.0.1:8545', 31337, { staticNetwork: true })
+  return {
+    provider,
+    registry: new Contract(registryAddress, REGISTRY_READ_ABI, provider),
+    interfold: new Contract(interfoldAddress, INTERFOLD_READ_ABI, provider),
+    crispProgram: new Contract(crispProgramAddress, CRISP_READ_ABI, provider),
+  }
+}
+
+async function waitForRandomnessAcceptance(e3id: string): Promise<void> {
+  const { registry } = protocolReader()
+  const deadline = Date.now() + RANDOMNESS_ACCEPTANCE_WAIT
+  let lastError: unknown
+
+  while (Date.now() < deadline) {
+    try {
+      const [ready] = await registry.sortitionSeed(e3id)
+      if (ready) {
+        log(`Registry accepted delayed randomness for E3 ${e3id}`)
+        return
+      }
+    } catch (error) {
+      lastError = error
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+
+  const detail = lastError ? ` Last RPC error: ${lastError}` : ''
+  throw new Error(`Registry did not accept delayed randomness for E3 ${e3id} within ${RANDOMNESS_ACCEPTANCE_WAIT}ms.${detail}`)
+}
+
+async function waitForVotePublication(e3id: string): Promise<void> {
+  const { crispProgram } = protocolReader()
+  const deadline = Date.now() + VOTE_PUBLICATION_WAIT
+  let lastError: unknown
+
+  while (Date.now() < deadline) {
+    try {
+      const round = await crispProgram.getRoundData(e3id)
+      if (BigInt(round.numberOfVotes) > 0n) {
+        log(`CRISPProgram accepted a vote for E3 ${e3id}`)
+        return
+      }
+    } catch (error) {
+      lastError = error
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+
+  const detail = lastError ? ` Last RPC error: ${lastError}` : ''
+  throw new Error(`CRISPProgram did not accept a vote for E3 ${e3id} within ${VOTE_PUBLICATION_WAIT}ms.${detail}`)
+}
+
+async function closeInputWindow(e3id: string): Promise<void> {
+  const { provider, interfold } = protocolReader()
+  const [e3, latestBlock] = await Promise.all([interfold.getE3(e3id), provider.getBlock('latest')])
+  if (!latestBlock) throw new Error('Latest block is unavailable while closing the input window')
+
+  const inputDeadline = Number(e3.inputWindow[1])
+  const nextTimestamp = Math.max(latestBlock.timestamp + 1, inputDeadline + 1)
+  await provider.send('evm_setNextBlockTimestamp', [nextTimestamp])
+  await provider.send('evm_mine', [])
+  log(`advanced Anvil to ${nextTimestamp}, after the E3 input deadline ${inputDeadline}`)
+}
+
+async function waitForE3Completion(e3id: string): Promise<void> {
+  const { interfold } = protocolReader()
+  const deadline = Date.now() + E3_COMPLETION_WAIT
+  let lastStage: bigint | undefined
+  let lastError: unknown
+
+  while (Date.now() < deadline) {
+    try {
+      lastStage = BigInt(await interfold.getE3Stage(e3id))
+      if (lastStage === E3_STAGE_COMPLETE) {
+        log(`E3 ${e3id} completed`)
+        return
+      }
+      if (lastStage === E3_STAGE_FAILED) throw new Error(`E3 ${e3id} failed before completion`)
+    } catch (error) {
+      if (error instanceof Error && error.message === `E3 ${e3id} failed before completion`) throw error
+      lastError = error
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+  }
+
+  const stage = lastStage === undefined ? 'unavailable' : lastStage.toString()
+  const detail = lastError ? ` Last RPC error: ${lastError}` : ''
+  throw new Error(`E3 ${e3id} did not complete within ${E3_COMPLETION_WAIT}ms. Last stage: ${stage}.${detail}`)
 }
 
 const test = testWithSynpress(metaMaskFixtures(basicSetup))
@@ -180,6 +308,7 @@ test('CRISP smoke test', async ({ context, page, metamaskPage, extensionId }) =>
   log('runCliInit()...')
   const e3id = await runCliInit()
   log(`Got e3 id: ${e3id}`)
+  await waitForRandomnessAcceptance(e3id)
 
   await page.goto('/', { waitUntil: 'domcontentloaded' })
   await page.waitForLoadState('load')
@@ -195,11 +324,10 @@ test('CRISP smoke test', async ({ context, page, metamaskPage, extensionId }) =>
   await page.locator('a:has-text("Try the demo")').click()
 
   log(`waiting for E3 Committee being published...`)
-  await waitForE3Ready(e3id)
+  await waitForE3Ready(e3id, await committeeReadyTimeout(e3id))
   const DKG_DURATION = Date.now() - testStart
   log(`DKG duration: ${DKG_DURATION}ms`)
   log(`forcing page reload...`)
-  const voteStatusReady = page.waitForResponse((resp) => resp.url().includes('/voting/status') && resp.ok(), { timeout: 120_000 })
   await page.reload()
   await page.waitForLoadState('load')
   log(`ensuring local anvil network after reload...`)
@@ -207,20 +335,17 @@ test('CRISP smoke test', async ({ context, page, metamaskPage, extensionId }) =>
   await reconnectWalletIfNeeded(page, metamask)
   await waitForDemoPollReady(page)
   await waitForWalletSession(page)
-  await voteStatusReady.catch(() => {
-    log('vote status response not observed (may have completed before listener)')
-  })
   await castVoteWithSignature(page, metamask)
-  const WAIT = E3_DURATION - DKG_DURATION + OUTPUT_DECRYPTION_WAIT
-  log(`waiting ${WAIT}ms...`)
-  await page.waitForTimeout(WAIT)
+  await waitForVotePublication(e3id)
+  await closeInputWindow(e3id)
+  await waitForE3Completion(e3id)
   log(`clicking all polls button...`)
   await page.locator('a:has-text("All Polls")').click()
   log(`asserting that All polls page exists...`)
   await expect(page.locator('h1')).toHaveText('All polls')
   const pollResult = page.locator(`[data-test-id='poll-${e3id}-0']`)
   log(`asserting that result has 100% on the vote we clicked on...`)
-  await expect(pollResult.locator("[data-test-id='poll-result-0'] .h2")).toHaveText('100%')
+  await expect(pollResult.locator("[data-test-id='poll-result-0'] .h2")).toHaveText('100%', { timeout: 60_000 })
   log(`asserting that result has 0% on the vote we did not click on...`)
   await expect(pollResult.locator("[data-test-id='poll-result-1'] .h2")).toHaveText('0%')
 

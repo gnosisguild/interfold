@@ -230,8 +230,8 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         require(address(paymentToken) != address(0), "Invalid fee token");
 
         // Attribute the failure before touching requester escrow. Supplier-side
-        // failures return the entire fee payment; requester-side failures pay
-        // completed work according to the request-time policy.
+        // failures return the entire service escrow; requester-side failures
+        // pay completed work according to the request-time policy.
         IInterfold.FailureReason reason = _interfoldFor(e3Id).getFailureReason(
             e3Id
         );

@@ -25,8 +25,8 @@ Canonical, tool-neutral (edit these; they are the single source of truth):
   update-flow-trace)
 - `.agents/skills/` — portable, repository-scoped skills; detailed material stays in each skill's
   `references/` directory
-- `scripts/check-*.sh` + `.husky/pre-push` — mechanical gates (committee sync, doc drift, invariant
-  ratchets); tool-independent
+- `scripts/check-*.{sh,ts}` + `.husky/pre-push` — mechanical gates (committee sync, doc drift,
+  contract-address consistency, invariant ratchets); tool-independent
 - `packages/interfold-mcp/` — implementation of the `interfold-docs` MCP server
 
 Per-tool adapters (thin wrappers; never put content here):

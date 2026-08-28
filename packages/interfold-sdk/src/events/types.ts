@@ -21,11 +21,17 @@ export enum InterfoldEventType {
 
 export enum RegistryEventType {
   COMMITTEE_REQUESTED = 'CommitteeRequested',
+  COMMITTEE_RANDOMNESS_REQUESTED = 'CommitteeRandomnessRequested',
+  RANDOMNESS_CIRCUIT_BREAKER_TRIPPED = 'RandomnessCircuitBreakerTripped',
   COMMITTEE_PUBLISHED = 'CommitteePublished',
   COMMITTEE_FINALIZED = 'SortitionCommitteeFinalized',
   INTERFOLD_SET = 'InterfoldSet',
   OWNERSHIP_TRANSFERRED = 'OwnershipTransferred',
   INITIALIZED = 'Initialized',
+}
+
+export enum RandomnessProviderEventType {
+  RANDOMNESS_FULFILLED = 'RandomnessFulfilled',
 }
 
 export type AllEventTypes = InterfoldEventType | RegistryEventType
@@ -90,6 +96,26 @@ export interface CommitteeRequestedData {
   ticketPrice: bigint
 }
 
+export interface CommitteeRandomnessRequestedData {
+  e3Id: bigint
+  requestId: bigint
+  provider: string
+  randomnessDeadline: bigint
+}
+
+export interface RandomnessCircuitBreakerTrippedData {
+  e3Id: bigint
+  requestId: bigint
+  randomnessProvider: string
+}
+
+export interface RandomnessFulfilledData {
+  requestId: bigint
+  e3Id: bigint
+  randomWord: bigint
+  fulfilledAt: bigint
+}
+
 export interface CommitteePublishedData {
   e3Id: bigint
   nodes: string[]
@@ -119,6 +145,8 @@ export interface InterfoldEventData {
 
 export interface RegistryEventData {
   [RegistryEventType.COMMITTEE_REQUESTED]: CommitteeRequestedData
+  [RegistryEventType.COMMITTEE_RANDOMNESS_REQUESTED]: CommitteeRandomnessRequestedData
+  [RegistryEventType.RANDOMNESS_CIRCUIT_BREAKER_TRIPPED]: RandomnessCircuitBreakerTrippedData
   [RegistryEventType.COMMITTEE_PUBLISHED]: CommitteePublishedData
   [RegistryEventType.COMMITTEE_FINALIZED]: CommitteeFinalizedData
   [RegistryEventType.INTERFOLD_SET]: { interfold: string }
@@ -134,6 +162,20 @@ export interface InterfoldEvent<T extends AllEventTypes> {
   blockNumber: bigint
   transactionHash: string
 }
+
+export interface RandomnessProviderEvent<T extends RandomnessProviderEventType = RandomnessProviderEventType> {
+  type: T
+  data: RandomnessFulfilledData
+  provider: `0x${string}`
+  log: Log
+  timestamp: Date
+  blockNumber: bigint
+  transactionHash: string
+}
+
+export type RandomnessProviderEventCallback<T extends RandomnessProviderEventType = RandomnessProviderEventType> = (
+  event: RandomnessProviderEvent<T>,
+) => void | Promise<void>
 
 export type EventCallback<T extends AllEventTypes = AllEventTypes> = (event: InterfoldEvent<T>) => void | Promise<void>
 
@@ -153,6 +195,8 @@ export interface SDKEventEmitter {
 export interface EventListenerConfig {
   fromBlock?: bigint
   toBlock?: bigint
+  /** Maximum block span for each historical RPC query. */
+  historicalBlockRange?: bigint
   polling?: boolean
   pollingInterval?: number
 }
