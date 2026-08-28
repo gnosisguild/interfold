@@ -301,6 +301,36 @@ async function deployBfvVerifiers(
   defaultConfig: ActiveBfvConfig,
   configs: readonly ActiveBfvConfig[],
 ) {
+  const verifierRoutes = await deployBfvVerifierRoutes(
+    ethers,
+    registry,
+    defaultConfig,
+    configs,
+  );
+
+  const dkgFoldFactory = await ethers.getContractFactory(
+    "DkgFoldAttestationVerifier",
+  );
+  const dkgFold = await dkgFoldFactory.deploy();
+  await dkgFold.waitForDeployment();
+  const dkgFoldAttestationVerifier = await deployedAddress(dkgFold);
+
+  return {
+    ...verifierRoutes,
+    dkgFoldAttestationVerifier,
+  };
+}
+
+export async function deployBfvVerifierRoutes(
+  ethers: any,
+  registry: string,
+  defaultConfig: ActiveBfvConfig,
+  configs: readonly ActiveBfvConfig[],
+) {
+  if (configs.length === 0) {
+    throw new Error("At least one BFV verifier route is required");
+  }
+
   const routes = [];
   for (const config of configs) {
     routes.push(await deployBfvVerifierRoute(ethers, registry, config));
@@ -330,17 +360,9 @@ async function deployBfvVerifiers(
     decryptionVerifier = await deployedAddress(decryptionRouter);
   }
 
-  const dkgFoldFactory = await ethers.getContractFactory(
-    "DkgFoldAttestationVerifier",
-  );
-  const dkgFold = await dkgFoldFactory.deploy();
-  await dkgFold.waitForDeployment();
-  const dkgFoldAttestationVerifier = await deployedAddress(dkgFold);
-
   return {
     decryptionVerifier,
     pkVerifier,
-    dkgFoldAttestationVerifier,
     dkgAggregatorVerifier: routes[0].dkgAggregatorVerifier,
     decryptionAggregatorVerifier: routes[0].decryptionAggregatorVerifier,
     verifierZkTranscriptLib: routes[0].verifierZkTranscriptLib,

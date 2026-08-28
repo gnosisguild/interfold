@@ -57,7 +57,18 @@ impl ZKInputsGenerator {
     ) -> Result<Self> {
         let bfv_preset = BfvPreset::from_threshold_parameters(degree, plaintext_modulus, moduli)
             .ok_or_else(|| eyre::eyre!("Unsupported BFV threshold parameters"))?;
-        let bfv_params = build_bfv_params_arc(degree, plaintext_modulus, moduli, error1_variance);
+        let canonical_variance = BfvParamSet::from(bfv_preset).error1_variance;
+        if let Some(provided) = error1_variance {
+            if Some(provided) != canonical_variance {
+                return Err(eyre::eyre!(
+                    "Noncanonical BFV error variance for {}: expected {}, got {provided}",
+                    bfv_preset.name(),
+                    canonical_variance.unwrap_or("default")
+                ));
+            }
+        }
+        let bfv_params =
+            build_bfv_params_arc(degree, plaintext_modulus, moduli, canonical_variance);
         Ok(Self {
             bfv_params,
             bfv_preset,
@@ -360,6 +371,20 @@ mod tests {
 
         let result =
             ZKInputsGenerator::try_new(dkg.degree, dkg.plaintext_modulus, dkg.moduli, None);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn try_new_rejects_noncanonical_error_variance() {
+        let threshold = BfvParamSet::from(BfvPreset::InsecureThreshold512);
+
+        let result = ZKInputsGenerator::try_new(
+            threshold.degree,
+            threshold.plaintext_modulus,
+            threshold.moduli,
+            Some("10"),
+        );
 
         assert!(result.is_err());
     }

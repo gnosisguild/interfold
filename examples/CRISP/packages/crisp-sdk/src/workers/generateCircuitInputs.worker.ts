@@ -15,7 +15,7 @@ type GenerateCircuitInputsRequest = {
 
 self.onmessage = async (e: MessageEvent<GenerateCircuitInputsRequest>) => {
   try {
-    if (e.data.preset) setZkInputsGeneratorPreset(e.data.preset)
+    setZkInputsGeneratorPreset(e.data.preset)
     const prepared = await prepareCircuitInputsImpl(e.data.inputs)
     self.postMessage({ type: 'result' as const, prepared })
   } catch (err) {

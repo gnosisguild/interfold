@@ -27,7 +27,11 @@ const CRISP_PROGRAM_ABI = parseAbi([
  * @param e3Id The round.
  * @returns The CRISP program address.
  */
-export const getCrispProgramAddress = async (client: PublicClient, interfoldAddress: Address, e3Id: bigint): Promise<Address> => {
+export const getCrispRoundConfig = async (
+  client: PublicClient,
+  interfoldAddress: Address,
+  e3Id: bigint,
+): Promise<{ crispProgram: Address; paramSet: number }> => {
   const e3 = await client.readContract({
     address: interfoldAddress,
     abi: INTERFOLD_ABI,
@@ -35,8 +39,12 @@ export const getCrispProgramAddress = async (client: PublicClient, interfoldAddr
     args: [e3Id],
   })
 
-  return e3.e3Program
+  return { crispProgram: e3.e3Program, paramSet: e3.paramSet }
 }
+
+/** Resolve only the CRISP program for callers that do not generate a proof. */
+export const getCrispProgramAddress = async (client: PublicClient, interfoldAddress: Address, e3Id: bigint): Promise<Address> =>
+  (await getCrispRoundConfig(client, interfoldAddress, e3Id)).crispProgram
 
 /**
  * Read the digest a voter signs to authorise one ballot.

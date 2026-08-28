@@ -71,6 +71,14 @@ jobs:
             fi
           fi
 
+          # The ciphernode downloads `circuits-{version}.tar.gz` from the release whose tag has
+          # that same version. Refuse to publish a binary that points at an older circuit archive.
+          CIRCUITS_VERSION=$(node -p "require('./crates/zk-prover/versions.json').required_circuits_version")
+          if [ "$CIRCUITS_VERSION" != "$VERSION" ]; then
+            echo "❌ required circuit version ($CIRCUITS_VERSION) doesn't match tag ($VERSION)"
+            exit 1
+          fi
+
           if [[ "${{ steps.get_version.outputs.is_prerelease }}" == "false" ]]; then
             DAPPNODE_VERSION=$(node -p "require('./dappnode/dappnode_package.json').version")
             DAPPNODE_UPSTREAM_VERSION=$(node -p "require('./dappnode/dappnode_package.json').upstreamVersion")
@@ -109,7 +117,7 @@ jobs:
             echo "Skipping DAppNode package version check for pre-release tag."
           fi
 
-          echo "✅ All versions match: $VERSION"
+          echo "✅ All versions, including the circuit archive, match: $VERSION"
 
   build-ciphernode-image-release:
     name: Build & Push ciphernode (release)
@@ -448,6 +456,8 @@ jobs:
 
       - name: Verify circuit artifacts match source
         if: steps.pull.outputs.found == 'true'
+        # This check requires exactly one source-bound build stamp for each of the six supported
+        # preset/committee pairs before the archive can be created.
         run: pnpm store:circuits verify-release --source-hash "${{ steps.pull.outputs.source_hash }}"
 
       - name: Create release archive

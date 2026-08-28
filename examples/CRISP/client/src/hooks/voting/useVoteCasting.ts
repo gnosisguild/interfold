@@ -20,7 +20,7 @@ import { useInterfoldServer } from '../interfold/useInterfoldServer'
 import { getRandomVoterToMask } from '@/utils/voters'
 import { handleGenericError } from '@/utils/handle-generic-error'
 import { NUM_OPTIONS } from '@/utils/constants'
-import { ballotTypedData, getBallotDigest, getCrispProgramAddress } from '@/utils/ballotDigest'
+import { ballotTypedData, getBallotDigest, getCrispProgramAddress, getCrispRoundConfig } from '@/utils/ballotDigest'
 import { getRandomRegistrant, getVotingPower, isRegisteredIn } from '@/utils/onchainCensus'
 import { submitVoteDirectly } from '@/utils/directVote'
 import { isDirectVoteEnabled, txExplorerUrl } from '@/utils/methods'
@@ -161,7 +161,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         const slot = address as `0x${string}`
         const isOnchain = roundState.census_mode === CensusMode.Onchain
 
-        const crispProgram = await getCrispProgramAddress(publicClient, roundState.interfold_address as `0x${string}`, e3Id)
+        const { crispProgram, paramSet } = await getCrispRoundConfig(publicClient, roundState.interfold_address as `0x${string}`, e3Id)
 
         const ballotBase = {
           vote,
@@ -186,7 +186,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           ballot = { ...ballotBase, censusMode: 'merkle', balance, merkleLeaves }
         }
 
-        await ensureCircuits()
+        await ensureCircuits(paramSet)
         // The slot head is passed as a pair or not at all. A ciphertext without its index would be
         // proven against one entry and published against another, so the SDK types the two together
         // and this branches rather than spreading them as separate optional fields.

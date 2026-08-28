@@ -26,8 +26,8 @@ let _zkInputsGenerator: InstanceType<typeof ZKInputsGenerator> | null = null
 let _zkInputsGeneratorPreset: CircuitPreset | 'default' | null = null
 let _zkInputsGeneratorPresetOverride: CircuitPreset | null = null
 
-/** Force a BFV preset for contexts that do not share the registered circuit bundle. */
-export const setZkInputsGeneratorPreset = (preset: CircuitPreset): void => {
+/** Set or clear the BFV preset override for contexts that do not share the registered bundle. */
+export const setZkInputsGeneratorPreset = (preset: CircuitPreset | null): void => {
   if (_zkInputsGeneratorPresetOverride !== preset) {
     _zkInputsGenerator = null
     _zkInputsGeneratorPreset = null

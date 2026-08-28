@@ -13,7 +13,8 @@ jointly generate a threshold BFV key (DKG), compute over encrypted inputs, and t
 output — every step backed by ZK proofs verified on-chain.
 
 - Docs: https://docs.theinterfold.com · License: LGPL-3.0-only
-- Unified version across all crates and npm packages (currently 0.13.0)
+- Interfold workspace crates and core `@interfold/*` packages share one release version. CRISP is
+  versioned and released separately.
 - Reference app: **CRISP** (`examples/CRISP`, excluded from the workspace)
 
 ## Terminology

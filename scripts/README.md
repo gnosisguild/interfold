@@ -242,6 +242,10 @@ the generator would produce.
 
 `circuit-artifacts.ts` - Push/pull pre-built circuit artifacts via git branch.
 
+`crates/zk-prover/versions.json` pins the circuit archive that a released ciphernode downloads. Its
+`required_circuits_version` must equal the release tag without the `v` prefix. The release workflow
+checks this before it publishes binaries or `circuits-<version>.tar.gz`.
+
 ### Usage
 
 ```bash
@@ -315,9 +319,8 @@ refuses with a clear fix recipe instead of silently producing the wrong `.sol`.
 
 For non-canonical pairs, pass `--preset <name> --committee <name>`; the verifiers land under
 `honk/<preset>/<committee>/` so the canonical `.sol` files committed to git are not clobbered.
-`--check` mode skips the diff for non-canonical pairs because there is no committed file to diff
-against. Benchmark and deploy flows deploy the matching aggregator verifiers from those generated
-sources.
+`--check` compares that pair with its committed files. CI hydrates and checks all six supported
+pairs.
 
 The script has two modes:
 

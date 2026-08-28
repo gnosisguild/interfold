@@ -584,8 +584,7 @@ export const deployInterfold = async (
   // Register BFV param sets
   console.log("Registering BFV param sets...");
   const activeParamSet = Number(ACTIVE_BFV_PARAM_SET);
-  const activeParams =
-    activeParamSet === 0 ? encodedInsecure : encodedSecure;
+  const activeParams = activeParamSet === 0 ? encodedInsecure : encodedSecure;
   await send(
     interfold.setParamSet(activeParamSet, activeParams),
     "interfold.setParamSet",

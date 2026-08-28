@@ -1012,6 +1012,9 @@ jobs:
       - name: Build circuits
         run: pnpm build:circuits
 
+      - name: Test circuit artifact validation
+        run: pnpm test:circuit-tooling
+
       # The generated verifier contracts must match the freshly built verification keys. A drift
       # means the deployed verifier accepts a different circuit from the one in this tree.
       #
@@ -1023,6 +1026,36 @@ jobs:
       # The step above has just built these circuits, so there is nothing stale to guard against.
       - name: Check generated verifiers are in sync
         run: pnpm check:verifiers --no-compile
+
+      - name: Pull the complete circuit matrix
+        run: pnpm store:circuits pull
+
+      - name: Verify release circuit provenance
+        run: pnpm store:circuits verify-release
+
+      - name: Check every generated BFV verifier
+        run: |
+          while read -r preset committee
+          do
+            pnpm build:circuits \
+              --preset "$preset" \
+              --committee "$committee" \
+              --hydrate-bin-only \
+              --no-clean-targets
+            pnpm generate:verifiers \
+              --circuits dkg_aggregator,decryption_aggregator \
+              --preset "$preset" \
+              --committee "$committee" \
+              --check \
+              --no-compile
+          done <<'EOF'
+          insecure-512 micro
+          insecure-512 small
+          secure-8192 minimum
+          secure-8192 micro
+          secure-8192 small
+          insecure-512 minimum
+          EOF
 
       # Asserted before the upload, so a step that consumes or clears a build output fails in the
       # job that did it rather than in the job that needed it. Same list `zk_prover_e2e` checks.

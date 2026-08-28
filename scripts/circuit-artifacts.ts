@@ -5,23 +5,17 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { execSync } from 'child_process'
+import { execFileSync, execSync } from 'child_process'
 import { createHash } from 'crypto'
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { join, relative, resolve } from 'path'
+import { SUPPORTED_PRESET_COMMITTEE_PAIRS } from './circuit-constants'
 
 const BRANCH = 'circuit-artifacts'
 const ROOT = resolve(__dirname, '..')
 const DIST = join(ROOT, 'dist', 'circuits')
 const METADATA_FILES = new Set(['.git', 'SOURCE_HASH', 'SHA256SUMS', 'checksums.json'])
-const RELEASE_REQUIRED_PAIRS = [
-  ['insecure-512', 'minimum'],
-  ['insecure-512', 'micro'],
-  ['insecure-512', 'small'],
-  ['secure-8192', 'minimum'],
-  ['secure-8192', 'micro'],
-  ['secure-8192', 'small'],
-] as const
+export const RELEASE_REQUIRED_PAIRS = SUPPORTED_PRESET_COMMITTEE_PAIRS.map(({ preset, committee }) => [preset, committee] as const)
 
 const run = (cmd: string, cwd = ROOT) => execSync(cmd, { encoding: 'utf-8', cwd, stdio: 'pipe' }).trim()
 const runV = (cmd: string, cwd = ROOT) => execSync(cmd, { cwd, stdio: 'inherit' })
@@ -83,7 +77,7 @@ function stampFiles(dir: string): string[] {
   return stamps
 }
 
-function requiredArtifactMarkers(preset: string, committee: string): string[] {
+export function requiredArtifactMarkers(preset: string, committee: string): string[] {
   return [
     join(preset, committee, 'default/dkg/pk/pk.json'),
     join(preset, committee, 'default/threshold/pk_aggregation/pk_aggregation.json'),
@@ -92,31 +86,54 @@ function requiredArtifactMarkers(preset: string, committee: string): string[] {
   ]
 }
 
-function validateRetainedStamps(dir: string): void {
-  for (const stampFile of stampFiles(dir)) {
-    const stampPath = join(dir, stampFile)
-    const stamp = JSON.parse(readFileSync(stampPath, 'utf8')) as {
-      preset?: string
-      committee?: string
-      sourceHash?: string
-    }
-    if (!stamp.preset || !stamp.committee || !stamp.sourceHash) {
-      throw new Error(`Invalid circuit build stamp: ${stampFile}`)
-    }
-    const expected = run(`pnpm tsx scripts/build-circuits.ts hash --preset ${stamp.preset} --committee ${stamp.committee}`)
-    if (stamp.sourceHash !== expected) {
-      throw new Error(
-        `Stale circuit artifacts at ${stamp.preset}/${stamp.committee}: ` +
-          `stamp=${stamp.sourceHash}, expected=${expected}. ` +
-          `Rebuild that pair before pushing.`,
-      )
-    }
-    const missing = requiredArtifactMarkers(stamp.preset, stamp.committee).filter((marker) => !existsSync(join(dir, marker)))
-    if (missing.length > 0) {
-      throw new Error(
-        `Incomplete circuit artifacts at ${stamp.preset}/${stamp.committee}: ` + `missing ${missing[0]}. Rebuild that pair before pushing.`,
-      )
-    }
+type BuildStamp = {
+  preset?: string
+  committee?: string
+  sourceHash?: string
+}
+
+function sourceHashForPair(preset: string, committee: string): string {
+  return execFileSync('pnpm', ['tsx', 'scripts/build-circuits.ts', 'hash', '--preset', preset, '--committee', committee], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim()
+}
+
+function validatePair(
+  dir: string,
+  preset: string,
+  committee: string,
+  expectedSourceHash: (preset: string, committee: string) => string,
+): void {
+  const stampFile = join(preset, committee, '.build-stamp.json')
+  const stampPath = join(dir, stampFile)
+  if (!existsSync(stampPath)) {
+    throw new Error(`Missing circuit build stamp: ${stampFile}`)
+  }
+
+  let stamp: BuildStamp
+  try {
+    stamp = JSON.parse(readFileSync(stampPath, 'utf8')) as BuildStamp
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Invalid circuit build stamp ${stampFile}: ${message}`)
+  }
+  if (stamp.preset !== preset || stamp.committee !== committee || !stamp.sourceHash) {
+    throw new Error(`Invalid circuit build stamp ${stampFile}: expected preset=${preset}, committee=${committee}, and a sourceHash`)
+  }
+
+  const expected = expectedSourceHash(preset, committee)
+  if (stamp.sourceHash !== expected) {
+    throw new Error(
+      `Stale circuit artifacts at ${preset}/${committee}: ` +
+        `stamp=${stamp.sourceHash}, expected=${expected}. Rebuild that pair before pushing.`,
+    )
+  }
+
+  const missing = requiredArtifactMarkers(preset, committee).filter((marker) => !existsSync(join(dir, marker)))
+  if (missing.length > 0) {
+    throw new Error(`Incomplete circuit artifacts at ${preset}/${committee}: missing ${missing[0]}. Rebuild that pair before pushing.`)
   }
 }
 
@@ -145,13 +162,30 @@ function validateSourceHash(dir: string, expectedHash: string): void {
   }
 }
 
-function validateReleaseArtifacts(dir: string): void {
+export function validateReleaseArtifacts(
+  dir: string,
+  expectedSourceHash: (preset: string, committee: string) => string = sourceHashForPair,
+): void {
   for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
-    const missing = requiredArtifactMarkers(preset, committee).filter((marker) => !existsSync(join(dir, marker)))
-    if (missing.length > 0) {
-      throw new Error(`Expected circuit artifact missing: ${missing[0]}`)
+    validatePair(dir, preset, committee, expectedSourceHash)
+  }
+}
+
+export function validateArtifactSet(
+  dir: string,
+  expectedSourceHash: (preset: string, committee: string) => string = sourceHashForPair,
+): void {
+  const requiredStamps = new Set(RELEASE_REQUIRED_PAIRS.map(([preset, committee]) => join(preset, committee, '.build-stamp.json')))
+  const retainedStamps = stampFiles(dir)
+  for (const stampFile of retainedStamps) {
+    if (!requiredStamps.has(stampFile)) {
+      throw new Error(`Unexpected circuit build stamp: ${stampFile}`)
     }
   }
+  if (retainedStamps.length !== requiredStamps.size) {
+    throw new Error(`Expected exactly ${requiredStamps.size} circuit build stamps, got ${retainedStamps.length}`)
+  }
+  validateReleaseArtifacts(dir, expectedSourceHash)
 }
 
 async function push() {
@@ -182,7 +216,7 @@ async function push() {
   }
 
   copyArtifactsInto(tmp)
-  validateRetainedStamps(tmp)
+  validateArtifactSet(tmp)
   writeFileSync(join(tmp, 'SOURCE_HASH'), hash)
   refreshChecksums(tmp)
 
@@ -226,8 +260,7 @@ async function verifyRelease() {
 
   try {
     validateSourceHash(DIST, expectedHash)
-    validateRetainedStamps(DIST)
-    validateReleaseArtifacts(DIST)
+    validateArtifactSet(DIST)
   } catch (error: any) {
     console.error(`❌ ${error.message}`)
     process.exit(1)
@@ -236,8 +269,10 @@ async function verifyRelease() {
   console.log(`✅ circuit-artifacts verified (SOURCE_HASH=${expectedHash}, required chain artifacts present)`)
 }
 
-const cmd = process.argv[2]
-if (cmd === 'push') push()
-else if (cmd === 'pull') pull()
-else if (cmd === 'verify-release') verifyRelease()
-else console.log('Usage: circuit-artifacts.ts [push [--replace]|pull|verify-release [--source-hash <hash>]]')
+if (require.main === module) {
+  const cmd = process.argv[2]
+  if (cmd === 'push') push()
+  else if (cmd === 'pull') pull()
+  else if (cmd === 'verify-release') verifyRelease()
+  else console.log('Usage: circuit-artifacts.ts [push [--replace]|pull|verify-release [--source-hash <hash>]]')
+}

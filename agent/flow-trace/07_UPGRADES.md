@@ -61,6 +61,37 @@ each other.
 The initial VRF upgrade follows this combined path because it introduces the controller and changes
 both `Interfold` and `BondingRegistry`.
 
+## Secure CRISP activation on mainnet
+
+The bootstrap deployment does not become production-ready when CRISP contracts are deployed. With
+requests paused and all E3s and committees drained, `upgrade:secure-crisp` prepares one atomic
+governance batch that:
+
+```text
+upgrade Interfold to the secure chain-aware crypto configuration
+  -> register the secure BFV parameter set and all committee thresholds
+  -> install the secure minimum, micro, and small verifier routes
+  -> install the PK, decryption, and ciphertext verifiers
+  -> register and bind the CRISP program
+  -> raise the required node protocol version and invalidate old node eligibility
+  -> keep requests paused
+```
+
+Run `upgrade:secure-crisp:validate` after governance executes the batch. The validator checks the
+implementation, every verifier route and VK anchor, the CRISP receipt-verifier binding, and the
+paused and drained state. Publish a new SemVer ciphernode artifact from the same release source
+before governance executes the batch. Restart matching ciphernodes after execution, and resume only
+after at least the largest configured committee size has acknowledged the new protocol and is
+online. Do not use the older CRISP-only builder on mainnet because it cannot install the
+protocol-side secure configuration.
+
+After the nodes restart, run
+`upgrade:secure-crisp:resume -- --network mainnet --ciphernodes-restarted`. It reruns the complete
+activation validator and requires enough release-ready active operators for the largest committee
+before it writes the checked DAO/Safe unpause transaction. On-chain active status is not a
+heartbeat, so the flag is an explicit operator confirmation that those processes are online and
+mutually reachable.
+
 ## Failure and rollback
 
 The required counters never decrease. For a bad node-only release, pause, drain, build the previous

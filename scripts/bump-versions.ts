@@ -70,17 +70,18 @@ class VersionBumper {
         console.log('      - packages/interfold-react')
         console.log('      - packages/interfold-mcp')
         console.log('      - crates/wasm')
+        console.log('   3. Pin the ciphernode circuit archive to the release version')
         const dappNodeAction = this.isPrerelease()
           ? 'skip for pre-release'
           : `update upstream image to ${this.newVersion} and bump wrapper version`
-        console.log(`   3. DAppNode package: ${dappNodeAction}`)
-        console.log('   4. Update lock files (Cargo.lock, pnpm-lock.yaml)')
-        console.log('   5. Generate/update CHANGELOG.md')
+        console.log(`   4. DAppNode package: ${dappNodeAction}`)
+        console.log('   5. Update lock files (Cargo.lock, pnpm-lock.yaml)')
+        console.log('   6. Generate/update CHANGELOG.md')
         if (!this.options.skipGit) {
-          console.log('   6. Commit changes')
-          console.log(`   7. Create tag: v${this.newVersion}`)
+          console.log('   7. Commit changes')
+          console.log(`   8. Create tag: v${this.newVersion}`)
           if (!this.options.skipPush) {
-            console.log('   8. Push commits and tag to origin')
+            console.log('   9. Push commits and tag to origin')
           }
         }
         console.log('\n✅ Dry run complete. Run without --dry-run to perform these actions.')
@@ -92,6 +93,9 @@ class VersionBumper {
 
       // Bump npm packages
       this.bumpNpmPackages()
+
+      // The release workflow publishes the archive under this same tag.
+      this.bumpCircuitArchiveVersion()
 
       // Bump DAppNode package for stable releases
       this.bumpDappNodePackage()
@@ -422,6 +426,17 @@ class VersionBumper {
       const packageName = this.getPackageName(packageJsonPath)
       console.log(`   ✓ ${packageName}`)
     }
+  }
+
+  /**
+   * Pin the circuit archive downloaded by this ciphernode release.
+   */
+  private bumpCircuitArchiveVersion(): void {
+    const versionsPath = join(this.rootDir, 'crates/zk-prover/versions.json')
+    const versions = JSON.parse(readFileSync(versionsPath, 'utf-8'))
+    versions.required_circuits_version = this.newVersion
+    writeFileSync(versionsPath, JSON.stringify(versions, null, 2) + '\n')
+    console.log(`   ✓ Circuit archive pinned to ${this.newVersion}`)
   }
 
   /**

@@ -93,12 +93,10 @@ describe("BFV verifier routers", function () {
       "MockBfvDecryptionVerifierRoute",
       [1, HASH_A, HASH_B, false],
     );
-    const small = await ethers.deployContract("MockBfvDecryptionVerifierRoute", [
-      9,
-      HASH_C,
-      HASH_D,
-      true,
-    ]);
+    const small = await ethers.deployContract(
+      "MockBfvDecryptionVerifierRoute",
+      [9, HASH_C, HASH_D, true],
+    );
     const router = await ethers.deployContract("BfvDecryptionVerifierRouter", [
       [await minimum.getAddress(), await small.getAddress()],
       9,

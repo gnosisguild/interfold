@@ -47,8 +47,7 @@ contract BfvPkVerifierRouter is IPkVerifier {
                 Route({
                     verifier: route,
                     expectedPublicInputsLen: (3 * routeH) + 6,
-                    expectedNodesFoldKeyHash: route
-                        .expectedNodesFoldKeyHash(),
+                    expectedNodesFoldKeyHash: route.expectedNodesFoldKeyHash(),
                     expectedC5KeyHash: route.expectedC5KeyHash()
                 })
             );
@@ -112,14 +111,15 @@ contract BfvPkVerifierRouter is IPkVerifier {
             ) {
                 continue;
             }
-            return route.verifier.verify(
-                e3Id,
-                committeeRoot,
-                sortedNodes,
-                pkCommitment,
-                committeeHash,
-                proof
-            );
+            return
+                route.verifier.verify(
+                    e3Id,
+                    committeeRoot,
+                    sortedNodes,
+                    pkCommitment,
+                    committeeHash,
+                    proof
+                );
         }
 
         if (lengthMatched) revert VkHashMismatch();

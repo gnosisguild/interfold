@@ -110,7 +110,86 @@ check_sol_committee minimum MINIMUM 0
 check_sol_committee micro MICRO 1
 check_sol_committee small SMALL 2
 
-# 5. Optional local-cache note (when circuits have been built locally).
+# 5. Every chain-supported route in utils.ts must match the Noir committee shape and the
+#    parameter/configuration hashes compiled into ActiveCryptoConfig.sol.
+sol_bytes32() {
+  local name="$1"
+  grep -A1 -E "bytes32 internal constant $name" "$ACTIVE_SOL" \
+    | grep -oE '0x[0-9a-fA-F]+' \
+    | head -n1
+}
+
+MATRIX_TSV="$({
+  pnpm --silent tsx -e '
+    import { TESTNET_BFV_CONFIGS } from "./packages/interfold-contracts/scripts/utils";
+    for (const config of TESTNET_BFV_CONFIGS) {
+      console.log([
+        config.preset,
+        config.committee,
+        config.paramSet,
+        config.paramSetHash,
+        config.configId,
+        config.committeeSize,
+        config.n,
+        config.t,
+        config.h,
+      ].join("\t"));
+    }
+  '
+})"
+
+MATRIX_COUNT=$(printf '%s\n' "$MATRIX_TSV" | awk 'NF { count += 1 } END { print count + 0 }')
+MATRIX_UNIQUE_COUNT=$(printf '%s\n' "$MATRIX_TSV" | cut -f1,2 | sort -u | awk 'NF { count += 1 } END { print count + 0 }')
+if [[ "$MATRIX_COUNT" != "6" || "$MATRIX_UNIQUE_COUNT" != "6" ]]; then
+  fail "$UTILS_TS must define exactly six unique preset/committee routes; got $MATRIX_COUNT rows and $MATRIX_UNIQUE_COUNT unique pairs"
+fi
+
+while IFS=$'\t' read -r preset committee param_set param_hash config_id committee_size route_n route_t route_h; do
+  [[ -n "$preset" ]] || continue
+  case "$committee" in
+    minimum) prefix=MINIMUM; expected_size=0 ;;
+    micro) prefix=MICRO; expected_size=1 ;;
+    small) prefix=SMALL; expected_size=2 ;;
+    *) fail "unknown committee '$committee' in $UTILS_TS" ;;
+  esac
+
+  mod_file="circuits/lib/src/configs/committee/$committee/mod.nr"
+  noir_n=$(grep -E 'pub global N_PARTIES: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
+  noir_h=$(grep -E 'pub global H: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
+  noir_t=$(grep -E 'pub global T: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
+  if [[ "$committee_size" != "$expected_size" || "$route_n" != "$noir_n" || "$route_t" != "$noir_t" || "$route_h" != "$noir_h" ]]; then
+    fail "drift: $UTILS_TS $preset/$committee has (size=$committee_size, N=$route_n, T=$route_t, H=$route_h), expected (size=$expected_size, N=$noir_n, T=$noir_t, H=$noir_h)"
+  fi
+
+  case "$preset" in
+    insecure-512)
+      expected_param_set=0
+      expected_param_hash=$(sol_bytes32 INSECURE_PARAM_SET_HASH)
+      expected_config_id=$(sol_bytes32 INSECURE_CONFIG_ID)
+      ;;
+    secure-8192)
+      expected_param_set=1
+      expected_param_hash=$(sol_bytes32 SECURE_PARAM_SET_HASH)
+      expected_config_id=$(sol_bytes32 SECURE_CONFIG_ID)
+      ;;
+    *) fail "unknown BFV preset '$preset' in $UTILS_TS" ;;
+  esac
+  if [[ "$param_set" != "$expected_param_set" || "$param_hash" != "$expected_param_hash" || "$config_id" != "$expected_config_id" ]]; then
+    fail "drift: $UTILS_TS $preset/$committee has paramSet=$param_set, paramSetHash=$param_hash, configId=$config_id; expected $expected_param_set, $expected_param_hash, $expected_config_id from $ACTIVE_SOL"
+  fi
+done <<< "$MATRIX_TSV"
+
+MAINNET_ROUTES="$({
+  pnpm --silent tsx -e '
+    import { MAINNET_BFV_CONFIGS } from "./packages/interfold-contracts/scripts/utils";
+    console.log(MAINNET_BFV_CONFIGS.map((config) => `${config.preset}/${config.committee}`).join(","));
+  '
+})"
+if [[ "$MAINNET_ROUTES" != "secure-8192/small,secure-8192/micro,secure-8192/minimum" ]]; then
+  fail "$UTILS_TS mainnet routes must be secure-only small, micro, minimum; got $MAINNET_ROUTES"
+fi
+
+# 6. Optional local-cache note (when circuits have been built locally).
 if [[ -f "$STAMP" ]]; then
   # Older stamps (written before build-circuits.ts learned about committees) lack the field.
   STAMP_COMMITTEE=$(grep -oE '"committee"\s*:\s*"[a-z]+"' "$STAMP" 2>/dev/null | grep -oE '"[a-z]+"$' | tr -d '"' || true)
@@ -123,7 +202,7 @@ if [[ -f "$STAMP" ]]; then
   fi
 fi
 
-# 6. Check every Rust enum row against its Noir committee module.
+# 7. Check every Rust enum row against its Noir committee module.
 if [[ ! -f "$COMMITTEE_RS" ]]; then
   fail "missing $COMMITTEE_RS"
 fi
@@ -155,7 +234,7 @@ $COMMITTEE_RS has (N=$rust_n, T=$rust_t, H=$rust_h) for $capitalized"
   fi
 done
 
-# 7. Parity matrices for every committee must match what `generate_parity_matrices` would
+# 8. Parity matrices for every committee must match what `generate_parity_matrices` would
 #    write right now. Hand-edits to parity_*.nr would slip past every other check, so verify
 #    them by regenerating into a tempdir and diffing. On-disk files are kept `nargo fmt`-clean
 #    (see `scripts/lint-circuits.sh`), so we format the generator output before comparing.
@@ -248,4 +327,4 @@ else
   echo "  (skipping parity-matrix drift check: $GEN_BIN not built. Run \`cargo build -p e3-zk-helpers --bin generate_parity_matrices --release\` to enable.)" >&2
 fi
 
-echo "✓ check:committee: local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) and on-chain committee matrix consistent across active.nr, ActiveCryptoConfig.sol, utils.ts, Rust committee rows$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"
+echo "✓ check:committee: all six BFV routes and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) consistent across active.nr, ActiveCryptoConfig.sol, utils.ts, Rust committee rows$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"

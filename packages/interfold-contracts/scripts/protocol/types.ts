@@ -128,6 +128,20 @@ export interface ProtocolConfigFile {
   e3Programs: [string];
 }
 
+export interface BfvVerifierRouteDeployment {
+  preset: string;
+  committee: string;
+  paramSet: number;
+  committeeSize: number;
+  decryptionVerifier: string;
+  pkVerifier: string;
+  dkgAggregatorVerifier: string;
+  decryptionAggregatorVerifier: string;
+  verifierZkTranscriptLib: string;
+  dkgVerifierRelationsLib: string;
+  decryptionVerifierRelationsLib: string;
+}
+
 export interface ProtocolDeployment {
   name: string;
   chainId: number;
@@ -160,20 +174,9 @@ export interface ProtocolDeployment {
   verifierZkTranscriptLib?: string;
   dkgVerifierRelationsLib?: string;
   decryptionVerifierRelationsLib?: string;
-  bfvVerifierRoutes?: Array<{
-    preset: string;
-    committee: string;
-    paramSet: number;
-    committeeSize: number;
-    decryptionVerifier: string;
-    pkVerifier: string;
-    dkgAggregatorVerifier: string;
-    decryptionAggregatorVerifier: string;
-    verifierZkTranscriptLib: string;
-    dkgVerifierRelationsLib: string;
-    decryptionVerifierRelationsLib: string;
-  }>;
+  bfvVerifierRoutes?: BfvVerifierRouteDeployment[];
   ciphertextVerifier?: string;
+  crispProgram?: string;
   initialE3Program: string;
   ticketToken: string;
   slashingManager: string;
@@ -232,6 +235,36 @@ export interface VrfSortitionUpgradePlan {
   randomness: RandomnessConfig;
   randomnessFlatFee: string;
   randomnessProviderOwnershipAcceptanceRequired: boolean;
+  safeTransactions: string;
+  governanceSafeBuilder?: string;
+  safeProposal?: SafeProposal;
+}
+
+export interface SecureCrispUpgradePlan {
+  name: string;
+  chainId: number;
+  operator: string;
+  protocolOwner: string;
+  interfoldProxy: string;
+  interfoldProxyAdmin: string;
+  interfoldImplementation: string;
+  lifecycleLibrary: string;
+  pricingLibrary: string;
+  registryProxy: string;
+  nodeReleaseRegistry: string;
+  nodeRelease: {
+    version: string;
+    protocolVersion: number;
+    nodeGeneration: number;
+    releaseId: string;
+  };
+  cryptoConfigId: string;
+  paramSet: number;
+  pkVerifier: string;
+  decryptionVerifier: string;
+  ciphertextVerifier: string;
+  crispProgram: string;
+  bfvVerifierRoutes: BfvVerifierRouteDeployment[];
   safeTransactions: string;
   governanceSafeBuilder?: string;
   safeProposal?: SafeProposal;
@@ -297,19 +330,7 @@ export interface ProtocolContracts {
   verifierZkTranscriptLib?: string;
   dkgVerifierRelationsLib?: string;
   decryptionVerifierRelationsLib?: string;
-  bfvVerifierRoutes?: Array<{
-    preset: string;
-    committee: string;
-    paramSet: number;
-    committeeSize: number;
-    decryptionVerifier: string;
-    pkVerifier: string;
-    dkgAggregatorVerifier: string;
-    decryptionAggregatorVerifier: string;
-    verifierZkTranscriptLib: string;
-    dkgVerifierRelationsLib: string;
-    decryptionVerifierRelationsLib: string;
-  }>;
+  bfvVerifierRoutes?: BfvVerifierRouteDeployment[];
   ciphertextVerifier?: string;
   initialE3Program: string;
 }

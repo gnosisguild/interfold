@@ -12,8 +12,7 @@ import { IInterfold } from "../interfaces/IInterfold.sol";
 // support insecure and secure BFV with every committee size.
 library ActiveCryptoConfig {
     bytes32 internal constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
-    bytes32 internal constant CIRCUIT_VERSION =
-        keccak256("interfold-bfv-v1");
+    bytes32 internal constant CIRCUIT_VERSION = keccak256("interfold-bfv-v1");
 
     bytes32 internal constant INSECURE_CONFIG_ID =
         0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78;
@@ -54,8 +53,7 @@ library ActiveCryptoConfig {
     // Testnet default. Sepolia can still request secure minimum explicitly.
     bytes32 internal constant TESTNET_CONFIG_ID = INSECURE_CONFIG_ID;
     uint8 internal constant TESTNET_PARAM_SET = INSECURE_PARAM_SET;
-    bytes32 internal constant TESTNET_PARAM_SET_HASH =
-        INSECURE_PARAM_SET_HASH;
+    bytes32 internal constant TESTNET_PARAM_SET_HASH = INSECURE_PARAM_SET_HASH;
     uint8 internal constant TESTNET_COMMITTEE_SIZE = MINIMUM_COMMITTEE_SIZE;
     uint32 internal constant TESTNET_T = MINIMUM_T;
     uint32 internal constant TESTNET_H = MINIMUM_H;
@@ -82,11 +80,10 @@ library ActiveCryptoConfig {
         return isTestnetOrLocal() ? TESTNET_H : H;
     }
 
-    function isParamSetSupported(
-        uint8 paramSet
-    ) internal view returns (bool) {
+    function isParamSetSupported(uint8 paramSet) internal view returns (bool) {
         if (isTestnetOrLocal()) {
-            return paramSet == INSECURE_PARAM_SET || paramSet == SECURE_PARAM_SET;
+            return
+                paramSet == INSECURE_PARAM_SET || paramSet == SECURE_PARAM_SET;
         }
         return paramSet == SECURE_PARAM_SET;
     }
@@ -115,7 +112,9 @@ library ActiveCryptoConfig {
         revert IInterfold.UnsupportedCryptoConfig();
     }
 
-    function validateEncryptionScheme(bytes32 encryptionSchemeId) internal pure {
+    function validateEncryptionScheme(
+        bytes32 encryptionSchemeId
+    ) internal pure {
         if (encryptionSchemeId != ENCRYPTION_SCHEME_ID)
             revert IInterfold.UnsupportedCryptoConfig();
     }
@@ -124,13 +123,9 @@ library ActiveCryptoConfig {
         uint8 committeeSize,
         uint32[2] calldata threshold
     ) internal pure {
-        (, uint32 expectedH, uint32 expectedN) = committeeParams(
-            committeeSize
-        );
-        if (
-            threshold[0] != expectedH ||
-            threshold[1] != expectedN
-        ) revert IInterfold.UnsupportedCryptoConfig();
+        (, uint32 expectedH, uint32 expectedN) = committeeParams(committeeSize);
+        if (threshold[0] != expectedH || threshold[1] != expectedN)
+            revert IInterfold.UnsupportedCryptoConfig();
     }
 
     function validateParamSet(

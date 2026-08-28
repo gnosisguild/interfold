@@ -113,14 +113,15 @@ contract BfvDecryptionVerifierRouter is IDecryptionVerifier {
             ) {
                 continue;
             }
-            return route.verifier.verify(
-                e3Id,
-                decryptionDomain,
-                plaintextOutputHash,
-                committeeHash,
-                ciphertextCommitment,
-                proof
-            );
+            return
+                route.verifier.verify(
+                    e3Id,
+                    decryptionDomain,
+                    plaintextOutputHash,
+                    committeeHash,
+                    ciphertextCommitment,
+                    proof
+                );
         }
 
         if (lengthMatched) revert VkHashMismatch();

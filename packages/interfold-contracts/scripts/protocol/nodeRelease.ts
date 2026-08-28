@@ -20,6 +20,17 @@ export interface CurrentNodeRelease {
   releaseId: string;
 }
 
+export function requiredCircuitsVersion(): string {
+  const root = getRepoRoot();
+  const versions = JSON.parse(
+    fs.readFileSync(path.join(root, "crates/zk-prover/versions.json"), "utf8"),
+  ) as { required_circuits_version?: string };
+  if (!versions.required_circuits_version) {
+    throw new Error("Required circuit version is missing");
+  }
+  return versions.required_circuits_version;
+}
+
 function unsignedInteger(source: string, name: string): number {
   const match = source.match(new RegExp(`^${name}\\s*=\\s*(\\d+)\\s*$`, "m"));
   const value = Number(match?.[1]);

@@ -111,13 +111,33 @@ Two gates run on the way:
 
 ## Deploying
 
-The generated Solidity verifiers are **not** preset-specific, so there is one set of them and no
-choice to get wrong at deploy time. `compile_circuits.sh` generates each from its fold circuit's
-verification key; the fold circuit takes the inner key as an input and checks its hash against
-either preset's constant, so its own structure carries no BFV degree and a single verifier accepts
-proofs from either preset. Compiling both presets produces byte-identical verifier sources.
+Generated aggregator verifiers are preset-specific and committee-specific. The protocol deploys one
+concrete PK and decryption verifier for each supported pair. A router selects the concrete verifier
+from the proof's public-input length and VK hash anchors.
 
-What must match is the SDK a deployment is used with: a round proves with whichever preset the
-installed SDK carries, and the ciphernodes decrypt with the preset their deployment was configured
-for. Pair a `latest` SDK with a `secure-8192` deployment and a `testing` SDK with an `insecure-512`
-one.
+The SDK must also match the round. Pair a `latest` SDK with a `secure-8192` deployment. Pair a
+`testing` SDK with an `insecure-512` deployment. The testnet client reads `paramSet` from the E3
+before it proves and rejects a secure round with a directed error.
+
+For an existing paused mainnet bootstrap deployment, prepare the complete activation batch with:
+
+```sh
+pnpm --dir packages/interfold-contracts upgrade:secure-crisp -- --network mainnet
+```
+
+The script requires no active E3s or unreleased committees. It upgrades Interfold to the secure
+crypto configuration, deploys all three secure verifier routes and both routers, registers the
+secure BFV parameters, wires the ciphertext verifier, registers CRISP, and binds CRISP. It writes an
+Aragon-wrapped Safe Builder file, raises the required node protocol version, and keeps requests
+paused. Publish a new SemVer ciphernode release from the same source before governance executes the
+batch. After execution, run `upgrade:secure-crisp:validate`, restart the matching ciphernodes, and
+confirm that enough release-ready nodes are online. Generate the checked unpause transaction with:
+
+```sh
+pnpm --dir packages/interfold-contracts upgrade:secure-crisp:resume -- \
+  --network mainnet --ciphernodes-restarted
+```
+
+The resume command reruns the complete activation validation and requires 19 release-ready active
+operators before it writes the DAO/Safe transaction. The older CRISP-only governance builder rejects
+mainnet because it cannot install the secure protocol configuration.

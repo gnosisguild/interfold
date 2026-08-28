@@ -28,8 +28,7 @@ pub struct Config {
     pub chain_id: u64,
     pub cron_api_key: String,
     // E3 parameters
-    #[serde(default)]
-    pub e3_param_set: u8, // 0=InsecureThreshold512, 1=SecureThreshold8192
+    pub e3_param_set: u8,      // 0=InsecureThreshold512, 1=SecureThreshold8192
     pub e3_committee_size: u8, // 0=Minimum, 1=Micro, 2=Small
     pub e3_duration: u64,
     pub e3_compute_provider_name: String,
@@ -97,12 +96,50 @@ impl Config {
         } else {
             dotenv().ok();
         }
-        ConfigManager::builder()
+        let config: Self = ConfigManager::builder()
             .add_source(config::Environment::default())
             .build()?
-            .try_deserialize()
+            .try_deserialize()?;
+        Self::validate_e3_param_set(config.chain_id, config.e3_param_set)?;
+        Ok(config)
+    }
+
+    fn validate_e3_param_set(chain_id: u64, param_set: u8) -> Result<(), ConfigError> {
+        if param_set > 1 {
+            return Err(ConfigError::Message(format!(
+                "E3_PARAM_SET must be 0 (insecure-512) or 1 (secure-8192), got {param_set}"
+            )));
+        }
+        if chain_id == 1 && param_set != 1 {
+            return Err(ConfigError::Message(
+                "Ethereum mainnet requires E3_PARAM_SET=1 (secure-8192)".to_owned(),
+            ));
+        }
+        Ok(())
     }
 }
 
 pub static CONFIG: Lazy<Config> =
     Lazy::new(|| Config::from_env().expect("Failed to load configuration"));
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    #[test]
+    fn accepts_both_testnet_parameter_sets() {
+        assert!(Config::validate_e3_param_set(11_155_111, 0).is_ok());
+        assert!(Config::validate_e3_param_set(11_155_111, 1).is_ok());
+    }
+
+    #[test]
+    fn requires_secure_parameters_on_mainnet() {
+        assert!(Config::validate_e3_param_set(1, 1).is_ok());
+        assert!(Config::validate_e3_param_set(1, 0).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_parameter_sets() {
+        assert!(Config::validate_e3_param_set(31_337, 2).is_err());
+    }
+}

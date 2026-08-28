@@ -98,6 +98,12 @@ async function main() {
   }
   const chainId = protocolConfig.chainId
 
+  if (chainId === 1) {
+    throw new Error(
+      'This partial builder cannot activate CRISP on mainnet. Run pnpm --dir packages/interfold-contracts upgrade:secure-crisp so the same DAO batch installs the secure BFV implementation and all verifier routes.',
+    )
+  }
+
   const crispDeployments = readJson<Deployments>(crispDeploymentsPath)
   const chainDeployments = crispDeployments[chain]
   if (!chainDeployments) {

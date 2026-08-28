@@ -8,9 +8,7 @@ pragma solidity 0.8.28;
 import {
     IBfvDecryptionVerifierRoute
 } from "../verifiers/bfv/BfvDecryptionVerifierRouter.sol";
-import {
-    IBfvPkVerifierRoute
-} from "../verifiers/bfv/BfvPkVerifierRouter.sol";
+import { IBfvPkVerifierRoute } from "../verifiers/bfv/BfvPkVerifierRouter.sol";
 
 contract MockBfvPkVerifierRoute is IBfvPkVerifierRoute {
     uint256 public immutable override h;

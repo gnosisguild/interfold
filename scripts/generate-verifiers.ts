@@ -143,9 +143,7 @@ class VerifierGenerator {
       ...options,
     }
     this.verifierDir =
-      options.outputDir !== undefined
-        ? resolve(options.outputDir)
-        : this.defaultVerifierDir(this.targetPreset(), this.targetCommittee())
+      options.outputDir !== undefined ? resolve(options.outputDir) : this.defaultVerifierDir(this.targetPreset(), this.targetCommittee())
   }
 
   private defaultVerifierDir(preset: string, committee: CircuitCommittee): string {
@@ -190,18 +188,6 @@ class VerifierGenerator {
       this.assertPresetBuilt(targetPreset)
       this.assertCircuitsBinActivePreset(targetPreset)
       this.assertCircuitsBinActiveCommittee(targetCommittee)
-    }
-
-    // Committed Honk `.sol` files are pinned to (CANONICAL_PRESET, CANONICAL_COMMITTEE). Any other
-    // (preset, committee) is a per-deploy variant — generated under honk/<preset>/<committee>/ (or
-    // skipped entirely in --check mode since there's no canonical to diff against).
-    if (this.options.check && (targetPreset !== CANONICAL_PRESET || targetCommittee !== CANONICAL_COMMITTEE)) {
-      console.log(
-        `\n✅ (preset=${targetPreset}, committee=${targetCommittee}) is built and active in circuits/bin.\n` +
-          `   Committed Honk verifiers are pinned to (${CANONICAL_PRESET}, ${CANONICAL_COMMITTEE}); skipping .sol diff.\n` +
-          `   Benchmark / deploy flows generate fresh aggregator verifiers under honk/${targetPreset}/${targetCommittee}/ at runtime.\n`,
-      )
-      return
     }
 
     const circuits = this.discoverCircuits()
@@ -809,8 +795,8 @@ Options:
   --check                Verify committed verifiers match current VKs (no writes).
                          Exits non-zero on drift. Used by test/benchmark/CI flows.
   --preset <name>        BFV preset for circuits/bin (insecure-512 | secure-8192).
-                         Defaults to insecure-512. With --check and a non-insecure preset,
-                         only verifies dist/ + circuits/bin alignment (no .sol diff).
+                         Defaults to insecure-512. Check mode compares the committed verifier
+                         for the selected preset and committee.
   --committee <name>     Committee size (minimum | micro | small). When omitted, read from
                          circuits/bin/.active-preset.json. Non-canonical pairs write to
                          honk/<preset>/<committee>/ so committed canonical files are not clobbered.
