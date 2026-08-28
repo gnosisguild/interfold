@@ -71,15 +71,14 @@ function appendCommitteeAndPricingTxs(
     );
   }
   if (config.interfold.registerActiveBfvParamSet) {
+    const activeParamSet = Number(ACTIVE_BFV_PARAM_SET);
     const activeParams =
-      ACTIVE_BFV_PARAM_SET === 0
-        ? BFV_PARAMS.insecure512
-        : BFV_PARAMS.secure8192;
+      activeParamSet === 0 ? BFV_PARAMS.insecure512 : BFV_PARAMS.secure8192;
     txs.push(
       safeTx(
         c.interfold,
         i.interfold.encodeFunctionData("setParamSet", [
-          ACTIVE_BFV_PARAM_SET,
+          activeParamSet,
           encodeBfvParams(activeParams),
         ]),
       ),

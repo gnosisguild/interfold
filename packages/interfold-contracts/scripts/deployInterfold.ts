@@ -583,13 +583,14 @@ export const deployInterfold = async (
 
   // Register BFV param sets
   console.log("Registering BFV param sets...");
+  const activeParamSet = Number(ACTIVE_BFV_PARAM_SET);
   const activeParams =
-    ACTIVE_BFV_PARAM_SET === 0 ? encodedInsecure : encodedSecure;
+    activeParamSet === 0 ? encodedInsecure : encodedSecure;
   await send(
-    interfold.setParamSet(ACTIVE_BFV_PARAM_SET, activeParams),
+    interfold.setParamSet(activeParamSet, activeParams),
     "interfold.setParamSet",
   );
-  console.log(`Active BFV parameter set ${ACTIVE_BFV_PARAM_SET} registered`);
+  console.log(`Active BFV parameter set ${activeParamSet} registered`);
 
   const encryptionSchemeId = ethers.keccak256(ethers.toUtf8Bytes("fhe.rs:BFV"));
 
