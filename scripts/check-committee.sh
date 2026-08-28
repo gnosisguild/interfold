@@ -111,7 +111,8 @@ check_sol_committee micro MICRO 1
 check_sol_committee small SMALL 2
 
 # 5. Every chain-supported route in utils.ts must match the Noir committee shape and the
-#    parameter/configuration hashes compiled into ActiveCryptoConfig.sol.
+#    parameter/configuration hashes compiled into ActiveCryptoConfig.sol. Keep this check
+#    dependency-free because the Agent Harness runs it before Node dependencies are installed.
 sol_bytes32() {
   local name="$1"
   grep -A1 -E "bytes32 internal constant $name" "$ACTIVE_SOL" \
@@ -119,75 +120,66 @@ sol_bytes32() {
     | head -n1
 }
 
-MATRIX_TSV="$({
-  pnpm --silent tsx -e '
-    import { TESTNET_BFV_CONFIGS } from "./packages/interfold-contracts/scripts/utils";
-    for (const config of TESTNET_BFV_CONFIGS) {
-      console.log([
-        config.preset,
-        config.committee,
-        config.paramSet,
-        config.paramSetHash,
-        config.configId,
-        config.committeeSize,
-        config.n,
-        config.t,
-        config.h,
-      ].join("\t"));
-    }
-  '
-})"
+ts_bytes32() {
+  local name="$1"
+  grep -A1 -E "^const $name" "$UTILS_TS" \
+    | grep -oE '0x[0-9a-fA-F]+' \
+    | head -n1
+}
 
-MATRIX_COUNT=$(printf '%s\n' "$MATRIX_TSV" | awk 'NF { count += 1 } END { print count + 0 }')
-MATRIX_UNIQUE_COUNT=$(printf '%s\n' "$MATRIX_TSV" | cut -f1,2 | sort -u | awk 'NF { count += 1 } END { print count + 0 }')
-if [[ "$MATRIX_COUNT" != "6" || "$MATRIX_UNIQUE_COUNT" != "6" ]]; then
-  fail "$UTILS_TS must define exactly six unique preset/committee routes; got $MATRIX_COUNT rows and $MATRIX_UNIQUE_COUNT unique pairs"
-fi
+for prefix in INSECURE SECURE; do
+  utils_param_hash=$(ts_bytes32 "${prefix}_PARAM_SET_HASH")
+  utils_config_id=$(ts_bytes32 "${prefix}_CONFIG_ID")
+  sol_param_hash=$(sol_bytes32 "${prefix}_PARAM_SET_HASH")
+  sol_config_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
+  if [[ "$utils_param_hash" != "$sol_param_hash" || "$utils_config_id" != "$sol_config_id" ]]; then
+    fail "drift: $UTILS_TS ${prefix} hashes do not match $ACTIVE_SOL"
+  fi
+done
 
-while IFS=$'\t' read -r preset committee param_set param_hash config_id committee_size route_n route_t route_h; do
-  [[ -n "$preset" ]] || continue
-  case "$committee" in
-    minimum) prefix=MINIMUM; expected_size=0 ;;
-    micro) prefix=MICRO; expected_size=1 ;;
-    small) prefix=SMALL; expected_size=2 ;;
-    *) fail "unknown committee '$committee' in $UTILS_TS" ;;
-  esac
-
+check_utils_route() {
+  local symbol="$1"
+  local preset="$2"
+  local committee="$3"
+  local expected_size="$4"
+  local block mod_file noir_n noir_h noir_t expected_shape
+  block=$(sed -n "/^export const ${symbol}_BFV_CONFIG:/,/^);/p" "$UTILS_TS")
+  [[ -n "$block" ]] || fail "missing ${symbol}_BFV_CONFIG in $UTILS_TS"
   mod_file="circuits/lib/src/configs/committee/$committee/mod.nr"
   noir_n=$(grep -E 'pub global N_PARTIES: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
   noir_h=$(grep -E 'pub global H: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
   noir_t=$(grep -E 'pub global T: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
-  if [[ "$committee_size" != "$expected_size" || "$route_n" != "$noir_n" || "$route_t" != "$noir_t" || "$route_h" != "$noir_h" ]]; then
-    fail "drift: $UTILS_TS $preset/$committee has (size=$committee_size, N=$route_n, T=$route_t, H=$route_h), expected (size=$expected_size, N=$noir_n, T=$noir_t, H=$noir_h)"
+  expected_shape="{ committeeSize: $expected_size, h: $noir_h, t: $noir_t, n: $noir_n },"
+  if ! grep -Fq "\"$preset\"" <<< "$block" || \
+     ! grep -Fq "\"$committee\"" <<< "$block" || \
+     ! grep -Fq "$expected_shape" <<< "$block"; then
+    fail "drift: ${symbol}_BFV_CONFIG must define $preset/$committee with $expected_shape"
   fi
+}
 
-  case "$preset" in
-    insecure-512)
-      expected_param_set=0
-      expected_param_hash=$(sol_bytes32 INSECURE_PARAM_SET_HASH)
-      expected_config_id=$(sol_bytes32 INSECURE_CONFIG_ID)
-      ;;
-    secure-8192)
-      expected_param_set=1
-      expected_param_hash=$(sol_bytes32 SECURE_PARAM_SET_HASH)
-      expected_config_id=$(sol_bytes32 SECURE_CONFIG_ID)
-      ;;
-    *) fail "unknown BFV preset '$preset' in $UTILS_TS" ;;
-  esac
-  if [[ "$param_set" != "$expected_param_set" || "$param_hash" != "$expected_param_hash" || "$config_id" != "$expected_config_id" ]]; then
-    fail "drift: $UTILS_TS $preset/$committee has paramSet=$param_set, paramSetHash=$param_hash, configId=$config_id; expected $expected_param_set, $expected_param_hash, $expected_config_id from $ACTIVE_SOL"
-  fi
-done <<< "$MATRIX_TSV"
+check_utils_route INSECURE_MINIMUM insecure-512 minimum 0
+check_utils_route INSECURE_MICRO insecure-512 micro 1
+check_utils_route INSECURE_SMALL insecure-512 small 2
+check_utils_route SECURE_MINIMUM secure-8192 minimum 0
+check_utils_route SECURE_MICRO secure-8192 micro 1
+check_utils_route SECURE_SMALL secure-8192 small 2
 
-MAINNET_ROUTES="$({
-  pnpm --silent tsx -e '
-    import { MAINNET_BFV_CONFIGS } from "./packages/interfold-contracts/scripts/utils";
-    console.log(MAINNET_BFV_CONFIGS.map((config) => `${config.preset}/${config.committee}`).join(","));
-  '
-})"
-if [[ "$MAINNET_ROUTES" != "secure-8192/small,secure-8192/micro,secure-8192/minimum" ]]; then
-  fail "$UTILS_TS mainnet routes must be secure-only small, micro, minimum; got $MAINNET_ROUTES"
-fi
+route_list() {
+  local array_name="$1"
+  sed -n "/^export const ${array_name}:.*= \[/,/^\] as const;/p" "$UTILS_TS" \
+    | grep -oE '(INSECURE|SECURE)_(MINIMUM|MICRO|SMALL)_BFV_CONFIG' \
+    | paste -sd, -
+}
+
+TESTNET_ROUTES=$(route_list TESTNET_BFV_CONFIGS)
+EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG"
+[[ "$TESTNET_ROUTES" == "$EXPECTED_TESTNET_ROUTES" ]] \
+  || fail "$UTILS_TS testnet routes must contain the exact six-pair matrix; got $TESTNET_ROUTES"
+
+MAINNET_ROUTES=$(route_list MAINNET_BFV_CONFIGS)
+EXPECTED_MAINNET_ROUTES="SECURE_SMALL_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG"
+[[ "$MAINNET_ROUTES" == "$EXPECTED_MAINNET_ROUTES" ]] \
+  || fail "$UTILS_TS mainnet routes must be secure-only small, micro, minimum; got $MAINNET_ROUTES"
 
 # 6. Optional local-cache note (when circuits have been built locally).
 if [[ -f "$STAMP" ]]; then
