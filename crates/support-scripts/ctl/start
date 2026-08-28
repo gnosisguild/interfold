@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 
 unset RISC0_DEV_MODE RPC_URL PRIVATE_KEY PINATA_JWT PROGRAM_URL BOUNDLESS_ONCHAIN
+unset BOUNDLESS_MIN_PRICE_ETH BOUNDLESS_MAX_PRICE_ETH
+unset BOUNDLESS_TIMEOUT_SECS BOUNDLESS_LOCK_TIMEOUT_SECS BOUNDLESS_RAMP_UP_SECS
+unset BOUNDLESS_LOCK_COLLATERAL_ZKC
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -26,6 +29,30 @@ while [[ $# -gt 0 ]]; do
       ;;
     --boundless-onchain)
       BOUNDLESS_ONCHAIN="$2"
+      shift 2
+      ;;
+    --boundless-min-price-eth)
+      BOUNDLESS_MIN_PRICE_ETH="$2"
+      shift 2
+      ;;
+    --boundless-max-price-eth)
+      BOUNDLESS_MAX_PRICE_ETH="$2"
+      shift 2
+      ;;
+    --boundless-timeout-secs)
+      BOUNDLESS_TIMEOUT_SECS="$2"
+      shift 2
+      ;;
+    --boundless-lock-timeout-secs)
+      BOUNDLESS_LOCK_TIMEOUT_SECS="$2"
+      shift 2
+      ;;
+    --boundless-ramp-up-secs)
+      BOUNDLESS_RAMP_UP_SECS="$2"
+      shift 2
+      ;;
+    --boundless-lock-collateral-zkc)
+      BOUNDLESS_LOCK_COLLATERAL_ZKC="$2"
       shift 2
       ;;
     *)
@@ -60,6 +87,30 @@ fi
 
 if [[ -n "$BOUNDLESS_ONCHAIN" ]]; then
   CONTAINER_ARGS+=("--boundless-onchain" "$BOUNDLESS_ONCHAIN")
+fi
+
+if [[ -n "$BOUNDLESS_MIN_PRICE_ETH" ]]; then
+  CONTAINER_ARGS+=("--boundless-min-price-eth" "$BOUNDLESS_MIN_PRICE_ETH")
+fi
+
+if [[ -n "$BOUNDLESS_MAX_PRICE_ETH" ]]; then
+  CONTAINER_ARGS+=("--boundless-max-price-eth" "$BOUNDLESS_MAX_PRICE_ETH")
+fi
+
+if [[ -n "$BOUNDLESS_TIMEOUT_SECS" ]]; then
+  CONTAINER_ARGS+=("--boundless-timeout-secs" "$BOUNDLESS_TIMEOUT_SECS")
+fi
+
+if [[ -n "$BOUNDLESS_LOCK_TIMEOUT_SECS" ]]; then
+  CONTAINER_ARGS+=("--boundless-lock-timeout-secs" "$BOUNDLESS_LOCK_TIMEOUT_SECS")
+fi
+
+if [[ -n "$BOUNDLESS_RAMP_UP_SECS" ]]; then
+  CONTAINER_ARGS+=("--boundless-ramp-up-secs" "$BOUNDLESS_RAMP_UP_SECS")
+fi
+
+if [[ -n "$BOUNDLESS_LOCK_COLLATERAL_ZKC" ]]; then
+  CONTAINER_ARGS+=("--boundless-lock-collateral-zkc" "$BOUNDLESS_LOCK_COLLATERAL_ZKC")
 fi
 
 exec "$SCRIPT_DIR/container" "${CONTAINER_ARGS[@]}"

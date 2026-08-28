@@ -81,8 +81,8 @@ This matches the format expected by CRISP and `E3ProgramServer` in `crates/progr
 1. **RISC Zero toolchain** — `rzup install`
 2. **Docker** — for the support container
 3. **Pinata account** — for IPFS program uploads (get a JWT at https://pinata.cloud)
-4. **Boundless wallet** — an Ethereum private key with ETH (for gas) and ZKC (for collateral) on the
-   Boundless-supported chain
+4. **Boundless wallet** — an Ethereum private key with ETH for gas and the request payment on the
+   Boundless-supported chain. The prover supplies the ZKC collateral.
 5. **Interfold CLI** — `cargo install --locked --path ./crates/cli --bin interfold -f`
 6. **An Interfold project** — `interfold init <path>`, then work from that directory. The steps
    below run against a project, not against a checkout of this repository. Without one,
@@ -102,8 +102,7 @@ program:
       pinata_jwt: '${PINATA_JWT}'
       program_url: 'https://gateway.pinata.cloud/ipfs/Qm...' # after upload (Step 3)
       onchain: true
-      # Built-in auction defaults, shown for reference. Leave these fields unset.
-      # If you set one, `interfold program start` fails. See #1812.
+      # Optional auction parameters with their built-in defaults:
       # min_price_eth: 0.00005
       # max_price_eth: 0.002
       # timeout_secs: 600
@@ -288,14 +287,9 @@ rewards distributed.
 | Ramp-up      | `BOUNDLESS_RAMP_UP_SECS`        | `60`      | Price ramp-up period (sec)   |
 | Collateral   | `BOUNDLESS_LOCK_COLLATERAL_ZKC` | `2.0`     | ZKC locked per request       |
 
-`interfold program start` always uses these defaults. Neither route to change them works today: the
-`program.risc0.boundless` fields make the launcher exit, and the environment variables never reach
-the container. See #1812.
-
-To use other values, open a shell in the container with `interfold program shell`, export the
-variables there, and start `e3-support-app` yourself. That command goes through the same
-`ctl/container` the launcher uses, so the shell publishes port 13151 and carries the `host.local`
-alias a Step 7 callback needs.
+Set the matching fields under `program.risc0.boundless` to change these values. The CLI sends each
+configured field through the support launcher to the container. Leave a field unset to use its
+default.
 
 ---
 

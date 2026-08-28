@@ -66,6 +66,7 @@ run_case() {
   local local_image_status="$1"
   local pull_status="$2"
   local image_repository="${3:-}"
+  local start_args=("${@:4}")
   local directory
 
   directory=$(mktemp -d "$TEST_PARENT/e3-support-test.XXXXXX")
@@ -81,7 +82,7 @@ run_case() {
     else
       unset E3_SUPPORT_IMAGE_REPOSITORY
     fi
-    bash "$START_SCRIPT" --risc0-dev-mode false 2>&1
+    bash "$START_SCRIPT" --risc0-dev-mode false "${start_args[@]}" 2>&1
   )
   CASE_STATUS=$?
   set -e
@@ -124,5 +125,20 @@ assert_not_contains "DOCKER_RUN"
 run_case 0 0 "registry.example/e3-support"
 [[ "$CASE_STATUS" -eq 0 ]]
 assert_contains "registry.example/e3-support:$TEST_REVISION"
+
+run_case 0 0 "" \
+  --boundless-min-price-eth 0.0001 \
+  --boundless-max-price-eth 0.004 \
+  --boundless-timeout-secs 2700 \
+  --boundless-lock-timeout-secs 1200 \
+  --boundless-ramp-up-secs 300 \
+  --boundless-lock-collateral-zkc 3.5
+[[ "$CASE_STATUS" -eq 0 ]]
+assert_contains "--boundless-min-price-eth 0.0001"
+assert_contains "--boundless-max-price-eth 0.004"
+assert_contains "--boundless-timeout-secs 2700"
+assert_contains "--boundless-lock-timeout-secs 1200"
+assert_contains "--boundless-ramp-up-secs 300"
+assert_contains "--boundless-lock-collateral-zkc 3.5"
 
 echo "Support image container tests passed."
