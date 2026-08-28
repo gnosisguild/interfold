@@ -53,6 +53,9 @@ const FILES: Record<string, Role> = {
   'packages/interfold-contracts/deploy/protocol/mainnet-protocol.config.json': 'record',
   'packages/interfold-contracts/deploy/protocol/mainnet-protocol.deployment.json': 'record',
   'packages/interfold-contracts/deploy/protocol/mainnet-protocol.safe-transactions.json': 'record',
+  'packages/interfold-contracts/deploy/protocol/mainnet-protocol.vrf-sortition.upgrade.governance.safe-builder.json': 'record',
+  'packages/interfold-contracts/deploy/protocol/mainnet-protocol.vrf-sortition.upgrade.json': 'record',
+  'packages/interfold-contracts/deploy/protocol/mainnet-protocol.vrf-sortition.upgrade.safe.json': 'record',
   'examples/CRISP/packages/crisp-contracts/deployed_contracts.json': 'record',
   'dappnode/tests/test-hardening.sh': 'record',
 

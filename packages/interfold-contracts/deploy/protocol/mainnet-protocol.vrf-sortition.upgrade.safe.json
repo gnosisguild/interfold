@@ -1,0 +1,92 @@
+{
+  "version": "1.0",
+  "chainId": "1",
+  "createdAt": 1787871305761,
+  "meta": {
+    "name": "mainnet-protocol VRF sortition upgrade",
+    "description": "Upgrade committee sortition to Chainlink VRF and keep E3 requests paused until every ciphernode restarts.",
+    "executor": "0x652a31c669f9AB37f6040f279139a75D04F2679e"
+  },
+  "transactions": [
+    {
+      "to": "0x2DFb93A8C3cE68Be3d8129479d7870646d89aDa7",
+      "value": "0",
+      "data": "0x9623609d000000000000000000000000c927a5b2d8f68697bc28c0670df05178c93df2d7000000000000000000000000fff476751949a7e1b784b5c88648833c1e8dd69c00000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000",
+      "operation": 0,
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "0xB3985D7fF844FA0F5E0aaC5feb5DD8BE15e88580",
+      "value": "0",
+      "data": "0x9623609d00000000000000000000000028cf63b459e6218c69ea97ea7d90541cf648c715000000000000000000000000a7e1f2693b3b5038e505396dbd21d6c26eca8aa200000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000",
+      "operation": 0,
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "0xf1511Fc32abf7Bd3a3213ddCF08C07259b53972b",
+      "value": "0",
+      "data": "0x9623609d0000000000000000000000000ec90465095c21830beced07e032809a2bd2915f000000000000000000000000d89d3fe1b53ef95111c0e68a8cefdfd20ecca53a00000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000",
+      "operation": 0,
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "0x28cF63B459e6218C69EA97ea7D90541cf648c715",
+      "value": "0",
+      "data": "0x93ce7dc70000000000000000000000009e1c6b433cfbc8f28d80eab583c428b01d083b0a",
+      "operation": 0,
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "0x9E1C6B433CFbC8f28d80EAB583C428B01d083b0A",
+      "value": "0",
+      "data": "0x056e400800000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001",
+      "operation": 0,
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "0x28cF63B459e6218C69EA97ea7D90541cf648c715",
+      "value": "0",
+      "data": "0x3e9966390000000000000000000000000000000000000000000000004563918244f40000",
+      "operation": 0,
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "0xa0273f884816dfF0BE9B5ED50aB3AA29D6AaA712",
+      "value": "0",
+      "data": "0x79ba5097",
+      "operation": 0,
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "0xD7f86b4b8Cae7D942340FF628F82735b7a20893a",
+      "value": "0",
+      "data": "0xbec4c08c9e7ffe59beeaa32c4aab082e6d6b60a2b3c76cb84c3f22f4abb3f814292b5cc8000000000000000000000000a0273f884816dff0be9b5ed50ab3aa29d6aaa712",
+      "operation": 0,
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "0xC927A5B2d8F68697bC28C0670df05178c93df2d7",
+      "value": "0",
+      "data": "0xf8cb9f810000000000000000000000000000000000000000000000000000000000000e10",
+      "operation": 0,
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "0xC927A5B2d8F68697bC28C0670df05178c93df2d7",
+      "value": "0",
+      "data": "0xb15fbc14000000000000000000000000a0273f884816dff0be9b5ed50ab3aa29d6aaa712",
+      "operation": 0,
+      "contractMethod": null,
+      "contractInputsValues": null
+    }
+  ]
+}
