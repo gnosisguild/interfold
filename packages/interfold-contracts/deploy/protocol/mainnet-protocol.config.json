@@ -75,6 +75,16 @@
         "size": "0",
         "quorum": "2",
         "total": "3"
+      },
+      {
+        "size": "1",
+        "quorum": "5",
+        "total": "9"
+      },
+      {
+        "size": "2",
+        "quorum": "10",
+        "total": "19"
       }
     ],
     "registerActiveBfvParamSet": true,

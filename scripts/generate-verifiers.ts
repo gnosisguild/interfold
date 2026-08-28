@@ -64,29 +64,28 @@ const LICENSE_HEADER = `// SPDX-License-Identifier: LGPL-3.0-only
  * The on-chain `DkgAggregatorVerifier.sol` / `DecryptionAggregatorVerifier.sol` bake in the
  * recursive VKs of `dkg_aggregator` / `decryption_aggregator`, which are
  * **preset-dependent**: different BFV parameter sets compile to different VKs and therefore
- * different `.sol` bytes. Exactly one preset can be "the committed one"; we pin `insecure-512`
- * because that is the development/CI/benchmark default and the preset every committed verifier
- * corresponds to.
+ * different `.sol` bytes. The root directory is pinned to `insecure-512/minimum` because that is
+ * the development/CI/benchmark default.
  *
  * Both `--check` and `--write` refuse to run unless
- * `dist/circuits/<CANONICAL_PRESET>/.build-stamp.json` exists and its `preset` field matches.
+ * `dist/circuits/<preset>/<committee>/.build-stamp.json` exists and its `preset` field matches.
  * This prevents silently producing/checking against the wrong preset's VKs — e.g. after
- * `pnpm build:circuits --preset secure-8192`, where `circuits/bin/` holds secure artifacts that
- * would generate different `.sol` bytes.
+ * `pnpm build:circuits --preset secure-8192 --committee small`, where `circuits/bin/` holds
+ * secure artifacts that would generate different `.sol` bytes.
  *
  * If you need verifiers for a different preset (e.g. a production deploy on `secure-8192`),
- * rebuild that preset locally and run the generator there; do **not** commit the result over
- * the canonical files.
+ * rebuild that preset and committee locally and run the generator there. Non-canonical outputs
+ * land under `honk/<preset>/<committee>/`, not over the canonical files.
  */
 const CANONICAL_PRESET = 'insecure-512'
 
 /**
  * Canonical committee for the committed Honk Solidity verifiers under
  * `contracts/verifiers/bfv/honk/`. The committee determines `H` and `T` of the
- * `dkg_aggregator` / `decryption_aggregator` circuits — different committees compile
- * to different recursive VKs, so each committee's verifiers must land in a separate
- * directory to coexist on disk. `minimum` is the development/CI default; other committees
- * generate under `honk/<committee>/`.
+ * `dkg_aggregator` / `decryption_aggregator` circuits — different presets and committees compile
+ * to different recursive VKs, so each non-canonical pair's verifiers must land in a separate
+ * directory to coexist on disk. `minimum` is the development/CI default; other pairs generate
+ * under `honk/<preset>/<committee>/`.
  */
 const CANONICAL_COMMITTEE: CircuitCommittee = CIRCUIT_COMMITTEES.MINIMUM
 
@@ -116,8 +115,8 @@ interface GenerateOptions {
   /**
    * Committee whose `H`/`T` baked into the wrapper verifiers should be used.
    * When unset, read from `circuits/bin/.active-preset.json`. Non-canonical
-   * committees land under `honk/<committee>/` so they don't overwrite the
-   * committed canonical-committee `.sol` files.
+   * pairs land under `honk/<preset>/<committee>/` so they don't overwrite the
+   * committed canonical `.sol` files.
    */
   committee?: CircuitCommittee
   /** Override output directory (write mode only). Defaults to committed honk/ path. */
@@ -143,14 +142,20 @@ class VerifierGenerator {
       compile: true,
       ...options,
     }
-    this.verifierDir = options.outputDir !== undefined ? resolve(options.outputDir) : this.defaultVerifierDir(this.targetCommittee())
+    this.verifierDir =
+      options.outputDir !== undefined
+        ? resolve(options.outputDir)
+        : this.defaultVerifierDir(this.targetPreset(), this.targetCommittee())
   }
 
-  private defaultVerifierDir(committee: CircuitCommittee): string {
+  private defaultVerifierDir(preset: string, committee: CircuitCommittee): string {
     const honkBase = join(this.rootDir, 'packages', 'interfold-contracts', 'contracts', 'verifiers', 'bfv', 'honk')
-    // Non-canonical committees go under honk/<committee>/ so canonical-committee verifiers
-    // committed to git aren't clobbered.
-    return committee !== CANONICAL_COMMITTEE ? join(honkBase, committee) : honkBase
+    if (preset === CANONICAL_PRESET && committee === CANONICAL_COMMITTEE) {
+      return honkBase
+    }
+    // Non-canonical pairs include both preset and committee so secure-minimum cannot clobber the
+    // canonical insecure-minimum verifier.
+    return join(honkBase, preset, committee)
   }
 
   /** Reads `.active-preset.json::committee` or falls back to the canonical committee. */
@@ -188,13 +193,13 @@ class VerifierGenerator {
     }
 
     // Committed Honk `.sol` files are pinned to (CANONICAL_PRESET, CANONICAL_COMMITTEE). Any other
-    // (preset, committee) is a per-deploy variant — generated under honk/<committee>/ (or skipped
-    // entirely in --check mode since there's no canonical to diff against).
+    // (preset, committee) is a per-deploy variant — generated under honk/<preset>/<committee>/ (or
+    // skipped entirely in --check mode since there's no canonical to diff against).
     if (this.options.check && (targetPreset !== CANONICAL_PRESET || targetCommittee !== CANONICAL_COMMITTEE)) {
       console.log(
         `\n✅ (preset=${targetPreset}, committee=${targetCommittee}) is built and active in circuits/bin.\n` +
           `   Committed Honk verifiers are pinned to (${CANONICAL_PRESET}, ${CANONICAL_COMMITTEE}); skipping .sol diff.\n` +
-          `   Benchmark / deploy flows generate fresh aggregator verifiers under honk/${targetCommittee}/ at runtime.\n`,
+          `   Benchmark / deploy flows generate fresh aggregator verifiers under honk/${targetPreset}/${targetCommittee}/ at runtime.\n`,
       )
       return
     }
@@ -655,14 +660,15 @@ class VerifierGenerator {
    * against committed insecure-512 `.sol` files.
    */
   private assertCircuitsBinActivePreset(preset: string): void {
+    const committee = this.targetCommittee()
     const activePath = join(this.circuitsDir, '.active-preset.json')
     if (!existsSync(activePath)) {
       throw new Error(
         `Missing ${activePath} (which preset last built circuits/bin is unknown).\n` +
-          `   If dist/circuits/${preset}/ is already built, hydrate bin in seconds:\n` +
-          `     pnpm build:circuits --preset ${preset} --skip-if-built --no-clean --no-clean-targets\n` +
+          `   If dist/circuits/${preset}/${committee}/ is already built, hydrate bin in seconds:\n` +
+          `     pnpm build:circuits --preset ${preset} --committee ${committee} --skip-if-built --no-clean --no-clean-targets\n` +
           `   Otherwise run a full compile:\n` +
-          `     pnpm build:circuits --preset ${preset}`,
+          `     pnpm build:circuits --preset ${preset} --committee ${committee}`,
       )
     }
     let active: { preset?: string } = {}
@@ -674,10 +680,10 @@ class VerifierGenerator {
     if (active.preset !== preset) {
       throw new Error(
         `circuits/bin was last built for preset '${active.preset ?? '(missing)'}', but this run targets '${preset}'.\n` +
-          `   Fast fix (reuses dist/circuits/${preset}/, no full recompile):\n` +
-          `     pnpm build:circuits --preset ${preset} --skip-if-built --no-clean --no-clean-targets\n` +
+          `   Fast fix (reuses dist/circuits/${preset}/${committee}/, no full recompile):\n` +
+          `     pnpm build:circuits --preset ${preset} --committee ${committee} --skip-if-built --no-clean --no-clean-targets\n` +
           `   Full compile only if dist is missing or stale:\n` +
-          `     pnpm build:circuits --preset ${preset}`,
+          `     pnpm build:circuits --preset ${preset} --committee ${committee}`,
       )
     }
     console.log(`   ✓ circuits/bin active preset matches '${preset}'.\n`)
@@ -806,8 +812,8 @@ Options:
                          Defaults to insecure-512. With --check and a non-insecure preset,
                          only verifies dist/ + circuits/bin alignment (no .sol diff).
   --committee <name>     Committee size (minimum | micro | small). When omitted, read from
-                         circuits/bin/.active-preset.json. Non-canonical committees write
-                         to honk/<committee>/ so committed canonical files are not clobbered.
+                         circuits/bin/.active-preset.json. Non-canonical pairs write to
+                         honk/<preset>/<committee>/ so committed canonical files are not clobbered.
   --output-dir <path>    Write generated verifiers here instead of the committed honk/ dir.
   --write                Write/overwrite committed verifiers (this is the default
                          when neither --check nor --write is passed).

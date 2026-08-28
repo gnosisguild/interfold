@@ -19,6 +19,16 @@ import path from "path";
 
 import { readDeploymentArgs } from "../scripts/utils";
 
+function cryptoConfigIdForParamSet(paramSet: number): string {
+  if (paramSet === 0) {
+    return "0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78";
+  }
+  if (paramSet === 1) {
+    return "0x17654d80a8bd5631a6f52cc9f86ac091b352ac95943366a8a41e7336e9a920fc";
+  }
+  throw new Error(`Unsupported BFV parameter set: ${paramSet}`);
+}
+
 function ensureParentDir(filePath: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 }
@@ -323,7 +333,7 @@ export const requestCommittee = task(
         computeProviderParams,
         customParams,
         expectedFeeToken: await mockUSDCContract.getAddress(),
-        expectedCryptoConfigId: await interfoldContract.activeCryptoConfigId(),
+        expectedCryptoConfigId: cryptoConfigIdForParamSet(paramSet),
         maxFee: MaxUint256,
       };
 

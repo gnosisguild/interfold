@@ -48,6 +48,25 @@ export const BFV_PARAMS_DEFAULT = abiCoder.encode(
   ],
 );
 
+/** The secure-8192 parameter set that Sepolia/local deployments can also register. */
+export const BFV_PARAMS_SECURE = abiCoder.encode(
+  [
+    "tuple(uint256 degree,uint256 plaintext_modulus,uint256[] moduli,string error1_variance)",
+  ],
+  [
+    [
+      ethers.toBigInt(8192),
+      ethers.toBigInt(131072),
+      [
+        ethers.toBigInt("0x0400000001460001"),
+        ethers.toBigInt("0x0400000000ea0001"),
+        ethers.toBigInt("0x0400000000920001"),
+      ],
+      "2331171231419734472395201298275918858425592709120",
+    ],
+  ],
+);
+
 /** Circuit, BFV parameters, and verifier generation used by this build. */
 export const ACTIVE_CRYPTO_CONFIG_ID = ethers.keccak256(
   abiCoder.encode(
@@ -55,6 +74,18 @@ export const ACTIVE_CRYPTO_CONFIG_ID = ethers.keccak256(
     [
       ENCRYPTION_SCHEME_ID,
       ethers.keccak256(BFV_PARAMS_DEFAULT),
+      ethers.id("interfold-bfv-v1"),
+    ],
+  ),
+);
+
+/** Production default circuit configuration exposed by `activeCryptoConfigId()`. */
+export const PRODUCTION_CRYPTO_CONFIG_ID = ethers.keccak256(
+  abiCoder.encode(
+    ["bytes32", "bytes32", "bytes32"],
+    [
+      ENCRYPTION_SCHEME_ID,
+      ethers.keccak256(BFV_PARAMS_SECURE),
       ethers.id("interfold-bfv-v1"),
     ],
   ),
@@ -102,7 +133,11 @@ export const COMMITTEE_THRESHOLDS_DEFAULT: ReadonlyArray<
  */
 export const COMMITTEE_THRESHOLDS_ONCHAIN: ReadonlyArray<
   readonly [number, readonly [number, number]]
-> = [[COMMITTEE_SIZE_MINIMUM, [2, 3]]];
+> = [
+  [COMMITTEE_SIZE_MINIMUM, [2, 3]],
+  [COMMITTEE_SIZE_MICRO, [5, 9]],
+  [COMMITTEE_SIZE_SMALL, [10, 19]],
+];
 
 /** Single-size fixture used by sortition / pricing smoke tests. */
 export const COMMITTEE_THRESHOLDS_MINIMUM_ONLY: ReadonlyArray<

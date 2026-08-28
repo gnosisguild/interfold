@@ -447,12 +447,8 @@ jobs:
           fi
 
       # Guard against shipping stale or wrong-layout artifacts. The `circuit-artifacts`
-      # branch is populated out-of-band (`pnpm build:circuits --committee all --preset
-      # insecure-512` followed by `scripts/circuit-artifacts.ts push`). If it lags the
-      # circuit source, its SOURCE_HASH won't match the source we're releasing and its
-      # on-disk layout may predate the `{preset}/{committee}/{variant}` scheme that
-      # consumers (e3-zk-prover) resolve against. Fail loudly here rather than publishing
-      # a tarball that downstreams can't use — regenerate and re-push the branch.
+      # branch is populated out-of-band and may contain multiple preset/committee pairs.
+      # Fail loudly rather than publishing a tarball downstream nodes cannot use.
       - name: Verify circuit artifacts match source
         if: steps.pull.outputs.found == 'true'
         run: |
@@ -464,24 +460,51 @@ jobs:
           fi
           if [[ "$PULLED_HASH" != "$EXPECTED_HASH" ]]; then
             echo "::error::circuit-artifacts is stale (SOURCE_HASH=$PULLED_HASH, expected $EXPECTED_HASH)."
-            echo "::error::Rebuild and re-push: pnpm build:circuits --committee all --preset insecure-512 && pnpm tsx scripts/circuit-artifacts.ts push"
+            echo "::error::Rebuild and re-push the required preset/committee pairs, then run: pnpm store:circuits push"
             exit 1
           fi
-          # Assert the per-committee layout that `--committee all` produces is present, so an
-          # old flat (committee-less) build can never slip through even if the hash lined up.
+
+          while IFS= read -r stamp; do
+            preset=$(STAMP="$stamp" node -e 'const fs = require("fs"); const s = JSON.parse(fs.readFileSync(process.env.STAMP, "utf8")); console.log(s.preset || "")')
+            committee=$(STAMP="$stamp" node -e 'const fs = require("fs"); const s = JSON.parse(fs.readFileSync(process.env.STAMP, "utf8")); console.log(s.committee || "")')
+            stamp_hash=$(STAMP="$stamp" node -e 'const fs = require("fs"); const s = JSON.parse(fs.readFileSync(process.env.STAMP, "utf8")); console.log(s.sourceHash || "")')
+            if [[ -z "$preset" || -z "$committee" || -z "$stamp_hash" ]]; then
+              echo "::error::Invalid circuit build stamp: ${stamp#dist/circuits/}"
+              exit 1
+            fi
+            expected_stamp_hash=$(pnpm tsx scripts/build-circuits.ts hash --preset "$preset" --committee "$committee")
+            if [[ "$stamp_hash" != "$expected_stamp_hash" ]]; then
+              echo "::error::Stale circuit artifacts at ${preset}/${committee}: stamp=${stamp_hash}, expected=${expected_stamp_hash}."
+              exit 1
+            fi
+          done < <(find dist/circuits -name .build-stamp.json -type f | sort)
+
+          # Releases carry every supported preset/committee pair. Mainnet gates requests to secure
+          # BFV, while Sepolia/local deployments can test insecure or secure BFV at any committee
+          # size without rebuilding the release asset.
           missing=0
-          for committee in minimum micro small; do
-            marker="dist/circuits/insecure-512/${committee}/default/dkg/pk/pk.json"
+          required_markers=()
+          for preset in insecure-512 secure-8192; do
+            for committee in minimum micro small; do
+              required_markers+=(
+                "dist/circuits/${preset}/${committee}/default/dkg/pk/pk.json"
+                "dist/circuits/${preset}/${committee}/default/threshold/pk_aggregation/pk_aggregation.json"
+                "dist/circuits/${preset}/${committee}/default/recursive_aggregation/dkg_aggregator/dkg_aggregator.json"
+                "dist/circuits/${preset}/${committee}/default/recursive_aggregation/decryption_aggregator/decryption_aggregator.json"
+              )
+            done
+          done
+          for marker in "${required_markers[@]}"; do
             if [[ ! -f "$marker" ]]; then
               echo "::error::Expected circuit artifact missing: ${marker#dist/circuits/}"
               missing=1
             fi
           done
           if [[ "$missing" != "0" ]]; then
-            echo "::error::circuit-artifacts was not built with --committee all; regenerate as above."
+            echo "::error::circuit-artifacts is missing required Sepolia or mainnet artifacts."
             exit 1
           fi
-          echo "✅ circuit-artifacts verified (SOURCE_HASH=$PULLED_HASH, per-committee layout present)"
+          echo "✅ circuit-artifacts verified (SOURCE_HASH=$PULLED_HASH, required chain artifacts present)"
 
       - name: Create release archive
         if: steps.pull.outputs.found == 'true'

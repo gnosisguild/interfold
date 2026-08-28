@@ -373,10 +373,10 @@ library InterfoldPricing {
         uint256 requestTime,
         uint256 inputWindowStart,
         uint256 inputWindowEnd
-    ) external pure returns (uint256 fee) {
+    ) external view returns (uint256 fee) {
         _validateQuoteWindow(requestTime, inputWindowStart, inputWindowEnd);
 
-        if (paramSet != ActiveCryptoConfig.PARAM_SET)
+        if (!ActiveCryptoConfig.isParamSetSupported(paramSet))
             revert IInterfold.UnsupportedCryptoConfig();
         IInterfold.CommitteeSize size = IInterfold.CommitteeSize(committeeSize);
         if (threshold[1] == 0)
@@ -387,7 +387,7 @@ library InterfoldPricing {
             revert IInterfold.ThresholdTooSmall(threshold[0]);
 
         ActiveCryptoConfig.validateCommittee(committeeSize, threshold);
-        uint256 n = ActiveCryptoConfig.N;
+        uint256 n = uint256(threshold[1]);
         uint256 h = uint256(threshold[0]);
 
         uint256 duration = _billableDuration(

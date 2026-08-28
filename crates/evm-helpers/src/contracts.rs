@@ -28,6 +28,14 @@ use crate::events::E3Requested;
 
 static NONCE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
+fn crypto_config_id_for_param_set(param_set: u8) -> Result<B256> {
+    match param_set {
+        0 => Ok("0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78".parse()?),
+        1 => Ok("0x17654d80a8bd5631a6f52cc9f86ac091b352ac95943366a8a41e7336e9a920fc".parse()?),
+        _ => Err(eyre::eyre!("unsupported BFV parameter set: {}", param_set)),
+    }
+}
+
 /// Get the next pending nonce for a given address from the provider
 async fn get_next_nonce<P>(provider: &P, address: Address) -> eyre::Result<u64>
 where
@@ -140,7 +148,7 @@ sol! {
         function getDeadlines(uint256 e3Id) external view returns (E3Deadlines memory deadlines);
         function getTimeoutConfig() external view returns (E3TimeoutConfig memory config);
         function feeToken() external view returns (address token);
-        function activeCryptoConfigId() external view returns (bytes32 configId);
+        function activeCryptoConfigId() external pure returns (bytes32 configId);
         function e3CryptoConfigIds(uint256 e3Id) external view returns (bytes32 configId);
     }
 }
@@ -466,7 +474,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
 
         let contract = Interfold::new(self.contract_address, &self.provider);
         let fee_token = contract.feeToken().call().await?;
-        let crypto_config_id = contract.activeCryptoConfigId().call().await?;
+        let crypto_config_id = crypto_config_id_for_param_set(param_set)?;
 
         let quote_request = E3RequestParams {
             committeeSize: committee_size,

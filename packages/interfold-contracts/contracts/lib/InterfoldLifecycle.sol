@@ -39,6 +39,7 @@ library InterfoldLifecycle {
     function validateQuoteLimit(
         address actualFeeToken,
         address expectedFeeToken,
+        uint8 paramSet,
         bytes32 expectedCryptoConfigId,
         uint256 maxFee,
         uint256 fee
@@ -48,7 +49,7 @@ library InterfoldLifecycle {
                 IERC20(expectedFeeToken),
                 IERC20(actualFeeToken)
             );
-        bytes32 configId = ActiveCryptoConfig.id();
+        bytes32 configId = ActiveCryptoConfig.configIdForParamSet(paramSet);
         if (expectedCryptoConfigId != configId)
             revert IInterfold.CryptoConfigChanged(
                 expectedCryptoConfigId,
@@ -525,7 +526,7 @@ library InterfoldLifecycle {
         uint8 paramSet,
         bytes32 paramSetHash,
         bool alreadyRegistered
-    ) external pure {
+    ) external view {
         if (alreadyRegistered)
             revert IInterfold.ParamSetAlreadyRegistered(paramSet);
         ActiveCryptoConfig.validateParamSet(paramSet, paramSetHash);
@@ -536,11 +537,9 @@ library InterfoldLifecycle {
         if (verifier.code.length == 0)
             revert IInterfold.InvalidEncryptionScheme(bytes32(0));
         uint256 actual = IPkVerifier(verifier).h();
-        if (actual != ActiveCryptoConfig.H)
-            revert IInterfold.VerifierThresholdMismatch(
-                actual,
-                ActiveCryptoConfig.H
-            );
+        uint256 expected = ActiveCryptoConfig.h();
+        if (actual != expected)
+            revert IInterfold.VerifierThresholdMismatch(actual, expected);
     }
 
     /// @notice Checks that a decryption verifier matches the active circuit.
@@ -548,11 +547,9 @@ library InterfoldLifecycle {
         if (verifier.code.length == 0)
             revert IInterfold.InvalidEncryptionScheme(bytes32(0));
         uint256 actual = IDecryptionVerifier(verifier).threshold();
-        if (actual != ActiveCryptoConfig.T)
-            revert IInterfold.VerifierThresholdMismatch(
-                actual,
-                ActiveCryptoConfig.T
-            );
+        uint256 expected = ActiveCryptoConfig.t();
+        if (actual != expected)
+            revert IInterfold.VerifierThresholdMismatch(actual, expected);
     }
 
     /// @notice Checks the request input window and total duration.

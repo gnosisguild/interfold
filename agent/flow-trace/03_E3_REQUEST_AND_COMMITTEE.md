@@ -72,8 +72,9 @@ Requester calls: Interfold.request({
 │   ├─ requestsPaused == false
 │   ├─ Registry, bonding, slashing, refund, and ticket-token pointers form one
 │   │  reciprocal dependency graph with matching operator membership
-│   ├─ Resolve the build-generated active crypto configuration.
-│   │    The current build is insecure-512 / minimum [H=2, N=3, T=1].
+│   ├─ Validate the requested crypto configuration against the chain matrix.
+│   │    Mainnet supports secure-8192 with minimum, micro, and small committees.
+│   │    Sepolia and local chains support insecure-512 and secure-8192 with all committee sizes.
 │   │    A different parameter hash, committee shape, or verifier H/T is rejected.
 │   ├─ inputWindow[0] >= block.timestamp (start in future)
 │   ├─ inputWindow[1] >= inputWindow[0] (end after start)
@@ -87,7 +88,7 @@ Requester calls: Interfold.request({
 │
 ├─ FEE CALCULATION:
 │   ├─ totalFee = getE3Quote()
-│   │   → InterfoldPricing validates the active circuit [T, H, N].
+│   │   → InterfoldPricing validates the requested chain-supported circuit [T, H, N].
 │   │   → The quote uses N for committee-wide work and H for required decryption shares.
 │   │   → It also uses the time windows,
 │   │     proof counts, availability, decryption/publication costs, and margin
@@ -97,7 +98,7 @@ Requester calls: Interfold.request({
 │   │   → totalFee = serviceFee + randomnessFlatFee
 │   │   → margin does not apply to randomnessFlatFee
 │   ├─ Require the current fee token to equal expectedFeeToken
-│   ├─ Require the active scheme, parameter hash, and circuit version to equal
+│   ├─ Require the requested scheme, parameter hash, and circuit version to equal
 │   │  expectedCryptoConfigId
 │   ├─ Require totalFee <= maxFee
 │   ├─ feeToken.transferFrom(requester, address(this), totalFee)

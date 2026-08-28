@@ -160,6 +160,19 @@ export interface ProtocolDeployment {
   verifierZkTranscriptLib?: string;
   dkgVerifierRelationsLib?: string;
   decryptionVerifierRelationsLib?: string;
+  bfvVerifierRoutes?: Array<{
+    preset: string;
+    committee: string;
+    paramSet: number;
+    committeeSize: number;
+    decryptionVerifier: string;
+    pkVerifier: string;
+    dkgAggregatorVerifier: string;
+    decryptionAggregatorVerifier: string;
+    verifierZkTranscriptLib: string;
+    dkgVerifierRelationsLib: string;
+    decryptionVerifierRelationsLib: string;
+  }>;
   ciphertextVerifier?: string;
   initialE3Program: string;
   ticketToken: string;
@@ -284,6 +297,19 @@ export interface ProtocolContracts {
   verifierZkTranscriptLib?: string;
   dkgVerifierRelationsLib?: string;
   decryptionVerifierRelationsLib?: string;
+  bfvVerifierRoutes?: Array<{
+    preset: string;
+    committee: string;
+    paramSet: number;
+    committeeSize: number;
+    decryptionVerifier: string;
+    pkVerifier: string;
+    dkgAggregatorVerifier: string;
+    decryptionAggregatorVerifier: string;
+    verifierZkTranscriptLib: string;
+    dkgVerifierRelationsLib: string;
+    decryptionVerifierRelationsLib: string;
+  }>;
   ciphertextVerifier?: string;
   initialE3Program: string;
 }

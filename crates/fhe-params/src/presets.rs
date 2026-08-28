@@ -463,7 +463,7 @@ impl BfvPreset {
     /// Returns the per-committee artifact directory: `"{preset}/{committee}"`.
     ///
     /// Use this at runtime so each committee size resolves to its own compiled artifacts
-    /// (e.g. `"secure-8192/medium"`, `"insecure-512/micro"`).
+    /// (e.g. `"secure-8192/small"`, `"insecure-512/micro"`).
     pub fn artifacts_dir_for_committee<C: AsRef<str>>(&self, committee: C) -> String {
         format!("{}/{}", self.artifacts_dir(), committee.as_ref())
     }

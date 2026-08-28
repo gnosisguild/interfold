@@ -191,12 +191,16 @@ design citation alone does not establish current runtime behavior.
   controller-local sequence. On-chain snapshots, signed payloads, Rust persistence, and indexer keys
   must preserve the complete `uint256`. — `Interfold.initialize`; `flow-trace/03`
 - A request can select only the parameter set and committee shape in `ActiveCryptoConfig.sol`.
-  `pnpm build:circuits` generates that binding from the active preset. Governance cannot enable a
-  different parameter hash, `[H, N]`, or verifier threshold without rebuilding the circuits and
-  contracts. The request supplies the expected configuration ID, which binds the scheme, parameter
-  hash, and circuit version. Solidity snapshots it, and Rust rejects an event or stored E3 whose ID
-  differs from its local build. Pricing uses circuit threshold `T`, not on-chain viability value
-  `H`. `N <= numActiveOperators` at `requestCommittee`. — `flow-trace/03`
+  Mainnet supports `secure-8192` with `minimum`, `micro`, and `small` committees. Sepolia and local
+  chains support `insecure-512` and `secure-8192` with `minimum`, `micro`, and `small` committees.
+  Governance cannot enable a different parameter hash, `[H, N]`, or verifier threshold without
+  rebuilding the circuits and contracts for that pair. The request supplies the expected
+  configuration ID, which binds the scheme, parameter hash, and circuit version; committee size is
+  snapshotted separately. Solidity snapshots the ID, and Rust rejects an event or stored E3 whose ID
+  differs from its requested parameter set. BFV verifier mappings may point at routers, which
+  dispatch by public-input length and VK hash anchors to the concrete verifier for the generated
+  pair. Pricing uses circuit threshold `T`, not on-chain viability value `H`.
+  `N <= numActiveOperators` at `requestCommittee`. — `flow-trace/03`
 - Sortition score is deterministic and identical on- and off-chain:
   `score = keccak256(address ‖ ticket ‖ e3Id ‖ seed)`, where
   `seed = keccak256(randomWord ‖ chainId ‖ registry ‖ e3Id ‖ requestId)`; top-N lowest win. Each E3
@@ -325,14 +329,14 @@ design citation alone does not establish current runtime behavior.
 
 ### Committee config sync (the `check:committee` gate)
 
-- Committee `(N, T, H)` must be identical across **five** files:
-  `circuits/lib/src/configs/committee/active.nr`, `circuits/bin/.active-preset.json`,
-  `packages/interfold-contracts/scripts/utils.ts` (`BFV_DKG_H`/`BFV_THRESHOLD_T`), and
-  `crates/zk-helpers/src/ciphernodes_committee.rs`, plus
+- Committee `(N, T, H)` must stay synchronized across:
+  `circuits/lib/src/configs/committee/active.nr`, `packages/interfold-contracts/scripts/utils.ts`
+  (`BFV_DKG_H`/`BFV_THRESHOLD_T`), `crates/zk-helpers/src/ciphernodes_committee.rs`, and
   `packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol`. The Solidity file also binds
-  the active BFV parameter-set hash. Drift means the next build silently produces verifiers or
-  proofs for the wrong configuration. Switch only with `pnpm build:circuits --committee <name>`;
-  enforced by `scripts/check-committee.sh`.
+  the BFV parameter-set hashes. `circuits/bin/.active-preset.json` records only the local hydrated
+  cache and may differ from the production chain pair. Drift means the next build silently produces
+  verifiers or proofs for the wrong configuration. Switch only with
+  `pnpm build:circuits --committee <name>`; enforced by `scripts/check-committee.sh`.
 - Canonical sizes: `minimum` (3,1,2) · `micro` (9,4,5) · `small` (19,9,10) — must mirror `mod.nr`
   and `CiphernodesCommitteeSize::values()`. — `scripts/circuit-constants.ts`
 - Wrapper Solidity verifiers (`BfvPkVerifier`, `BfvDecryptionVerifier`) have an `(H, T)`-specific
@@ -353,6 +357,10 @@ design citation alone does not establish current runtime behavior.
   `required_circuits_version`. Regenerate all dependent verification keys and Solidity verifiers
   with the pinned Barretenberg version. A release archive from an older serialization format can
   pass checksum verification but fail during ACIR decoding or proof generation.
+- A circuit release archive that supports current deployments must include every
+  `insecure-512/{minimum,micro,small}` and `secure-8192/{minimum,micro,small}` pair.
+  `checksums.json` and `SHA256SUMS` must cover the archive contents. Nodes select the artifact
+  directory from the E3's on-chain parameter set and committee size.
 
 ### DKG / threshold structure
 

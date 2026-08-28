@@ -9,6 +9,8 @@ import {
   ACTIVE_CRYPTO_CONFIG_ID,
   ADDRESS_TWO as AddressTwo,
   BFV_PARAMS_DEFAULT,
+  BFV_PARAMS_SECURE,
+  PRODUCTION_CRYPTO_CONFIG_ID,
   buildMockAggregationPublishArgs,
   deployInterfoldSystem,
   ENCRYPTION_SCHEME_ID as encryptionSchemeId,
@@ -94,10 +96,10 @@ describe("Interfold", function () {
       );
     });
 
-    it("exposes the crypto configuration accepted by new requests", async function () {
+    it("exposes the production default crypto configuration", async function () {
       const { interfold } = await loadFixture(setup);
       expect(await interfold.activeCryptoConfigId()).to.equal(
-        ACTIVE_CRYPTO_CONFIG_ID,
+        PRODUCTION_CRYPTO_CONFIG_ID,
       );
     });
 
@@ -214,12 +216,15 @@ describe("Interfold", function () {
         .withArgs(notTheOwner);
     });
 
-    it("keeps only the active circuit parameter set", async function () {
+    it("accepts only supported circuit parameter sets", async function () {
       const { interfold } = await loadFixture(setup);
 
       expect(await interfold.paramSetRegistry(0)).to.equal(BFV_PARAMS_DEFAULT);
+      await expect(interfold.setParamSet(1, BFV_PARAMS_SECURE))
+        .to.emit(interfold, "ParamSetRegistered")
+        .withArgs(1, BFV_PARAMS_SECURE);
       await expect(
-        interfold.setParamSet(1, BFV_PARAMS_DEFAULT),
+        interfold.setParamSet(2, BFV_PARAMS_DEFAULT),
       ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
     });
 

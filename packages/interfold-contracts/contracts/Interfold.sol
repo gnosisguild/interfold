@@ -309,6 +309,7 @@ contract Interfold is
         InterfoldLifecycle.validateQuoteLimit(
             address(feeToken),
             address(requestParams.expectedFeeToken),
+            requestParams.paramSet,
             requestParams.expectedCryptoConfigId,
             requestParams.maxFee,
             quotedFee
@@ -1088,8 +1089,8 @@ contract Interfold is
         uint32[2] memory threshold = committeeThresholds[
             requestParams.committeeSize
         ];
-        // Pure fee math is delegated to {InterfoldPricing.quote} (external
-        // library link) to keep the deployed Interfold runtime bytecode under
+        // Fee math is delegated to {InterfoldPricing.quote} (external library
+        // link) to keep the deployed Interfold runtime bytecode under
         // the EIP-170 24,576-byte cap. Inputs are snapshotted into calldata
         // for the call site; behaviour and revert selectors match the
         // original inlined implementation.
@@ -1134,7 +1135,7 @@ contract Interfold is
 
     /// @inheritdoc IInterfold
     function activeCryptoConfigId() external pure returns (bytes32) {
-        return ActiveCryptoConfig.id();
+        return ActiveCryptoConfig.CONFIG_ID;
     }
 
     ////////////////////////////////////////////////////////////

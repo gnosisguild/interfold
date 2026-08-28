@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { CiphernodeRegistryOwnable__factory as RegistryFactory } from "../../types";
 import {
-  BFV_DKG_H,
-  BFV_THRESHOLD_T,
+  ActiveBfvConfig,
+  activeBfvConfigForChain,
+  bfvConfigsForChain,
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
   readVkRecursiveHash,
@@ -206,8 +207,15 @@ export async function deployProtocolContracts(
   await checkpoints.waitForDeployment();
   const bondedCheckpoints = await deployedAddress(checkpoints);
 
+  const activeBfvConfig = activeBfvConfigForChain(config.chainId);
+  const bfvConfigs = bfvConfigsForChain(config.chainId);
   const deployedVerifiers = config.verifiers?.deploy
-    ? await deployBfvVerifiers(ethers, registryProxy.proxy)
+    ? await deployBfvVerifiers(
+        ethers,
+        registryProxy.proxy,
+        activeBfvConfig,
+        bfvConfigs,
+      )
     : {
         decryptionVerifier: config.verifiers?.decryptionVerifier,
         pkVerifier: config.verifiers?.pkVerifier,
@@ -277,84 +285,50 @@ async function deployMockCiphertextVerifier(ethers: any) {
   return deployedAddress(verifier);
 }
 
-async function deployBfvVerifiers(ethers: any, registry: string) {
-  const zkTranscriptFactory = await ethers.getContractFactory(
-    "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:ZKTranscriptLib",
-  );
-  const zkTranscript = await zkTranscriptFactory.deploy();
-  await zkTranscript.waitForDeployment();
-  const verifierZkTranscriptLib = await deployedAddress(zkTranscript);
+function bfvHonkSource(
+  config: ActiveBfvConfig,
+  contractName: "DkgAggregatorVerifier" | "DecryptionAggregatorVerifier",
+): string {
+  if (config.preset === "insecure-512" && config.committee === "minimum") {
+    return `contracts/verifiers/bfv/honk/${contractName}.sol`;
+  }
+  return `contracts/verifiers/bfv/honk/${config.preset}/${config.committee}/${contractName}.sol`;
+}
 
-  const dkgRelationsFactory = await ethers.getContractFactory(
-    "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:RelationsLib",
-  );
-  const dkgRelations = await dkgRelationsFactory.deploy();
-  await dkgRelations.waitForDeployment();
-  const dkgVerifierRelationsLib = await deployedAddress(dkgRelations);
+async function deployBfvVerifiers(
+  ethers: any,
+  registry: string,
+  defaultConfig: ActiveBfvConfig,
+  configs: readonly ActiveBfvConfig[],
+) {
+  const routes = [];
+  for (const config of configs) {
+    routes.push(await deployBfvVerifierRoute(ethers, registry, config));
+  }
 
-  const decryptionRelationsFactory = await ethers.getContractFactory(
-    "contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:RelationsLib",
-  );
-  const decryptionRelations = await decryptionRelationsFactory.deploy();
-  await decryptionRelations.waitForDeployment();
-  const decryptionVerifierRelationsLib =
-    await deployedAddress(decryptionRelations);
+  let pkVerifier = routes[0].pkVerifier;
+  let decryptionVerifier = routes[0].decryptionVerifier;
+  if (routes.length > 1) {
+    const pkRouterFactory = await ethers.getContractFactory(
+      "BfvPkVerifierRouter",
+    );
+    const pkRouter = await pkRouterFactory.deploy(
+      routes.map((route) => route.pkVerifier),
+      defaultConfig.h,
+    );
+    await pkRouter.waitForDeployment();
+    pkVerifier = await deployedAddress(pkRouter);
 
-  const dkgAggregatorFactory = await ethers.getContractFactory(
-    "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:DkgAggregatorVerifier",
-    {
-      libraries: {
-        "project/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:ZKTranscriptLib":
-          verifierZkTranscriptLib,
-        "project/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:RelationsLib":
-          dkgVerifierRelationsLib,
-      },
-    },
-  );
-  const dkgAggregator = await dkgAggregatorFactory.deploy();
-  await dkgAggregator.waitForDeployment();
-  const dkgAggregatorVerifier = await deployedAddress(dkgAggregator);
-
-  const decryptionAggregatorFactory = await ethers.getContractFactory(
-    "contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:DecryptionAggregatorVerifier",
-    {
-      libraries: {
-        "project/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:ZKTranscriptLib":
-          verifierZkTranscriptLib,
-        "project/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:RelationsLib":
-          decryptionVerifierRelationsLib,
-      },
-    },
-  );
-  const decryptionAggregator = await decryptionAggregatorFactory.deploy();
-  await decryptionAggregator.waitForDeployment();
-  const decryptionAggregatorVerifier =
-    await deployedAddress(decryptionAggregator);
-
-  const pkPaths = getBfvPkSubCircuitVkHashPaths();
-  const pkFactory = await ethers.getContractFactory("BfvPkVerifier");
-  const pk = await pkFactory.deploy(
-    dkgAggregatorVerifier,
-    readVkRecursiveHash(pkPaths.nodesFold),
-    readVkRecursiveHash(pkPaths.c5),
-    BFV_DKG_H,
-  );
-  await pk.waitForDeployment();
-  const pkVerifier = await deployedAddress(pk);
-
-  const decryptionPaths = getBfvDecryptionSubCircuitVkHashPaths();
-  const decryptionFactory = await ethers.getContractFactory(
-    "BfvDecryptionVerifier",
-  );
-  const decryption = await decryptionFactory.deploy(
-    decryptionAggregatorVerifier,
-    registry,
-    readVkRecursiveHash(decryptionPaths.c6Fold),
-    readVkRecursiveHash(decryptionPaths.c7),
-    BFV_THRESHOLD_T,
-  );
-  await decryption.waitForDeployment();
-  const decryptionVerifier = await deployedAddress(decryption);
+    const decryptionRouterFactory = await ethers.getContractFactory(
+      "BfvDecryptionVerifierRouter",
+    );
+    const decryptionRouter = await decryptionRouterFactory.deploy(
+      routes.map((route) => route.decryptionVerifier),
+      defaultConfig.t,
+    );
+    await decryptionRouter.waitForDeployment();
+    decryptionVerifier = await deployedAddress(decryptionRouter);
+  }
 
   const dkgFoldFactory = await ethers.getContractFactory(
     "DkgFoldAttestationVerifier",
@@ -367,6 +341,109 @@ async function deployBfvVerifiers(ethers: any, registry: string) {
     decryptionVerifier,
     pkVerifier,
     dkgFoldAttestationVerifier,
+    dkgAggregatorVerifier: routes[0].dkgAggregatorVerifier,
+    decryptionAggregatorVerifier: routes[0].decryptionAggregatorVerifier,
+    verifierZkTranscriptLib: routes[0].verifierZkTranscriptLib,
+    dkgVerifierRelationsLib: routes[0].dkgVerifierRelationsLib,
+    decryptionVerifierRelationsLib: routes[0].decryptionVerifierRelationsLib,
+    bfvVerifierRoutes: routes,
+  };
+}
+
+async function deployBfvVerifierRoute(
+  ethers: any,
+  registry: string,
+  config: ActiveBfvConfig,
+) {
+  const dkgSource = bfvHonkSource(config, "DkgAggregatorVerifier");
+  const decryptionSource = bfvHonkSource(
+    config,
+    "DecryptionAggregatorVerifier",
+  );
+
+  const zkTranscriptFactory = await ethers.getContractFactory(
+    `${dkgSource}:ZKTranscriptLib`,
+  );
+  const zkTranscript = await zkTranscriptFactory.deploy();
+  await zkTranscript.waitForDeployment();
+  const verifierZkTranscriptLib = await deployedAddress(zkTranscript);
+
+  const dkgRelationsFactory = await ethers.getContractFactory(
+    `${dkgSource}:RelationsLib`,
+  );
+  const dkgRelations = await dkgRelationsFactory.deploy();
+  await dkgRelations.waitForDeployment();
+  const dkgVerifierRelationsLib = await deployedAddress(dkgRelations);
+
+  const decryptionRelationsFactory = await ethers.getContractFactory(
+    `${decryptionSource}:RelationsLib`,
+  );
+  const decryptionRelations = await decryptionRelationsFactory.deploy();
+  await decryptionRelations.waitForDeployment();
+  const decryptionVerifierRelationsLib =
+    await deployedAddress(decryptionRelations);
+
+  const dkgAggregatorFactory = await ethers.getContractFactory(
+    `${dkgSource}:DkgAggregatorVerifier`,
+    {
+      libraries: {
+        [`project/${dkgSource}:ZKTranscriptLib`]: verifierZkTranscriptLib,
+        [`project/${dkgSource}:RelationsLib`]: dkgVerifierRelationsLib,
+      },
+    },
+  );
+  const dkgAggregator = await dkgAggregatorFactory.deploy();
+  await dkgAggregator.waitForDeployment();
+  const dkgAggregatorVerifier = await deployedAddress(dkgAggregator);
+
+  const decryptionAggregatorFactory = await ethers.getContractFactory(
+    `${decryptionSource}:DecryptionAggregatorVerifier`,
+    {
+      libraries: {
+        [`project/${decryptionSource}:ZKTranscriptLib`]:
+          verifierZkTranscriptLib,
+        [`project/${decryptionSource}:RelationsLib`]:
+          decryptionVerifierRelationsLib,
+      },
+    },
+  );
+  const decryptionAggregator = await decryptionAggregatorFactory.deploy();
+  await decryptionAggregator.waitForDeployment();
+  const decryptionAggregatorVerifier =
+    await deployedAddress(decryptionAggregator);
+
+  const pkPaths = getBfvPkSubCircuitVkHashPaths(config);
+  const pkFactory = await ethers.getContractFactory("BfvPkVerifier");
+  const pk = await pkFactory.deploy(
+    dkgAggregatorVerifier,
+    readVkRecursiveHash(pkPaths.nodesFold, config),
+    readVkRecursiveHash(pkPaths.c5, config),
+    config.h,
+  );
+  await pk.waitForDeployment();
+  const pkVerifier = await deployedAddress(pk);
+
+  const decryptionPaths = getBfvDecryptionSubCircuitVkHashPaths(config);
+  const decryptionFactory = await ethers.getContractFactory(
+    "BfvDecryptionVerifier",
+  );
+  const decryption = await decryptionFactory.deploy(
+    decryptionAggregatorVerifier,
+    registry,
+    readVkRecursiveHash(decryptionPaths.c6Fold, config),
+    readVkRecursiveHash(decryptionPaths.c7, config),
+    config.t,
+  );
+  await decryption.waitForDeployment();
+  const decryptionVerifier = await deployedAddress(decryption);
+
+  return {
+    preset: config.preset,
+    committee: config.committee,
+    paramSet: config.paramSet,
+    committeeSize: config.committeeSize,
+    decryptionVerifier,
+    pkVerifier,
     dkgAggregatorVerifier,
     decryptionAggregatorVerifier,
     verifierZkTranscriptLib,

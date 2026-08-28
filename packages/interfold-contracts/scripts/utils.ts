@@ -93,16 +93,140 @@ export function getRepoRoot(): string {
 
 /**
  * <generated-committee-doc>
- * Active secure-8192 / small committee layout for BFV aggregator verifiers.
+ * Active insecure-512 / minimum committee layout for BFV aggregator verifiers.
  * Must match `lib::configs::default::{H, T}` in compiled circuits.
- * Small committee: N=19, T=9, H=10.
+ * Minimum committee: N=3, T=1, H=2.
  * </generated-committee-doc>
  */
-export const BFV_DKG_H = 10;
-export const BFV_THRESHOLD_T = 9;
-export const ACTIVE_BFV_PARAM_SET = 1;
-export const ACTIVE_BFV_COMMITTEE_SIZE = 2;
-export const ACTIVE_BFV_COMMITTEE_N = 19;
+export const BFV_DKG_H = 2;
+export const BFV_THRESHOLD_T = 1;
+export const ACTIVE_BFV_PARAM_SET = 0;
+export const ACTIVE_BFV_COMMITTEE_SIZE = 0;
+export const ACTIVE_BFV_COMMITTEE_N = 3;
+
+export type BfvArtifactPreset = "insecure-512" | "secure-8192";
+export type BfvCommittee = "minimum" | "micro" | "small";
+
+export interface ActiveBfvConfig {
+  preset: BfvArtifactPreset;
+  committee: BfvCommittee;
+  paramSet: number;
+  paramSetHash: string;
+  configId: string;
+  committeeSize: number;
+  h: number;
+  t: number;
+  n: number;
+}
+
+const INSECURE_PARAM_SET_HASH =
+  "0x18c6d8650486b997d48aa2d285fae878fb267b268332d056a3e8527d50e87b4f";
+const INSECURE_CONFIG_ID =
+  "0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78";
+const SECURE_PARAM_SET_HASH =
+  "0x14d06d03810686d4dbb46d63989c664693fe4cd96d78146bcc078b055061536e";
+const SECURE_CONFIG_ID =
+  "0x17654d80a8bd5631a6f52cc9f86ac091b352ac95943366a8a41e7336e9a920fc";
+
+function bfvConfig(
+  preset: BfvArtifactPreset,
+  committee: BfvCommittee,
+  params: Pick<ActiveBfvConfig, "committeeSize" | "h" | "t" | "n">,
+): ActiveBfvConfig {
+  const secure = preset === "secure-8192";
+  return {
+    preset,
+    committee,
+    paramSet: secure ? 1 : 0,
+    paramSetHash: secure ? SECURE_PARAM_SET_HASH : INSECURE_PARAM_SET_HASH,
+    configId: secure ? SECURE_CONFIG_ID : INSECURE_CONFIG_ID,
+    ...params,
+  };
+}
+
+export const INSECURE_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "insecure-512",
+  "minimum",
+  { committeeSize: 0, h: 2, t: 1, n: 3 },
+);
+
+export const INSECURE_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "insecure-512",
+  "micro",
+  { committeeSize: 1, h: 5, t: 4, n: 9 },
+);
+
+export const INSECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "insecure-512",
+  "small",
+  { committeeSize: 2, h: 10, t: 9, n: 19 },
+);
+
+export const SECURE_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-8192",
+  "minimum",
+  { committeeSize: 0, h: 2, t: 1, n: 3 },
+);
+
+export const SECURE_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-8192",
+  "micro",
+  { committeeSize: 1, h: 5, t: 4, n: 9 },
+);
+
+export const SECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-8192",
+  "small",
+  { committeeSize: 2, h: 10, t: 9, n: 19 },
+);
+
+export const PRODUCTION_BFV_CONFIG: ActiveBfvConfig = SECURE_SMALL_BFV_CONFIG;
+
+export const TESTNET_BFV_CONFIG: ActiveBfvConfig = INSECURE_MINIMUM_BFV_CONFIG;
+
+export const MAINNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [
+  SECURE_SMALL_BFV_CONFIG,
+  SECURE_MICRO_BFV_CONFIG,
+  SECURE_MINIMUM_BFV_CONFIG,
+] as const;
+
+export const TESTNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [
+  INSECURE_MINIMUM_BFV_CONFIG,
+  INSECURE_MICRO_BFV_CONFIG,
+  INSECURE_SMALL_BFV_CONFIG,
+  SECURE_MINIMUM_BFV_CONFIG,
+  SECURE_MICRO_BFV_CONFIG,
+  SECURE_SMALL_BFV_CONFIG,
+] as const;
+
+export function isTestnetOrLocalChainId(chainId: number): boolean {
+  return chainId === 11155111 || chainId === 31337 || chainId === 1337;
+}
+
+export function activeBfvConfigForChain(chainId: number): ActiveBfvConfig {
+  return isTestnetOrLocalChainId(chainId)
+    ? TESTNET_BFV_CONFIG
+    : PRODUCTION_BFV_CONFIG;
+}
+
+export function bfvConfigsForChain(
+  chainId: number,
+): readonly ActiveBfvConfig[] {
+  return isTestnetOrLocalChainId(chainId)
+    ? TESTNET_BFV_CONFIGS
+    : MAINNET_BFV_CONFIGS;
+}
+
+export function bfvParamSetConfigsForChain(chainId: number): ActiveBfvConfig[] {
+  const seen = new Set<number>();
+  const configs: ActiveBfvConfig[] = [];
+  for (const config of bfvConfigsForChain(chainId)) {
+    if (seen.has(config.paramSet)) continue;
+    seen.add(config.paramSet);
+    configs.push(config);
+  }
+  return configs;
+}
 
 /** `dkg_aggregator` EVM public-input count for honest-set size `h`. */
 export function bfvPkExpectedPublicInputsLen(h: number): number {
@@ -153,8 +277,31 @@ export function bfvDecCiphertextCommitmentIndex(): number {
   return 6;
 }
 
-/** Recursive VK hashes for `BfvPkVerifier` sub-circuits (from `pnpm compile:circuits`). */
-export function getBfvPkSubCircuitVkHashPaths() {
+function distCircuitRoot(config: ActiveBfvConfig): string {
+  return path.join(
+    getRepoRoot(),
+    "dist/circuits",
+    config.preset,
+    config.committee,
+  );
+}
+
+/** Recursive VK hashes for `BfvPkVerifier` sub-circuits. */
+export function getBfvPkSubCircuitVkHashPaths(config?: ActiveBfvConfig) {
+  if (config) {
+    const root = distCircuitRoot(config);
+    return {
+      nodesFold: path.join(
+        root,
+        "default/recursive_aggregation/nodes_fold/nodes_fold.vk_hash",
+      ),
+      c5: path.join(
+        root,
+        "default/threshold/pk_aggregation/pk_aggregation.vk_hash",
+      ),
+    } as const;
+  }
+
   const root = getRepoRoot();
   return {
     nodesFold: path.join(
@@ -168,8 +315,24 @@ export function getBfvPkSubCircuitVkHashPaths() {
   } as const;
 }
 
-/** Recursive VK hashes for `BfvDecryptionVerifier` sub-circuits (from `pnpm compile:circuits`). */
-export function getBfvDecryptionSubCircuitVkHashPaths() {
+/** Recursive VK hashes for `BfvDecryptionVerifier` sub-circuits. */
+export function getBfvDecryptionSubCircuitVkHashPaths(
+  config?: ActiveBfvConfig,
+) {
+  if (config) {
+    const root = distCircuitRoot(config);
+    return {
+      c6Fold: path.join(
+        root,
+        "default/recursive_aggregation/c6_fold/c6_fold.vk_hash",
+      ),
+      c7: path.join(
+        root,
+        "default/threshold/decrypted_shares_aggregation/decrypted_shares_aggregation.vk_hash",
+      ),
+    } as const;
+  }
+
   const root = getRepoRoot();
   return {
     c6Fold: path.join(
@@ -187,10 +350,16 @@ export function getBfvDecryptionSubCircuitVkHashPaths() {
  * Reads a 32-byte recursive VK hash emitted by the circuit build (`*.vk_recursive_hash`).
  * Co-redeploy `BfvPkVerifier` / `BfvDecryptionVerifier` when the corresponding sub-circuit VK changes.
  */
-export function readVkRecursiveHash(filePath: string): string {
+export function readVkRecursiveHash(
+  filePath: string,
+  config?: ActiveBfvConfig,
+): string {
   if (!fs.existsSync(filePath)) {
+    const buildHint = config
+      ? `pnpm build:circuits --preset ${config.preset} --committee ${config.committee}`
+      : "pnpm build:circuits";
     throw new Error(
-      `Missing circuit VK hash file: ${filePath}. From repo root run: pnpm build:circuits --preset insecure-512`,
+      `Missing circuit VK hash file: ${filePath}. From repo root run: ${buildHint}`,
     );
   }
 
@@ -223,11 +392,16 @@ export interface BfvDecryptionVerifierVkReader {
 export async function assertBfvPkVerifierSubCircuitVkHashes(
   verifier: BfvPkVerifierVkReader,
   address: string,
+  config?: ActiveBfvConfig,
 ): Promise<void> {
   const expectedNodesFold = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths().nodesFold,
+    getBfvPkSubCircuitVkHashPaths(config).nodesFold,
+    config,
   );
-  const expectedC5 = readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().c5);
+  const expectedC5 = readVkRecursiveHash(
+    getBfvPkSubCircuitVkHashPaths(config).c5,
+    config,
+  );
   const [onChainNodesFold, onChainC5] = await Promise.all([
     verifier.expectedNodesFoldKeyHash(),
     verifier.expectedC5KeyHash(),
@@ -251,12 +425,15 @@ export async function assertBfvPkVerifierSubCircuitVkHashes(
 export async function assertBfvDecryptionVerifierSubCircuitVkHashes(
   verifier: BfvDecryptionVerifierVkReader,
   address: string,
+  config?: ActiveBfvConfig,
 ): Promise<void> {
   const expectedC6Fold = readVkRecursiveHash(
-    getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
+    getBfvDecryptionSubCircuitVkHashPaths(config).c6Fold,
+    config,
   );
   const expectedC7 = readVkRecursiveHash(
-    getBfvDecryptionSubCircuitVkHashPaths().c7,
+    getBfvDecryptionSubCircuitVkHashPaths(config).c7,
+    config,
   );
   const [onChainC6Fold, onChainC7] = await Promise.all([
     verifier.expectedC6FoldKeyHash(),

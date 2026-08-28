@@ -245,8 +245,13 @@ the generator would produce.
 ### Usage
 
 ```bash
-# Build circuits locally, then push to git branch
-pnpm build:circuits
+# Build or hydrate the required circuit pairs, then push them to the git branch
+pnpm build:circuits --preset insecure-512 --committee minimum
+pnpm build:circuits --preset insecure-512 --committee micro
+pnpm build:circuits --preset insecure-512 --committee small
+pnpm build:circuits --preset secure-8192 --committee minimum
+pnpm build:circuits --preset secure-8192 --committee micro
+pnpm build:circuits --preset secure-8192 --committee small
 pnpm store:circuits push
 
 # Pull circuits from git branch (used by CI)
@@ -255,8 +260,11 @@ pnpm store:circuits pull
 
 ### What it does
 
-- **Push**: Copies `dist/circuits/` to the `circuit-artifacts` orphan branch and pushes to origin
+- **Push**: Merges local `dist/circuits/` into the `circuit-artifacts` branch, refreshes
+  `SHA256SUMS` and `checksums.json`, then pushes to origin
 - **Pull**: Fetches the `circuit-artifacts` branch and extracts to `dist/circuits/`
+- **Replace**: `pnpm store:circuits push --replace` rewrites the branch from local `dist/circuits/`;
+  use only when intentionally deleting old artifact sets
 
 ### Workflow
 
@@ -265,13 +273,26 @@ Circuits are built locally and stored in a git branch:
 1. **Local**: Build circuits and push to branch
 
 ```bash
-   pnpm build:circuits
-   pnpm tsx scripts/circuit-artifacts.ts push
+pnpm build:circuits --preset insecure-512 --committee minimum
+pnpm build:circuits --preset insecure-512 --committee micro
+pnpm build:circuits --preset insecure-512 --committee small
+pnpm build:circuits --preset secure-8192 --committee minimum
+pnpm build:circuits --preset secure-8192 --committee micro
+pnpm build:circuits --preset secure-8192 --committee small
+pnpm store:circuits push
 ```
 
 2. **CI**: Pulls from branch during release, attaches to GitHub release
 
 3. **After release**: Circuits live permanently in release assets
+
+The release archive must include:
+
+- `insecure-512/{minimum,micro,small}` for Sepolia and local rehearsals
+- `secure-8192/{minimum,micro,small}` for Sepolia secure-parameter tests and mainnet committees
+
+Nodes download one archive and select the artifact directory from the E3's on-chain BFV parameter
+set and committee size.
 
 ## Verifier Generator
 
@@ -279,24 +300,24 @@ Circuits are built locally and stored in a git branch:
 Noir circuits.
 
 The generated `.sol` files under `packages/interfold-contracts/contracts/verifiers/bfv/honk/` are
-**committed to git** and correspond to **exactly one `(preset, committee)` pair**:
-`(insecure-512, minimum)` (the development / CI / benchmark default). The Honk verifiers bake in the
-recursive VKs of `dkg_aggregator` / `decryption_aggregator`, which are preset- and committee-
-dependent — different BFV parameter sets or `H/T` sizes compile to different VKs and therefore
-different `.sol` bytes. The committed files only match `(insecure-512, minimum)`.
+**committed to git**. The root files correspond to `(insecure-512, minimum)`, which is the
+development / CI / benchmark default. Non-canonical pairs are committed under
+`honk/<preset>/<committee>/`. The Honk verifiers bake in the recursive VKs of `dkg_aggregator` /
+`decryption_aggregator`, which are preset- and committee-dependent. Different BFV parameter sets or
+`H/T` sizes compile to different VKs and therefore different `.sol` bytes.
 
 The generator enforces this: both `--check` and `--write` refuse to run unless
-`dist/circuits/insecure-512/.build-stamp.json` exists and reports `"preset": "insecure-512"`, and
-`circuits/bin/.active-preset.json::committee` matches the requested committee. The stamps are
-written by [`pnpm build:circuits --preset <preset> --committee <name>`](#circuit-builder) and are
-the only on-disk record of which `(preset, committee)` built `circuits/bin/`. If either dimension
-drifts, the generator refuses with a clear fix recipe instead of silently producing the wrong
-`.sol`.
+`dist/circuits/<preset>/<committee>/.build-stamp.json` exists and reports the requested preset, and
+`circuits/bin/.active-preset.json` matches the requested preset and committee. The stamps are
+written by [`pnpm build:circuits --preset <preset> --committee <name>`](#circuit-builder) and record
+which `(preset, committee)` produced the artifacts. If either dimension drifts, the generator
+refuses with a clear fix recipe instead of silently producing the wrong `.sol`.
 
-For non-canonical committees (e.g. `small`), pass `--committee <name>`; the verifiers land under
-`honk/<name>/` so the canonical-committee `.sol` files committed to git aren't clobbered. `--check`
-mode skips the diff for non-canonical committees because there's no committed file to diff against —
-benchmark and deploy flows already deploy fresh aggregator verifiers from runtime artifacts.
+For non-canonical pairs, pass `--preset <name> --committee <name>`; the verifiers land under
+`honk/<preset>/<committee>/` so the canonical `.sol` files committed to git are not clobbered.
+`--check` mode skips the diff for non-canonical pairs because there is no committed file to diff
+against. Benchmark and deploy flows deploy the matching aggregator verifiers from those generated
+sources.
 
 The script has two modes:
 
@@ -318,8 +339,12 @@ pnpm generate:verifiers --check
 # Regenerate (default; equivalent to --write)
 pnpm generate:verifiers
 
-# Generate for a non-canonical committee (writes under honk/small/)
-pnpm generate:verifiers --committee small --write
+# Generate for non-canonical pairs
+pnpm build:circuits --preset secure-8192 --committee minimum
+pnpm generate:verifiers --preset secure-8192 --committee minimum --write
+
+pnpm build:circuits --preset secure-8192 --committee small
+pnpm generate:verifiers --preset secure-8192 --committee small --write
 
 # Generate only for specific group
 pnpm generate:verifiers --group dkg
@@ -362,15 +387,15 @@ Automates the full pipeline from Noir circuits to on-chain Solidity verifiers:
 
 There are two distinct failure modes — the error output tells you which one:
 
-**1. Canonical preset not built** — the generator refuses up front because
-`dist/circuits/insecure-512/.build-stamp.json` is missing or reports a different preset. The
-committed verifiers are pinned to `insecure-512`; nothing under `circuits/bin/` is trusted unless
-the build stamp confirms the canonical preset was last built.
+**1. Target preset and committee not built** — the generator refuses up front because
+`dist/circuits/<preset>/<committee>/.build-stamp.json` is missing or reports a different preset. The
+committed verifier root is pinned to `insecure-512/minimum`; non-canonical pairs use their own
+subdirectories under `honk/<preset>/<committee>/`.
 
 To fix:
 
 ```bash
-pnpm build:circuits --preset insecure-512
+pnpm build:circuits --preset insecure-512 --committee minimum
 # then retry the original command
 ```
 
@@ -384,9 +409,10 @@ the bytes don't match. Typical causes:
 To fix:
 
 1. Verify your `nargo` / `bb` versions match `crates/zk-prover/versions.json`.
-2. Run `pnpm build:circuits --preset insecure-512`.
-3. Run `pnpm generate:verifiers --write`.
-4. Commit the resulting diff under `packages/interfold-contracts/contracts/verifiers/bfv/honk/`.
+2. Run `pnpm build:circuits --preset insecure-512 --committee minimum`.
+3. Run `pnpm generate:verifiers --preset insecure-512 --committee minimum --write`.
+4. Run the same build and generate commands for each non-canonical pair.
+5. Commit the resulting diff under `packages/interfold-contracts/contracts/verifiers/bfv/honk/`.
 
 ### Options
 

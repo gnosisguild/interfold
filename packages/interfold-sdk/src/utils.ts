@@ -83,6 +83,16 @@ export const DEFAULT_E3_CONFIG = {
   payment_amount: '0', // 0 ETH in wei
 } as const
 
+export function cryptoConfigIdForParamSet(paramSet: number): Hash {
+  if (paramSet === 0) {
+    return '0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78'
+  }
+  if (paramSet === 1) {
+    return '0x17654d80a8bd5631a6f52cc9f86ac091b352ac95943366a8a41e7336e9a920fc'
+  }
+  throw new SDKError(`Unsupported BFV parameter set: ${paramSet}`, 'UNSUPPORTED_CRYPTO_CONFIG')
+}
+
 /**
  * Encode BFV parameters for the smart contract
  * BFV (Brakerski-Fan-Vercauteren) is a type of fully homomorphic encryption

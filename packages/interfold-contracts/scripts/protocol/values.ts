@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
 
+import { bfvConfigsForChain } from "../utils";
 import { assertSupportedVrfChain, assertVrfRequestTimeout } from "./chains";
 import { arg } from "./cli";
 import { ZERO, abi } from "./constants";
@@ -414,6 +415,7 @@ function validateConfig(config: ProtocolConfigFile): void {
       "interfold.pricing.randomnessFlatFee must be a positive uint192 value",
     );
   }
+  validateActiveBfvCommitteeConfig(config);
   if (!Array.isArray(config.e3Programs) || config.e3Programs.length !== 1) {
     throw new Error("Exactly one initial E3 Program is required");
   }
@@ -476,5 +478,27 @@ function validateConfig(config: ProtocolConfigFile): void {
     throw new Error(
       "bindInitialE3Program must be false when deployMockE3Program is true",
     );
+  }
+}
+
+function validateActiveBfvCommitteeConfig(config: ProtocolConfigFile): void {
+  if (!Array.isArray(config.interfold.committeeThresholds)) {
+    throw new Error("interfold.committeeThresholds must be an array");
+  }
+
+  for (const active of bfvConfigsForChain(config.chainId)) {
+    const found = config.interfold.committeeThresholds.some(
+      (threshold) =>
+        threshold.size === String(active.committeeSize) &&
+        threshold.quorum === String(active.h) &&
+        threshold.total === String(active.n),
+    );
+    if (!found) {
+      throw new Error(
+        `Config chainId ${config.chainId} supports BFV ${active.preset}/${active.committee}; ` +
+          `interfold.committeeThresholds must include size=${active.committeeSize}, ` +
+          `quorum=${active.h}, total=${active.n}`,
+      );
+    }
   }
 }

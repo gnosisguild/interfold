@@ -143,7 +143,7 @@ describe("Governance — access control, bounds & events", function () {
       expect(await interfold.MAX_TIMEOUT_WINDOW()).to.equal(
         30n * 24n * 60n * 60n,
       );
-      expect(await interfold.MAX_COMMITTEE_SIZE()).to.equal(3n);
+      expect(await interfold.MAX_COMMITTEE_SIZE()).to.equal(19n);
       expect(await interfold.MAX_MARGIN_BPS()).to.equal(5_000n);
       expect(await interfold.MAX_PROTOCOL_SHARE_BPS()).to.equal(5_000n);
     });

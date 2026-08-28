@@ -9,16 +9,17 @@
 # that encode it independently:
 #
 #   1. circuits/lib/src/configs/committee/active.nr  (Noir-side active committee)
-#   2. circuits/bin/.active-preset.json              (last `pnpm build:circuits` stamp)
-#   3. packages/interfold-contracts/scripts/utils.ts   (BFV_DKG_H / BFV_THRESHOLD_T)
-#   4. crates/zk-helpers/src/ciphernodes_committee.rs (committee enum values, single source)
-#   5. packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol
+#   2. packages/interfold-contracts/scripts/utils.ts   (BFV_DKG_H / BFV_THRESHOLD_T)
+#   3. crates/zk-helpers/src/ciphernodes_committee.rs (committee enum values, single source)
+#   4. packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol
+#
+# `circuits/bin/.active-preset.json` is only a local hydrated cache. It can point at Sepolia's
+# fast insecure-minimum artifacts while the checked-in production config points at secure-small.
 #
 # A drift between any two means the next `pnpm build:circuits` would silently produce
 # verifiers / proofs against the wrong committee. Run from .husky/pre-push (or CI).
 #
-# Exit 0 on consistency, 1 on drift. The stamp is optional (skipped when absent — common
-# in fresh clones before `pnpm build:circuits`).
+# Exit 0 on consistency, 1 on drift.
 
 set -euo pipefail
 
@@ -78,31 +79,46 @@ but $UTILS_TS has BFV_DKG_H=$UTILS_H, BFV_THRESHOLD_T=$UTILS_T. \
 Run: pnpm build:circuits --committee $ACTIVE_COMMITTEE"
 fi
 
-# 4. The Solidity constants must select the same active circuit shape.
+# 4. The Solidity constants must include each supported on-chain committee shape.
 [[ -f "$ACTIVE_SOL" ]] || fail "missing $ACTIVE_SOL"
-SOL_H=$(grep -E 'uint32 internal constant H = [0-9]+' "$ACTIVE_SOL" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
-SOL_T=$(grep -E 'uint32 internal constant T = [0-9]+' "$ACTIVE_SOL" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
-SOL_N=$(grep -E 'uint32 internal constant N = [0-9]+' "$ACTIVE_SOL" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
-SOL_SIZE=$(grep -E 'uint8 internal constant COMMITTEE_SIZE = [0-9]+' "$ACTIVE_SOL" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
-case "$ACTIVE_COMMITTEE" in
-  minimum) EXPECTED_SIZE=0 ;;
-  micro) EXPECTED_SIZE=1 ;;
-  small) EXPECTED_SIZE=2 ;;
-esac
-if [[ "$SOL_H" != "$EXPECTED_H" || "$SOL_T" != "$EXPECTED_T" || "$SOL_N" != "$EXPECTED_N" || "$SOL_SIZE" != "$EXPECTED_SIZE" ]]; then
-  fail "drift: $ACTIVE_SOL has (size=$SOL_SIZE, N=$SOL_N, T=$SOL_T, H=$SOL_H), expected (size=$EXPECTED_SIZE, N=$EXPECTED_N, T=$EXPECTED_T, H=$EXPECTED_H)"
-fi
+sol_u32() {
+  local name="$1"
+  grep -E "uint32 internal constant $name = [0-9]+" "$ACTIVE_SOL" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1
+}
+sol_u8() {
+  local name="$1"
+  grep -E "uint8 internal constant $name = [0-9]+" "$ACTIVE_SOL" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1
+}
+check_sol_committee() {
+  local committee="$1"
+  local prefix="$2"
+  local size="$3"
+  local mod_file="circuits/lib/src/configs/committee/$committee/mod.nr"
+  local noir_n noir_h noir_t sol_size sol_n sol_h sol_t
+  noir_n=$(grep -E 'pub global N_PARTIES: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
+  noir_h=$(grep -E 'pub global H: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
+  noir_t=$(grep -E 'pub global T: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
+  sol_size=$(sol_u8 "${prefix}_COMMITTEE_SIZE")
+  sol_n=$(sol_u32 "${prefix}_N")
+  sol_h=$(sol_u32 "${prefix}_H")
+  sol_t=$(sol_u32 "${prefix}_T")
+  if [[ "$sol_size" != "$size" || "$sol_n" != "$noir_n" || "$sol_h" != "$noir_h" || "$sol_t" != "$noir_t" ]]; then
+    fail "drift: $ACTIVE_SOL ${prefix} has (size=$sol_size, N=$sol_n, T=$sol_t, H=$sol_h), expected (size=$size, N=$noir_n, T=$noir_t, H=$noir_h)"
+  fi
+}
+check_sol_committee minimum MINIMUM 0
+check_sol_committee micro MICRO 1
+check_sol_committee small SMALL 2
 
-# 5. Optional stamp cross-check (when circuits have been built locally).
+# 5. Optional local-cache note (when circuits have been built locally).
 if [[ -f "$STAMP" ]]; then
-  # Older stamps (written before build-circuits.ts learned about committees) lack the field;
-  # treat that as "no cross-check" rather than failing the whole script.
+  # Older stamps (written before build-circuits.ts learned about committees) lack the field.
   STAMP_COMMITTEE=$(grep -oE '"committee"\s*:\s*"[a-z]+"' "$STAMP" 2>/dev/null | grep -oE '"[a-z]+"$' | tr -d '"' || true)
   if [[ -n "${STAMP_COMMITTEE:-}" ]]; then
-    RAN_STAMP_CHECK=true
     if [[ "$STAMP_COMMITTEE" != "$ACTIVE_COMMITTEE" ]]; then
-      fail "drift: $ACTIVE_NR says committee=$ACTIVE_COMMITTEE but $STAMP says committee=$STAMP_COMMITTEE. \
-Either rebuild circuits with the current selection or revert active.nr to match the stamp."
+      echo "  (local circuits/bin cache is hydrated for committee=$STAMP_COMMITTEE; production active.nr is committee=$ACTIVE_COMMITTEE)" >&2
+    else
+      RAN_STAMP_CHECK=true
     fi
   fi
 fi
@@ -232,4 +248,4 @@ else
   echo "  (skipping parity-matrix drift check: $GEN_BIN not built. Run \`cargo build -p e3-zk-helpers --bin generate_parity_matrices --release\` to enable.)" >&2
 fi
 
-echo "✓ check:committee: $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) consistent across active.nr, ActiveCryptoConfig.sol, utils.ts, Rust committee rows$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"
+echo "✓ check:committee: local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) and on-chain committee matrix consistent across active.nr, ActiveCryptoConfig.sol, utils.ts, Rust committee rows$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"

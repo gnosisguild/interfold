@@ -21,7 +21,7 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { CiphernodeRegistryOwnable__factory, Interfold__factory, InterfoldToken__factory } from '@interfold/contracts/types'
 import type { ContractAddresses, E3, E3RequestParams, E3Stage, FailureReason } from './types'
 import { validateCommitteeSize } from './types'
-import { SDKError, isValidAddress } from '../utils'
+import { SDKError, cryptoConfigIdForParamSet, isValidAddress } from '../utils'
 
 export interface ContractClientConfig {
   publicClient: PublicClient
@@ -146,11 +146,7 @@ export class ContractClient {
 
       const committeeSize = validateCommitteeSize(params.committeeSize)
       const maxFee = params.maxFee ?? (await this.getE3Quote(params))
-      const expectedCryptoConfigId = await this.publicClient.readContract({
-        address: this.contracts.interfold,
-        abi: Interfold__factory.abi,
-        functionName: 'activeCryptoConfigId',
-      })
+      const expectedCryptoConfigId = cryptoConfigIdForParamSet(params.paramSet)
 
       const { request } = await this.publicClient.simulateContract({
         address: this.contracts.interfold,
@@ -253,11 +249,7 @@ export class ContractClient {
   public async getE3Quote(requestParams: E3RequestParams): Promise<bigint> {
     try {
       const committeeSize = validateCommitteeSize(requestParams.committeeSize)
-      const expectedCryptoConfigId = await this.publicClient.readContract({
-        address: this.contracts.interfold,
-        abi: Interfold__factory.abi,
-        functionName: 'activeCryptoConfigId',
-      })
+      const expectedCryptoConfigId = cryptoConfigIdForParamSet(requestParams.paramSet)
 
       return this.publicClient.readContract({
         address: this.contracts.interfold,

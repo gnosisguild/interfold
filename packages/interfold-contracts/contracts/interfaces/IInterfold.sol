@@ -694,7 +694,7 @@ interface IInterfold {
         bytes32 encryptionSchemeId
     ) external view returns (address);
 
-    /// @notice Returns the circuit configuration accepted by new requests.
+    /// @notice Returns the production default circuit configuration ID.
     function activeCryptoConfigId() external pure returns (bytes32);
 
     /// @notice Registers ABI-encoded BFV parameters for a param set enum variant.
