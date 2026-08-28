@@ -14,6 +14,14 @@ const BRANCH = 'circuit-artifacts'
 const ROOT = resolve(__dirname, '..')
 const DIST = join(ROOT, 'dist', 'circuits')
 const METADATA_FILES = new Set(['.git', 'SOURCE_HASH', 'SHA256SUMS', 'checksums.json'])
+const RELEASE_REQUIRED_PAIRS = [
+  ['insecure-512', 'minimum'],
+  ['insecure-512', 'micro'],
+  ['insecure-512', 'small'],
+  ['secure-8192', 'minimum'],
+  ['secure-8192', 'micro'],
+  ['secure-8192', 'small'],
+] as const
 
 const run = (cmd: string, cwd = ROOT) => execSync(cmd, { encoding: 'utf-8', cwd, stdio: 'pipe' }).trim()
 const runV = (cmd: string, cwd = ROOT) => execSync(cmd, { cwd, stdio: 'inherit' })
@@ -112,6 +120,40 @@ function validateRetainedStamps(dir: string): void {
   }
 }
 
+function argValue(name: string): string | undefined {
+  const arg = process.argv.find((value) => value.startsWith(`${name}=`))
+  if (arg) return arg.slice(name.length + 1)
+
+  const index = process.argv.indexOf(name)
+  if (index >= 0) return process.argv[index + 1]
+
+  return undefined
+}
+
+function validateSourceHash(dir: string, expectedHash: string): void {
+  const sourceHashPath = join(dir, 'SOURCE_HASH')
+  if (!existsSync(sourceHashPath)) {
+    throw new Error('circuit-artifacts branch is missing SOURCE_HASH; cannot verify it matches the released source.')
+  }
+
+  const pulledHash = readFileSync(sourceHashPath, 'utf8').trim()
+  if (pulledHash !== expectedHash) {
+    throw new Error(
+      `circuit-artifacts is stale (SOURCE_HASH=${pulledHash}, expected ${expectedHash}). ` +
+        'Rebuild and re-push the required preset/committee pairs, then run: pnpm store:circuits push',
+    )
+  }
+}
+
+function validateReleaseArtifacts(dir: string): void {
+  for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
+    const missing = requiredArtifactMarkers(preset, committee).filter((marker) => !existsSync(join(dir, marker)))
+    if (missing.length > 0) {
+      throw new Error(`Expected circuit artifact missing: ${missing[0]}`)
+    }
+  }
+}
+
 async function push() {
   if (!existsSync(DIST)) {
     console.error('❌ No artifacts. Run: pnpm build:circuits')
@@ -179,7 +221,23 @@ async function pull() {
   console.log(`✅ Pulled to ${DIST}`)
 }
 
+async function verifyRelease() {
+  const expectedHash = argValue('--source-hash') ?? run('pnpm tsx scripts/build-circuits.ts hash')
+
+  try {
+    validateSourceHash(DIST, expectedHash)
+    validateRetainedStamps(DIST)
+    validateReleaseArtifacts(DIST)
+  } catch (error: any) {
+    console.error(`❌ ${error.message}`)
+    process.exit(1)
+  }
+
+  console.log(`✅ circuit-artifacts verified (SOURCE_HASH=${expectedHash}, required chain artifacts present)`)
+}
+
 const cmd = process.argv[2]
 if (cmd === 'push') push()
 else if (cmd === 'pull') pull()
-else console.log('Usage: circuit-artifacts.ts [push [--replace]|pull]')
+else if (cmd === 'verify-release') verifyRelease()
+else console.log('Usage: circuit-artifacts.ts [push [--replace]|pull|verify-release [--source-hash <hash>]]')
