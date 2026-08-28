@@ -17,6 +17,51 @@ const DIST = join(ROOT, 'dist', 'circuits')
 const METADATA_FILES = new Set(['.git', 'SOURCE_HASH', 'SHA256SUMS', 'checksums.json'])
 export const RELEASE_REQUIRED_PAIRS = SUPPORTED_PRESET_COMMITTEE_PAIRS.map(({ preset, committee }) => [preset, committee] as const)
 
+const REQUIRED_BASE_CIRCUITS = [
+  'dkg/e_sm_share_computation/e_sm_share_computation',
+  'dkg/pk/pk',
+  'dkg/share_decryption/share_decryption',
+  'dkg/share_encryption/share_encryption',
+  'dkg/sk_share_computation/sk_share_computation',
+  'threshold/decrypted_shares_aggregation/decrypted_shares_aggregation',
+  'threshold/pk_aggregation/pk_aggregation',
+  'threshold/pk_generation/pk_generation',
+  'threshold/share_decryption/share_decryption',
+  'threshold/user_data_encryption/user_data_encryption',
+  'threshold/user_data_encryption_ct0/user_data_encryption_ct0',
+  'threshold/user_data_encryption_ct1/user_data_encryption_ct1',
+] as const
+
+const REQUIRED_AGGREGATION_CIRCUITS = [
+  'recursive_aggregation/c2ab_fold/c2ab_fold',
+  'recursive_aggregation/c3_fold/c3_fold',
+  'recursive_aggregation/c3_fold_kernel/c3_fold_kernel',
+  'recursive_aggregation/c3ab_fold/c3ab_fold',
+  'recursive_aggregation/c4ab_fold/c4ab_fold',
+  'recursive_aggregation/c6_fold/c6_fold',
+  'recursive_aggregation/c6_fold_kernel/c6_fold_kernel',
+  'recursive_aggregation/decryption_aggregator/decryption_aggregator',
+  'recursive_aggregation/dkg_aggregator/dkg_aggregator',
+  'recursive_aggregation/node_fold/node_fold',
+  'recursive_aggregation/nodes_fold/nodes_fold',
+  'recursive_aggregation/nodes_fold_kernel/nodes_fold_kernel',
+] as const
+
+const REQUIRED_EVM_AGGREGATION_CIRCUITS = [
+  'recursive_aggregation/decryption_aggregator/decryption_aggregator',
+  'recursive_aggregation/dkg_aggregator/dkg_aggregator',
+] as const
+
+const REQUIRED_VARIANT_CIRCUITS = [
+  ...REQUIRED_BASE_CIRCUITS.map((circuit) => join('default', circuit)),
+  ...REQUIRED_AGGREGATION_CIRCUITS.map((circuit) => join('default', circuit)),
+  ...REQUIRED_BASE_CIRCUITS.map((circuit) => join('evm', circuit)),
+  ...REQUIRED_EVM_AGGREGATION_CIRCUITS.map((circuit) => join('evm', circuit)),
+  ...REQUIRED_BASE_CIRCUITS.map((circuit) => join('recursive', circuit)),
+] as const
+
+const REQUIRED_ARTIFACT_EXTENSIONS = ['.json', '.vk', '.vk_hash'] as const
+
 const run = (cmd: string, cwd = ROOT) => execSync(cmd, { encoding: 'utf-8', cwd, stdio: 'pipe' }).trim()
 const runV = (cmd: string, cwd = ROOT) => execSync(cmd, { cwd, stdio: 'inherit' })
 
@@ -78,12 +123,9 @@ function stampFiles(dir: string): string[] {
 }
 
 export function requiredArtifactMarkers(preset: string, committee: string): string[] {
-  return [
-    join(preset, committee, 'default/dkg/pk/pk.json'),
-    join(preset, committee, 'default/threshold/pk_aggregation/pk_aggregation.json'),
-    join(preset, committee, 'default/recursive_aggregation/dkg_aggregator/dkg_aggregator.json'),
-    join(preset, committee, 'default/recursive_aggregation/decryption_aggregator/decryption_aggregator.json'),
-  ]
+  return REQUIRED_VARIANT_CIRCUITS.flatMap((circuit) =>
+    REQUIRED_ARTIFACT_EXTENSIONS.map((extension) => join(preset, committee, `${circuit}${extension}`)),
+  )
 }
 
 type BuildStamp = {

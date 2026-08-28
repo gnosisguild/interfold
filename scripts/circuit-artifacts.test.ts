@@ -75,6 +75,20 @@ test('rejects a pair whose build stamp has a stale source hash', () => {
   }
 })
 
+test('rejects a stamp-valid pair with a missing verification-key artifact', () => {
+  for (const extension of ['.vk', '.vk_hash']) {
+    const dir = makeCompleteMatrix()
+    try {
+      const marker = requiredArtifactMarkers('secure-8192', 'small').find((artifact) => artifact.endsWith(extension))
+      assert.ok(marker)
+      unlinkSync(join(dir, marker))
+      assert.throws(() => validateReleaseArtifacts(dir, sourceHash), /Incomplete circuit artifacts/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+})
+
 test('rejects an extra build stamp under a supported pair', () => {
   const dir = makeCompleteMatrix()
   try {

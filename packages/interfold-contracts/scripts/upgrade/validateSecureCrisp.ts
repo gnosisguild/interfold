@@ -365,8 +365,13 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     PRODUCTION_BFV_CONFIG.t,
     "decryption router default threshold",
   );
-  equalValue(await pkRouter.routeCount(), 3n, "PK route count");
-  equalValue(await decryptionRouter.routeCount(), 3n, "decryption route count");
+  const expectedRouteCount = BigInt(MAINNET_BFV_CONFIGS.length);
+  equalValue(await pkRouter.routeCount(), expectedRouteCount, "PK route count");
+  equalValue(
+    await decryptionRouter.routeCount(),
+    expectedRouteCount,
+    "decryption route count",
+  );
 
   for (let index = 0; index < MAINNET_BFV_CONFIGS.length; index += 1) {
     const expected = MAINNET_BFV_CONFIGS[index];
