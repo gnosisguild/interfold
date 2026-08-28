@@ -47,9 +47,26 @@ so it always pins a testing version. Only a testing publish moves it; a producti
 `client/package.json` and `client/pnpm-lock.yaml` untouched, and refuses to run at all if something
 else has moved the pin onto a plain release version.
 
-Inside the monorepo the pin does not decide anything — `linkWorkspacePackages: true` links
-`packages/crisp-sdk` whatever the specifier says. It decides the standalone deploy, which installs
-with `ignore-workspace=true` (see `client/.npmrc`) and resolves from npm through its own lock file.
+The pin cannot be a `workspace:` range, because the same `client/package.json` also serves the
+standalone Vercel deploy, which installs with `ignore-workspace=true` (see `client/.npmrc`) and
+cannot resolve one. So it is an exact version, and that has a consequence worth stating plainly:
+
+**`linkWorkspacePackages: true` links `packages/crisp-sdk` only while its version still satisfies
+that exact pin.** Bump the workspace to `0.18.0` while the client pins `0.18.0-insecure.0` and pnpm
+stops linking and resolves the client from the registry instead. That is not a cosmetic difference.
+It re-resolves the whole client dependency tree (it pulled `zod@4` in place of `zod@3` across
+`viem`, `wagmi`, and `connectkit`), and it makes Vite pre-bundle the SDK as an ordinary dependency,
+which breaks the worker subpath:
+
+```
+The file does not exist at ".../client/node_modules/.vite/deps/
+workers/generateCircuitInputs.worker.js?worker_file&type=module"
+→ [generateProof] failed → the e2e vote never reaches the wallet signature
+```
+
+This is why a production publish restores the versions it bumped instead of committing them, and why
+`bumpsRepo` in `publish.ts` is tied to `tracksClient` rather than being independently selectable. A
+published version lives on npm; it does not need to live in the working tree.
 
 Moving the client to a production version is a deliberate change, made together with the redeploy
 that gives it `secure-8192` verifiers to prove against.
@@ -73,8 +90,13 @@ pnpm publish:packages --channel prod 0.19.0
 ```
 
 Add `--dry-run` to print the exact steps for a channel without changing anything. The script bumps
-all three packages, builds the SDK against the channel's preset, publishes in dependency order
-(`zk-inputs`, `sdk`, `contracts`), and commits — it never tags and never pushes.
+all three packages, builds the SDK against the channel's preset, and publishes in dependency order
+(`zk-inputs`, `sdk`, `contracts`). It never tags and never pushes.
+
+What it leaves behind differs by channel. Testing commits the bump. Production restores it, so the
+tree ends exactly as it started — see "The client stays on testing" above for why. Either way, a
+failure at any point restores the tree too: a half-bumped workspace is worse than no bump, because
+the next `pnpm install` silently detaches the client from it.
 
 Two gates run on the way:
 

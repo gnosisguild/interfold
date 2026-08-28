@@ -1,6 +1,6 @@
 {
   "name": "@crisp-e3/sdk",
-  "version": "0.18.0",
+  "version": "0.18.0-insecure.0",
   "type": "module",
   "author": {
     "name": "gnosisguild",
