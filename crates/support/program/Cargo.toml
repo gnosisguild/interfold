@@ -8,3 +8,4 @@ fhe = { workspace = true }
 fhe-traits = { workspace = true }
 e3-compute-provider = { workspace = true }
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
+sha2 = { workspace = true }

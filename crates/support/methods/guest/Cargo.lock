@@ -1187,6 +1187,7 @@ dependencies = [
  "e3-fhe-params",
  "fhe",
  "fhe-traits",
+ "sha2",
 ]
 
 [[package]]

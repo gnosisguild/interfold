@@ -1350,6 +1350,10 @@ commitment and every input is computed over — and matches the starter template
 `MyProgram.publishInput` inserts the commitment directly. Every E3 program exports `policy()` beside
 `fhe_processor`, so the guest and the dev runner need not know which program they are running.
 
+The published support image embeds the CRISP guest from `crates/support/program`. The reference app
+keeps the same guest in `examples/CRISP/program`. A CRISP policy change must update both copies and
+regenerate `crates/support/contracts/ImageID.sol` before the support image is published.
+
 `PublishedData` carries what the program published per input: the stored commitment, and opaque
 `metadata` the crate never interprets. CRISP puts its 20-byte slot address and the 5-byte parent
 index there, laid out as `abi.encodePacked(address, uint40)`.
