@@ -18,6 +18,9 @@ interface PackageJson {
   version: string
 }
 
+/** The packages this script versions and publishes, in workspace order. */
+const PACKAGE_DIRS = ['packages/crisp-sdk', 'packages/crisp-contracts', 'packages/crisp-zk-inputs']
+
 /**
  * Release channels, split by BFV preset.
  *
@@ -28,10 +31,25 @@ interface PackageJson {
  *
  * Testing versions carry a prerelease identifier so npm keeps them out of ordinary ranges: a
  * consumer on `^0.18.0` can never drift onto a testing build through an update.
+ *
+ * `tracksClient` says whether a channel moves the demo client onto the version it publishes. The
+ * deployed client runs against a testnet whose verifiers were deployed from insecure-512, so only
+ * the testing channel moves it. A prod publish that bumped the client would put secure-8192
+ * circuits in front of an insecure-512 deployment, and every ballot would fail on chain. Move the
+ * client to a prod version deliberately, in the same change as the redeploy it needs.
+ *
+ * `bumpsRepo` says whether a channel leaves its version behind in the working tree. It follows from
+ * `tracksClient` and cannot be chosen independently: the client pins an exact version, and pnpm
+ * links a workspace package only while its version still satisfies that pin. Leaving the workspace
+ * on a prod version therefore detaches the client from `packages/crisp-sdk` and silently resolves
+ * it from the registry instead — which changes what the whole client dependency tree resolves to,
+ * and makes Vite pre-bundle the SDK as an ordinary dependency, breaking its worker entry point. So
+ * a prod publish restores the versions it bumped and leaves the tree exactly as it found it. The
+ * release is recorded on npm, which is the only place a published version needs to exist.
  */
 const CHANNELS = {
-  testing: { tag: 'testing', preset: 'insecure-512', prerelease: true },
-  prod: { tag: 'latest', preset: 'secure-8192', prerelease: false },
+  testing: { tag: 'testing', preset: 'insecure-512', prerelease: true, tracksClient: true, bumpsRepo: true },
+  prod: { tag: 'latest', preset: 'secure-8192', prerelease: false, tracksClient: false, bumpsRepo: false },
 } as const
 
 type Channel = keyof typeof CHANNELS
@@ -59,6 +77,92 @@ class CRISPPublisher {
     this.channel = options.channel ?? 'testing'
   }
 
+  /** Whether this channel moves the demo client onto the version it publishes. See CHANNELS. */
+  private get tracksClient(): boolean {
+    return CHANNELS[this.channel].tracksClient
+  }
+
+  /**
+   * Every file the version bump writes to, captured before it runs.
+   *
+   * Restoring from memory rather than from git keeps this correct under `--skip-git`, where the
+   * working tree was never required to be clean and a checkout would discard unrelated edits.
+   */
+  private snapshot: Map<string, string> | null = null
+
+  private takeSnapshot(): void {
+    const paths = [
+      ...PACKAGE_DIRS.map((dir) => join(this.crispDir, dir, 'package.json')),
+      join(this.crispDir, 'client/package.json'),
+      join(this.crispDir, 'client/pnpm-lock.yaml'),
+      resolve(this.crispDir, '..', '..', 'pnpm-lock.yaml'),
+    ]
+
+    this.snapshot = new Map(paths.filter((path) => existsSync(path)).map((path) => [path, readFileSync(path, 'utf-8')]))
+  }
+
+  /**
+   * Put the bumped files back.
+   *
+   * The lock file is restored by content, not by re-running `pnpm install`. Once the workspace
+   * version has stopped satisfying the client pin, pnpm has already written a registry resolution,
+   * and it keeps that entry on later installs because it is still internally valid — so an install
+   * does not undo the detachment that the bump caused.
+   */
+  private restoreSnapshot(reason: string): void {
+    if (!this.snapshot) return
+
+    for (const [path, content] of this.snapshot) {
+      writeFileSync(path, content)
+    }
+
+    console.log(`\n↩️  Restored the working tree (${reason}).`)
+    console.log(`   Package versions are back at ${this.oldVersion ?? 'their previous value'}; npm keeps what was published.`)
+  }
+
+  /**
+   * The demo client stays on the testing channel, always.
+   *
+   * It is deployed against a testnet whose verifiers were deployed from insecure-512 circuits, so a
+   * secure-8192 SDK in front of it would make every ballot fail on chain. Only the testing channel
+   * moves the pin, and this refuses to publish at all when something else has moved it — a client
+   * on a plain release version is already wrong, and a publish would carry that wrong state
+   * forward.
+   *
+   * The pin is an exact version rather than the `testing` dist-tag: the client deploys from its own
+   * lock file (client/.npmrc, client/vercel.json), so the version has to be fixed at the point the
+   * lock file is written.
+   */
+  private assertClientOnTestingChannel(): void {
+    const pin = this.clientPin()
+
+    if (pin === null) {
+      console.warn('   ⚠️  Could not read the client pin on @crisp-e3/sdk; skipping the channel check')
+      return
+    }
+
+    // Testing versions are the prereleases. See validateVersion().
+    if (!pin.includes('-')) {
+      throw new Error(
+        `client/package.json pins @crisp-e3/sdk ${pin}, which is not a testing version. The client ` +
+          `runs against an insecure-512 deployment and must stay on the testing channel. Restore a ` +
+          `prerelease pin (for example ${pin}-insecure.0) before publishing.`,
+      )
+    }
+
+    console.log(`📌 Client pin: ${pin} (testing channel)`)
+  }
+
+  /** The version the demo client currently pins, for reporting. Null when it cannot be read. */
+  private clientPin(): string | null {
+    try {
+      const clientPackagePath = join(this.crispDir, 'client/package.json')
+      return JSON.parse(readFileSync(clientPackagePath, 'utf-8')).dependencies?.['@crisp-e3/sdk'] ?? null
+    } catch {
+      return null
+    }
+  }
+
   /**
    * Main entry point to bump versions and publish packages
    */
@@ -77,6 +181,9 @@ class CRISPPublisher {
       this.oldVersion = this.getCurrentVersion()
       console.log(`📌 Current version: ${this.oldVersion || 'unknown'}`)
 
+      // The client tracks the testing channel on every publish, whichever channel this one is.
+      this.assertClientOnTestingChannel()
+
       // Check for uncommitted changes
       if (!this.options.skipGit && !this.options.dryRun) {
         this.checkGitStatus()
@@ -84,55 +191,92 @@ class CRISPPublisher {
 
       // In dry-run mode, just show what would happen
       if (this.options.dryRun) {
+        const channel = CHANNELS[this.channel]
+        const packages = ['@crisp-e3/sdk', '@crisp-e3/contracts', '@crisp-e3/zk-inputs']
+
+        const steps: string[][] = [
+          ['Update package versions in:', ...packages],
+          ...(this.tracksClient ? [['Update @crisp-e3/sdk dependency in client/package.json']] : []),
+          ['Update pnpm-lock.yaml'],
+          [`Build packages against ${channel.preset}`],
+          [`Publish to npm under the "${this.options.tag || channel.tag}" tag:`, ...packages],
+          ...(this.tracksClient ? [['Update the standalone client/pnpm-lock.yaml']] : []),
+          ...(channel.bumpsRepo
+            ? this.options.skipGit
+              ? []
+              : [['Commit changes']]
+            : [['Restore the package versions and lock files, leaving the tree unchanged']]),
+        ]
+
         console.log('\n📋 Would perform the following actions:')
-        console.log('   1. Update package versions in:')
-        console.log('      - @crisp-e3/sdk')
-        console.log('      - @crisp-e3/contracts')
-        console.log('      - @crisp-e3/zk-inputs')
-        console.log('   2. Update @crisp-e3/sdk dependency in client/package.json')
-        console.log('   3. Update pnpm-lock.yaml')
-        console.log('   4. Build packages')
-        console.log('   5. Publish to npm:')
-        console.log('      - @crisp-e3/sdk')
-        console.log('      - @crisp-e3/contracts')
-        console.log('      - @crisp-e3/zk-inputs')
-        console.log('   6. Update the standalone client/pnpm-lock.yaml')
-        if (!this.options.skipGit) {
-          console.log('   7. Commit changes')
+        steps.forEach(([step, ...detail], index) => {
+          console.log(`   ${index + 1}. ${step}`)
+          detail.forEach((line) => console.log(`      - ${line}`))
+        })
+
+        if (!this.tracksClient) {
+          console.log(`\n   The client stays on ${this.clientPin() ?? 'its current pin'}; channel "${this.channel}" does not move it.`)
         }
+        if (!channel.bumpsRepo) {
+          console.log(`   Nothing is committed: the workspace must keep satisfying that pin, or the client stops linking to it.`)
+        }
+
         console.log('\n✅ Dry run complete. Run without --dry-run to perform these actions.')
         return
       }
 
+      // Everything the bump is about to touch, so it can be put back. See restoreSnapshot().
+      this.takeSnapshot()
+
       // Bump npm packages
       this.bumpNpmPackages()
 
-      // Update client dependency
-      this.updateClientDependency()
+      try {
+        // Update client dependency. Only the testing channel does this — see tracksClient().
+        if (this.tracksClient) {
+          this.updateClientDependency()
+        }
 
-      // Update lock files
-      this.updateLockFiles()
+        // Update lock files
+        this.updateLockFiles()
 
-      // Build packages
-      await this.buildPackages()
+        // Build packages
+        await this.buildPackages()
 
-      // Publish packages
-      await this.publishPackages()
+        // Publish packages
+        await this.publishPackages()
 
-      // Update the client lock file, which resolves the packages from npm
-      await this.updateClientLockFile()
+        // Update the client lock file, which resolves the packages from npm
+        if (this.tracksClient) {
+          await this.updateClientLockFile()
+        } else {
+          console.log(`\n↷ Channel "${this.channel}" leaves the client on its own pin (${this.clientPin() ?? 'unknown'}).`)
+        }
+      } catch (error) {
+        // A half-bumped tree is worse than no bump: the workspace no longer matches the client pin,
+        // so the next install quietly resolves the client from the registry.
+        this.restoreSnapshot('the publish failed')
+        throw error
+      }
 
-      // Git operations (just commit, no tagging)
-      if (!this.options.skipGit && !this.options.dryRun) {
-        this.performGitOperations()
+      if (CHANNELS[this.channel].bumpsRepo) {
+        // Git operations (just commit, no tagging)
+        if (!this.options.skipGit && !this.options.dryRun) {
+          this.performGitOperations()
+        }
+      } else {
+        this.restoreSnapshot(`channel "${this.channel}" does not bump the repository`)
       }
 
       console.log('\n✅ CRISP packages published successfully!')
       console.log('\n📋 Summary:')
       console.log(`   Previous version: ${this.oldVersion || 'unknown'}`)
       console.log(`   New version: ${this.newVersion}`)
+      console.log(
+        `   Channel: ${this.channel} (${CHANNELS[this.channel].preset}, npm tag ${this.options.tag || CHANNELS[this.channel].tag})`,
+      )
       console.log(`   Packages updated: ✓`)
-      console.log(`   Client dependency updated: ✓`)
+      console.log(`   Client dependency: ${this.tracksClient ? '✓ updated' : `↷ left on ${this.clientPin() ?? 'its own pin'}`}`)
       console.log(`   Packages built: ✓`)
       console.log(`   Packages published: ✓`)
 
@@ -429,9 +573,7 @@ class CRISPPublisher {
   private bumpNpmPackages(): void {
     console.log('\n📦 Bumping CRISP package versions...')
 
-    const packagesToBump = ['packages/crisp-sdk', 'packages/crisp-contracts', 'packages/crisp-zk-inputs']
-
-    for (const packagePath of packagesToBump) {
+    for (const packagePath of PACKAGE_DIRS) {
       const fullPath = join(this.crispDir, packagePath)
       const packageJsonPath = join(fullPath, 'package.json')
 
@@ -579,6 +721,15 @@ Channels:
   Testing versions must carry a prerelease identifier. npm keeps prereleases out of ordinary
   ranges, so a consumer on '^0.18.0' cannot drift onto a testing build through an update.
 
+  Only 'testing' moves the demo client. The deployed client runs against a testnet whose verifiers
+  came from insecure-512, so a prod publish leaves client/package.json and client/pnpm-lock.yaml
+  alone. Move the client to a prod version in the same change as the redeploy it needs.
+
+Prerequisite:
+  Both channels build from the artifacts that 'pnpm build:presets' archives under circuits/dist/,
+  which git does not track. Run it first when the circuits changed; the SDK build refuses stale or
+  missing artifacts (pnpm -C packages/crisp-sdk check:staged <preset>).
+
 Examples:
   # Publish to the testing channel (testnets, demos)
   tsx scripts/publish.ts --channel testing 0.18.0-insecure.0
@@ -596,11 +747,11 @@ The script will:
   1. Check for uncommitted changes
   2. Update versions in @crisp-e3/sdk, @crisp-e3/contracts, @crisp-e3/zk-inputs
   2b. Build the SDK against the channel's preset
-  3. Update @crisp-e3/sdk dependency in client/package.json
+  3. Update @crisp-e3/sdk dependency in client/package.json   (testing only)
   4. Update pnpm-lock.yaml
   5. Build packages
   6. Publish to npm in dependency order (zk-inputs, then sdk, then contracts)
-  7. Update the standalone client/pnpm-lock.yaml
+  7. Update the standalone client/pnpm-lock.yaml               (testing only)
   8. Commit changes (no tags)
 
 Note: Make sure you're logged in to npm (npm login) before publishing.

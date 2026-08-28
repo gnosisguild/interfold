@@ -619,34 +619,34 @@ signal.
 
 ## Indexer catch-up and the applied-block cursor
 
-`e3-indexer` can replay the logs it missed while it was not running. The machinery is **opt-in**:
-an indexer that never calls `configure_backfill` writes no cursor, replays nothing, and starts its
+`e3-indexer` can replay the logs it missed while it was not running. The machinery is **opt-in**: an
+indexer that never calls `configure_backfill` writes no cursor, replays nothing, and starts its
 subscription at the head, exactly as before the feature existed. That distinction is a safety
-property, not a convenience — the event handlers are not pure (`E3Requested` submits
-`setMerkleRoot` on chain and re-initialises the stored round), so replay must never be acquired by
-merely upgrading the crate.
+property, not a convenience — the event handlers are not pure (`E3Requested` submits `setMerkleRoot`
+on chain and re-initialises the stored round), so replay must never be acquired by merely upgrading
+the crate.
 
 `INDEXER_CURSOR_KEY` (`_indexer:cursor`) is a **best-effort watermark over RAW log application**,
 not a proof that every event below it was processed. Be precise about what it does and does not
 assert, because the read APIs built on it present its range as authoritative:
 
-- **It speaks for raw handlers only.** Typed handlers are spawned concurrently on the live path
-  and their errors are logged and dropped, so the cursor says nothing about them. Anything that
-  needs a typed handler to have run must check its own state, never the cursor.
+- **It speaks for raw handlers only.** Typed handlers are spawned concurrently on the live path and
+  their errors are logged and dropped, so the cursor says nothing about them. Anything that needs a
+  typed handler to have run must check its own state, never the cursor.
 - **It only advances once the catch-up has completed** for the current connection, and only while
   the listener is healthy. A cursor that moved while a gap beneath it was still unreplayed would
   seal that gap permanently, so a raw-handler failure clears the health flag synchronously and
   aborts the subscription.
 - **It only advances monotonically**, via `fetch_max`. Block handlers are spawned rather than
-  awaited, so headers can be applied out of order and a blind write could move the cursor
-  backwards. Note what this does NOT give you on its own: `fetch_max` orders the in-memory claim,
-  not the `store.insert` calls that follow it.
+  awaited, so headers can be applied out of order and a blind write could move the cursor backwards.
+  Note what this does NOT give you on its own: `fetch_max` orders the in-memory claim, not the
+  `store.insert` calls that follow it.
 - **It is capped by what the listener reports it has finished.** A header says the CHAIN reached a
   block, never that its logs were applied — those arrive on a separate subscription. The listener
-  publishes a `LiveProgress` (the block whose raw handlers are running, and a health flag cleared
-  on failure) and the block handler claims no higher than `applied_ceiling`. The `blockheight - 1`
-  hedge is kept, but it is only a hedge: without the ceiling, a raw handler that was merely SLOW
-  let headers march the cursor past a log still being written, and the restart then skipped it.
+  publishes a `LiveProgress` (the block whose raw handlers are running, and a health flag cleared on
+  failure) and the block handler claims no higher than `applied_ceiling`. The `blockheight - 1`
+  hedge is kept, but it is only a hedge: without the ceiling, a raw handler that was merely SLOW let
+  headers march the cursor past a log still being written, and the restart then skipped it.
 - **A backfill window advances it only after every handler in that window succeeded**, sequentially
   and in block order. `catch_up` propagates handler errors for exactly this reason, so a consumer's
   raw handler must return `Err` on a failed write rather than logging and continuing.
@@ -656,29 +656,29 @@ The catch-up runs **twice per connection**, and both passes are load-bearing:
 1. **Before subscribing.** Re-reads the head after each window and loops until it converges, so a
    backfill from a deployment block that runs for hours still ends level with the chain. Kept off
    the socket because holding a subscription open through a multi-hour replay is its own problem.
-2. **After subscribing**, gated on `LiveProgress::wait_subscribed`. Pass 1 can only ever converge
-   on a head read taken while nothing was subscribed, and the subscription comes up a moment
-   later — so blocks mined in between were in NEITHER path, and the header stream then advanced
-   the cursor straight past them. Silent, permanent, once per reconnect, and reported as covered.
-   Replaying from inside the subscription's lifetime is what makes the overlap real: that range
-   now arrives via the subscription, via this replay, or both.
+2. **After subscribing**, gated on `LiveProgress::wait_subscribed`. Pass 1 can only ever converge on
+   a head read taken while nothing was subscribed, and the subscription comes up a moment later — so
+   blocks mined in between were in NEITHER path, and the header stream then advanced the cursor
+   straight past them. Silent, permanent, once per reconnect, and reported as covered. Replaying
+   from inside the subscription's lifetime is what makes the overlap real: that range now arrives
+   via the subscription, via this replay, or both.
 
 `caught_up` is set by pass 2, never pass 1, so the cursor cannot advance while the handoff range is
 still outstanding.
 
-The cost is duplicate delivery, which is the design's standing assumption rather than a new
-hazard — handlers must tolerate seeing an event twice, and the CRISP log store's `append` is
-idempotent on `(block_number, log_index)` for exactly this reason. Note the asymmetry that makes
-this affordable: duplicates are absorbed by an idempotent write, whereas a gap is unrecoverable
-once the cursor passes it.
+The cost is duplicate delivery, which is the design's standing assumption rather than a new hazard —
+handlers must tolerate seeing an event twice, and the CRISP log store's `append` is idempotent on
+`(block_number, log_index)` for exactly this reason. Note the asymmetry that makes this affordable:
+duplicates are absorbed by an idempotent write, whereas a gap is unrecoverable once the cursor
+passes it.
 
 A backfill that keeps failing does not wedge the process: after several attempts the indexer
 subscribes anyway with the cursor left where it was, so live indexing resumes and the unreplayed
 range is retried later rather than being claimed as applied.
 
 Handlers registered on the block listener must capture only what they need — never the
-`Arc<IndexerContext>` itself. The context owns the block listener, so a handler holding the
-context forms a reference cycle and the indexer is never dropped.
+`Arc<IndexerContext>` itself. The context owns the block listener, so a handler holding the context
+forms a reference cycle and the indexer is never dropped.
 
 Consumers that build a queryable log index on top of the cursor (the CRISP server does) must also
 treat coverage records as claims that can go stale: the store has no delete, so a record outlives

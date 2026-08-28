@@ -344,5 +344,4 @@ export const getBlockAtTimestamp = async (serverUrl: string, timestamp: bigint):
  * @param serverUrl - The base URL of the CRISP server
  * @returns The JSON-RPC URL
  */
-export const chainRpcUrl = (serverUrl: string): string =>
-  `${serverUrl.replace(/\/+$/, '')}/${CRISP_SERVER_CHAIN_RPC_ENDPOINT}`
+export const chainRpcUrl = (serverUrl: string): string => `${serverUrl.replace(/\/+$/, '')}/${CRISP_SERVER_CHAIN_RPC_ENDPOINT}`

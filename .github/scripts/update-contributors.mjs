@@ -47,9 +47,7 @@ const api = async (url) => {
 const fetchContributors = async () => {
   const collected = []
   for (let page = 1; ; page++) {
-    const batch = await api(
-      `https://api.github.com/repos/${REPOSITORY}/contributors?per_page=100&page=${page}`,
-    )
+    const batch = await api(`https://api.github.com/repos/${REPOSITORY}/contributors?per_page=100&page=${page}`)
     collected.push(...batch)
     if (batch.length < 100) return collected
   }
@@ -66,12 +64,7 @@ const fetchDisplayName = async (login) => {
   }
 }
 
-const escapeHtml = (value) =>
-  value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+const escapeHtml = (value) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 const renderCell = ({ login, avatar_url, displayName }) =>
   [
@@ -93,18 +86,14 @@ const renderTable = (contributors) => {
   return ['<table>', '\t<tbody>', ...rows, '\t</tbody>', '</table>'].join('\n')
 }
 
-const contributors = (await fetchContributors()).filter(
-  (c) => c.type !== 'Bot' && !c.login.endsWith('[bot]'),
-)
+const contributors = (await fetchContributors()).filter((c) => c.type !== 'Bot' && !c.login.endsWith('[bot]'))
 
 if (contributors.length === 0) {
   console.error('Refusing to write an empty contributors table')
   process.exit(1)
 }
 
-const withNames = await Promise.all(
-  contributors.map(async (c) => ({ ...c, displayName: await fetchDisplayName(c.login) })),
-)
+const withNames = await Promise.all(contributors.map(async (c) => ({ ...c, displayName: await fetchDisplayName(c.login) })))
 
 const readme = readFileSync(README_PATH, 'utf8')
 const start = readme.indexOf(START)
@@ -116,12 +105,7 @@ if (start === -1 || end === -1 || end < start) {
   process.exit(1)
 }
 
-const updated =
-  readme.slice(0, start + START.length) +
-  '\n' +
-  renderTable(withNames) +
-  '\n' +
-  readme.slice(end)
+const updated = readme.slice(0, start + START.length) + '\n' + renderTable(withNames) + '\n' + readme.slice(end)
 
 if (updated === readme) {
   console.log(`No change (${withNames.length} contributors)`)
