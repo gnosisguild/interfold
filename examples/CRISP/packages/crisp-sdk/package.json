@@ -50,8 +50,9 @@
     "build:presets": "node ../../scripts/build-presets.mjs",
     "check:presets": "node ../../scripts/check-presets.mjs",
     "prepublishOnly": "pnpm check:presets",
-    "build:testing": "pnpm build:wasm && CRISP_PRESET=insecure-512 tsup",
-    "build:prod": "pnpm build:wasm && CRISP_PRESET=secure-8192 tsup"
+    "build:testing": "pnpm build:wasm && pnpm check:staged insecure-512 && CRISP_PRESET=insecure-512 tsup",
+    "build:prod": "pnpm build:wasm && pnpm check:staged secure-8192 && CRISP_PRESET=secure-8192 tsup",
+    "check:staged": "node ../../scripts/check-staged-preset.mjs"
   },
   "publishConfig": {
     "access": "public"

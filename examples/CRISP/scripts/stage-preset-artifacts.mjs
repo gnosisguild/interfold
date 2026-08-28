@@ -18,6 +18,8 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { circuitSourcesDigest } from './circuit-sources.mjs'
+
 const CRISP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(CRISP, '..', '..')
 
@@ -74,5 +76,10 @@ for (const { name, from } of ARTIFACTS) {
   staged.push({ name, degree })
 }
 
-writeFileSync(join(outDir, 'preset.json'), `${JSON.stringify({ preset, circuits: staged.map((s) => s.name) }, null, 2)}\n`)
+// The digest of the sources these artifacts were compiled from. check-staged-preset.mjs
+// recomputes it, so a later channel build cannot use an archive the circuits have moved past.
+const { digest, fileCount } = circuitSourcesDigest()
+
+const manifest = { preset, circuits: staged.map((s) => s.name), sources: { digest, fileCount } }
+writeFileSync(join(outDir, 'preset.json'), `${JSON.stringify(manifest, null, 2)}\n`)
 console.log(`✓ staged ${staged.length} artifact(s) for ${preset}: ${staged.map((s) => s.name).join(', ')}`)

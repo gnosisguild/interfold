@@ -36,6 +36,8 @@
     "test:sdk:core-and-ballot-proofs": "pnpm -C packages/crisp-sdk test:core-and-ballot-proofs",
     "test:sdk:mask-proofs": "pnpm -C packages/crisp-sdk test:mask-proofs",
     "build:sdk": "pnpm -C packages/crisp-sdk build",
+    "build:presets": "pnpm -C packages/crisp-sdk build:presets",
+    "check:staged": "pnpm -C packages/crisp-sdk check:staged",
     "report": "playwright show-report",
     "publish:packages": "tsx scripts/publish.ts",
     "setup:testnet": "bash ./scripts/setup_testnet.sh"
