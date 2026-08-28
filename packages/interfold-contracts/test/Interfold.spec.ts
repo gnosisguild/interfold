@@ -543,16 +543,17 @@ describe("Interfold", function () {
       const { interfold, ciphernodeRegistryContract, request, usdcToken } =
         await loadFixture(setup);
       const sortitionWindow = time.duration.days(1);
-      const now = await time.latest();
-      const impossibleRequest = {
-        ...request,
-        inputWindow: [now + 10, now + 20] as [number, number],
-      };
 
       await ciphernodeRegistryContract.setSortitionSubmissionWindow(
         sortitionWindow,
       );
       await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
+      const requestAt = BigInt((await time.latest()) + 1);
+      const impossibleRequest = {
+        ...request,
+        inputWindow: [requestAt, requestAt + 10n] as [bigint, bigint],
+      };
+      await time.setNextBlockTimestamp(requestAt);
       await interfold.request(impossibleRequest);
       const e3Id = uint256ControllerPrefix(await interfold.getAddress());
       expect(await interfold.nexte3Id()).to.equal(e3Id + 1n);
@@ -647,15 +648,17 @@ describe("Interfold", function () {
         operator3,
       } = await loadFixture(setup);
       const e3Id = firstE3Id;
-
-      await makeRequest(interfold, usdcToken, {
-        committeeSize: request.committeeSize,
-        inputWindow: request.inputWindow,
-        e3Program: request.e3Program,
-        paramSet: request.paramSet,
-        computeProviderParams: request.computeProviderParams,
-        customParams: request.customParams,
-      });
+      await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
+      const requestAt = BigInt((await time.latest()) + 1);
+      const freshRequest = {
+        ...request,
+        inputWindow: [requestAt, requestAt + BigInt(inputWindowDuration)] as [
+          bigint,
+          bigint,
+        ],
+      };
+      await time.setNextBlockTimestamp(requestAt);
+      await interfold.request(freshRequest);
 
       await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
         operator1,
