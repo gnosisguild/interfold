@@ -292,7 +292,11 @@ async function connectWalletWithRetry(page: Page, maxAttempts = 3) {
   }
 }
 
-test('CRISP smoke test', async ({ context, page, metamaskPage, extensionId }) => {
+test('CRISP smoke test', async ({ context, metamaskPage, extensionId }) => {
+  // The persistent browser's first page belongs to MetaMask. Create a separate
+  // page so extension navigation cannot replace the CRISP application under test.
+  const page = await context.newPage()
+
   page.on('console', (msg: ConsoleMessage) => {
     console.log(msg.text())
   })
