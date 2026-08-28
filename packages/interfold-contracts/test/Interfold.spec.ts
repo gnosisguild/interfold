@@ -579,22 +579,24 @@ describe("Interfold", function () {
     });
     it("instantiates a new E3", async function () {
       const { interfold, request, usdcToken } = await loadFixture(setup);
-
-      await makeRequest(interfold, usdcToken, {
-        committeeSize: request.committeeSize,
-        inputWindow: request.inputWindow,
-        e3Program: request.e3Program,
-        paramSet: request.paramSet,
-        computeProviderParams: request.computeProviderParams,
-        customParams: request.customParams,
-      });
+      await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
+      const requestAt = BigInt((await time.latest()) + 1);
+      const freshRequest = {
+        ...request,
+        inputWindow: [requestAt, requestAt + BigInt(inputWindowDuration)] as [
+          bigint,
+          bigint,
+        ],
+      };
+      await time.setNextBlockTimestamp(requestAt);
+      await interfold.request(freshRequest);
 
       const e3 = await interfold.getE3(firstE3Id);
       const block = await ethers.provider.getBlock("latest").catch((e) => e);
 
       expect(e3.committeeSize).to.equal(request.committeeSize);
-      expect(e3.inputWindow[0]).to.equal(request.inputWindow[0]);
-      expect(e3.inputWindow[1]).to.equal(request.inputWindow[1]);
+      expect(e3.inputWindow[0]).to.equal(freshRequest.inputWindow[0]);
+      expect(e3.inputWindow[1]).to.equal(freshRequest.inputWindow[1]);
       expect(e3.e3Program).to.equal(request.e3Program);
       // H-26: `requestBlock` now stores `block.timestamp` (a stable EIP-6372
       // clock) instead of `block.number`, so the snapshot agrees with the
@@ -610,14 +612,17 @@ describe("Interfold", function () {
     });
     it("emits E3Requested event", async function () {
       const { interfold, request, usdcToken } = await loadFixture(setup);
-      const tx = await makeRequest(interfold, usdcToken, {
-        committeeSize: request.committeeSize,
-        inputWindow: request.inputWindow,
-        e3Program: request.e3Program,
-        paramSet: request.paramSet,
-        computeProviderParams: request.computeProviderParams,
-        customParams: request.customParams,
-      });
+      await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
+      const requestAt = BigInt((await time.latest()) + 1);
+      const freshRequest = {
+        ...request,
+        inputWindow: [requestAt, requestAt + BigInt(inputWindowDuration)] as [
+          bigint,
+          bigint,
+        ],
+      };
+      await time.setNextBlockTimestamp(requestAt);
+      const tx = await interfold.request(freshRequest);
       const e3 = await interfold.getE3(firstE3Id);
 
       await expect(tx)
