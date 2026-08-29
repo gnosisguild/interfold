@@ -5,6 +5,13 @@ concurrency:
   cancel-in-progress: true
 
 on:
+  workflow_call:
+    inputs:
+      release_candidate:
+        description: Run every CI job for the exact release candidate.
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
   pull_request:
     branches:
@@ -54,6 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        if: ${{ !inputs.release_candidate }}
         id: filter
         with:
           # Required for the '!' exclusions below. The default 'some' quantifier
@@ -124,7 +132,7 @@ jobs:
           INTEGRATION="${{ steps.filter.outputs.integration_tests }}"
           DOCKER="${{ steps.filter.outputs.docker }}"
           CI="${{ steps.filter.outputs.ci }}"
-          FORCE="${{ github.event_name == 'workflow_dispatch' }}"
+          FORCE="${{ github.event_name == 'workflow_dispatch' || inputs.release_candidate }}"
 
           any() { for v in "$@"; do [ "$v" = "true" ] && echo "true" && return; done; echo "false"; }
 
@@ -156,6 +164,9 @@ jobs:
           echo "integration_prebuild=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI)" >> $GITHUB_OUTPUT
           echo "zk_prover_integration=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "build_interfold_cli=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $TEMPLATES $CRISP $SDK $CI)" >> $GITHUB_OUTPUT
+
+      - name: Check release promotion safeguards
+        run: node --test scripts/release.test.mjs
 
   rust_unit_tests:
     needs: [detect_changes]

@@ -312,104 +312,55 @@ sequenceDiagram
 
 ## 🚀 Release Process
 
-### Overview
-
-The Interfold uses a unified versioning strategy where all packages (Rust crates and npm packages)
-share the same version number. Releases are triggered by git tags and follow semantic versioning.
-
 ### Quick Release
 
 ```bash
-# One command to release! 🎉
+# On a release branch: update versions, commit, and push the branch.
 pnpm bump:versions 1.0.0
 
-# This automatically:
-# - Bumps all versions
-# - Generates changelog
-# - Commits changes
-# - Creates tag
-# - Pushes to GitHub
-# - Triggers release workflow
+# Open a pull request. Wait for CI, then merge it.
+
+# On an updated and clean main branch: create the release tag.
+git checkout main
+git pull --ff-only
+pnpm release:tag 1.0.0
 ```
 
-### Detailed Release Workflow
+`bump:versions` never creates a release tag. `release:tag` accepts only the exact `origin/main`
+commit and starts the release workflow.
 
-#### 1. Development Phase
+### Release Order
 
-Developers work on features and fixes, committing with
-[conventional commits](https://www.conventionalcommits.org/):
+1. Create a release branch from current `main`.
+2. Run `pnpm bump:versions X.Y.Z`.
+3. Open a pull request and wait for all required CI jobs.
+4. Merge the release pull request.
+5. Update local `main` with `git pull --ff-only`.
+6. Run `pnpm release:tag X.Y.Z`.
+7. Wait for the Release workflow.
 
-```bash
-git commit -m "feat: add new encryption module"
-git commit -m "fix: resolve memory leak in SDK"
-git commit -m "docs: update API documentation"
-git commit -m "BREAKING CHANGE: redesign configuration API"
-```
-
-#### 2. Release Execution
-
-When ready to release, maintainers run a single command:
+For a pre-release, use a semantic pre-release version:
 
 ```bash
-# For stable release
-pnpm bump:versions 1.0.0
-
-# For pre-release
 pnpm bump:versions 1.0.0-beta.1
+pnpm release:tag 1.0.0-beta.1
 ```
 
-This command automatically:
+### What the Release Workflow Requires
 
-- ✅ Validates working directory is clean
-- ✅ Updates version in `Cargo.toml` (workspace version)
-- ✅ Updates version in all npm `package.json` files
-- ✅ Updates lock files (`Cargo.lock`, `pnpm-lock.yaml`)
-- ✅ Generates/updates `CHANGELOG.md` from commit history
-- ✅ Commits changes: `chore(release): bump version to X.Y.Z`
-- ✅ Creates annotated tag: `vX.Y.Z`
-- ✅ Pushes commits and tag to GitHub
-- ✅ **Triggers automated release workflow**
+The tag starts a new full CI run for the exact tagged commit. Path filters are disabled for this
+run. Publication cannot start until these checks succeed:
 
-Please ensure you are in release branch before running the command. For example,
-`git checkout -b chore/release-v1.0.0-beta.1`.
+- The tag points to a commit in `origin/main`.
+- Every regular CI job passes, including CRISP and recovery tests.
+- Linux and Apple Silicon binaries build.
+- The Nix package builds without the private Cachix cache.
+- The `circuit-artifacts` branch contains the complete source-matched release matrix.
 
-#### 3. Alternative: Manual Review Before Push
-
-If you prefer to review changes before pushing:
-
-```bash
-# Prepare release locally (no push)
-pnpm bump:versions --no-push 1.0.0
-
-# Review the changes
-git diff HEAD~1
-cat CHANGELOG.md
-
-# If everything looks good, push
-git push && git push --tags
-```
-
-#### 4. Automated Release Pipeline
-
-Once the tag is pushed, GitHub Actions automatically:
-
-1. **Validates** version consistency across all packages
-2. **Builds** binaries for all platforms:
-   - Linux (x86_64)
-   - macOS (x86_64, aarch64)
-3. **Runs** all tests
-4. **Publishes** packages:
-   - All versions (stable and pre-release):
-     - ✅ Publishes to crates.io
-     - ✅ Publishes to npm
-   - Tag differences:
-     - Stable (`v1.0.0`): npm `latest` tag, updates `stable` git tag
-     - Pre-release (`v1.0.0-beta.1`): npm `next` tag, no `stable` tag update
-5. **Creates** GitHub Release with:
-   - Binary downloads for all platforms
-   - Release notes from CHANGELOG.md
-   - SHA256 checksums
-   - Installation instructions
+After qualification, the workflow publishes versioned container images and npm packages. A stable
+release also builds the DAppNode package. It then promotes the `latest` container aliases and the
+`stable` Git tag. The GitHub release is the final step. Rust workspace crates are not published to
+crates.io because the workspace uses unreleased git dependencies.
 
 ## 🏷️ Version Strategy
 
@@ -479,10 +430,11 @@ For maintainers doing a release:
 - [ ] Ensure all tests pass on `main`
 - [ ] Review commits since last release for proper conventional format
 - [ ] Decide version number (major/minor/patch)
-- [ ] Run: `pnpm bump:versions X.Y.Z`
-- [ ] Monitor GitHub Actions for successful deployment
-- [ ] Verify packages on [npm](https://www.npmjs.com/org/interfold) and
-      [crates.io](https://crates.io/search?q=interfold)
+- [ ] Create a release branch and run `pnpm bump:versions X.Y.Z`
+- [ ] Merge the release pull request only after CI passes
+- [ ] Update local `main` and run `pnpm release:tag X.Y.Z`
+- [ ] Confirm the Release workflow passes before deployment
+- [ ] Verify packages on [npm](https://www.npmjs.com/org/interfold)
 - [ ] Check GitHub release page for binaries and changelog
 - [ ] Announce release (Discord/Twitter/etc)
 
@@ -491,10 +443,10 @@ For maintainers doing a release:
 The `bump:versions` script supports several options:
 
 ```bash
-# Full automatic release (default)
+# Prepare, commit, and push the release branch
 pnpm bump:versions 1.0.0
 
-# Local only - don't push
+# Prepare and commit without pushing the branch
 pnpm bump:versions --no-push 1.0.0
 
 # Skip git operations entirely
@@ -505,6 +457,9 @@ pnpm bump:versions --dry-run 1.0.0
 
 # Show help
 pnpm bump:versions --help
+
+# Tag the merged release from an updated main branch
+pnpm release:tag 1.0.0
 ```
 
 ## 🔄 Rollback Procedure
@@ -517,13 +472,7 @@ If a release has issues:
    npm deprecate @interfold/sdk@1.0.0 "Critical bug, use 1.0.1"
    ```
 
-2. **Yank from crates.io** (if critical):
-
-   ```bash
-   cargo yank --version 1.0.0 interfold
-   ```
-
-3. **Fix and release patch**:
+2. **Fix and release a patch**:
    ```bash
    pnpm bump:versions 1.0.1
    ```

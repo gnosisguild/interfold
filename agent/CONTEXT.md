@@ -67,7 +67,8 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 | Generate Solidity verifiers | `pnpm generate:verifiers [--check\|--write]`                                                                                                       |
 | Circuit artifact cache      | `pnpm store:circuits push\|pull` (orphan branch `circuit-artifacts`)                                                                               |
 | Consistency checks          | `pnpm check:committee` · `check:docs` · `check:addresses` · `check:invariants` · `check:license` · `check:verifiers` · `check:pnpm` · `check:size` |
-| Release bump                | `pnpm bump:versions X.Y.Z`                                                                                                                         |
+| Prepare release branch      | `pnpm bump:versions X.Y.Z`                                                                                                                         |
+| Tag merged release          | `pnpm release:tag X.Y.Z` from updated `main`                                                                                                       |
 
 ## Chain-Specific BFV Config
 

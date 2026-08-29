@@ -55,6 +55,7 @@ class VersionBumper {
 
       // Check for uncommitted changes
       if (!this.options.skipGit && !this.options.dryRun) {
+        this.checkReleaseBranch()
         this.checkGitStatus()
       }
 
@@ -79,9 +80,8 @@ class VersionBumper {
         console.log('   6. Generate/update CHANGELOG.md')
         if (!this.options.skipGit) {
           console.log('   7. Commit changes')
-          console.log(`   8. Create tag: v${this.newVersion}`)
           if (!this.options.skipPush) {
-            console.log('   9. Push commits and tag to origin')
+            console.log('   8. Push the release branch to origin')
           }
         }
         console.log('\n✅ Dry run complete. Run without --dry-run to perform these actions.')
@@ -123,16 +123,20 @@ class VersionBumper {
 
       if (!this.options.skipGit && !this.options.dryRun) {
         console.log(`   Git commit: ✓`)
-        console.log(`   Git tag: v${this.newVersion} ✓`)
 
         if (!this.options.skipPush) {
-          console.log(`   Git push: ✓`)
-          console.log(`   Tag push: ✓`)
-          console.log('\n🎉 Release tag pushed! The release workflow will start automatically.')
+          console.log(`   Release branch push: ✓`)
+          console.log('\n💡 Next steps:')
+          console.log('   1. Open the release pull request and wait for CI')
+          console.log('   2. Merge the pull request into main')
+          console.log('   3. Update local main')
+          console.log(`   4. Run: pnpm release:tag ${this.newVersion}`)
         } else {
           console.log('\n💡 Next steps:')
-          console.log('   Push changes and tag to trigger release:')
-          console.log('   git push && git push --tags')
+          console.log('   1. Push this release branch and open a pull request')
+          console.log('   2. Wait for CI and merge it into main')
+          console.log('   3. Update local main')
+          console.log(`   4. Run: pnpm release:tag ${this.newVersion}`)
         }
       } else if (this.options.dryRun) {
         console.log('\n💡 Dry run complete. To perform actual bump, run without --dry-run')
@@ -140,12 +144,27 @@ class VersionBumper {
         console.log('\n💡 Next steps:')
         console.log('   1. Review the changes and CHANGELOG.md')
         console.log('   2. Commit: git add . && git commit -m "chore(release): bump version to ' + this.newVersion + '"')
-        console.log('   3. Tag: git tag v' + this.newVersion)
-        console.log('   4. Push: git push && git push --tags')
+        console.log('   3. Push the release branch and merge it after CI passes')
+        console.log('   4. Update local main')
+        console.log(`   5. Run: pnpm release:tag ${this.newVersion}`)
       }
     } catch (error) {
       console.error('❌ Error bumping versions:', error)
       process.exit(1)
+    }
+  }
+
+  /**
+   * Require a reviewable branch before the script creates its release commit.
+   */
+  private checkReleaseBranch(): void {
+    const currentBranch = execSync('git symbolic-ref --quiet --short HEAD', {
+      cwd: this.rootDir,
+      encoding: 'utf-8',
+    }).trim()
+
+    if (!currentBranch || currentBranch === 'main' || currentBranch === 'dev') {
+      throw new Error(`Run the version bump on a release branch, not ${currentBranch || 'a detached commit'}`)
     }
   }
 
@@ -178,7 +197,7 @@ class VersionBumper {
   }
 
   /**
-   * Perform git operations (add, commit, tag, push)
+   * Commit the release preparation and optionally push its branch.
    */
   private performGitOperations(): void {
     console.log('\n📝 Performing git operations...')
@@ -222,21 +241,8 @@ class VersionBumper {
       })
       console.log(`   ✓ Committed with message: "chore(release): bump version to ${this.newVersion}"`)
 
-      // Create tag
-      const tagName = `v${this.newVersion}`
-      console.log(`   Creating tag ${tagName}...`)
-
-      // Check if it's a pre-release
-      const isPrerelease = this.newVersion.includes('-')
-      const tagMessage = isPrerelease ? `Pre-release ${this.newVersion}` : `Release ${this.newVersion}`
-
-      execSync(`git tag -a ${tagName} -m "${tagMessage}"`, {
-        cwd: this.rootDir,
-        stdio: 'pipe',
-      })
-      console.log(`   ✓ Created tag: ${tagName}`)
-
-      // Push changes and tag (unless --no-push was specified)
+      // Push the release branch unless --no-push was specified. A separate command creates the
+      // release tag from updated main after this commit passes pull-request CI and is merged.
       if (!this.options.skipPush) {
         console.log('   Pushing to remote...')
 
@@ -251,19 +257,9 @@ class VersionBumper {
           stdio: 'pipe',
         })
         console.log(`   ✓ Pushed commits to ${currentBranch}`)
-
-        // Push tag
-        execSync(`git push origin ${tagName}`, {
-          cwd: this.rootDir,
-          stdio: 'pipe',
-        })
-        console.log(`   ✓ Pushed tag ${tagName}`)
       }
     } catch (error: any) {
       console.error('❌ Error during git operations:', error.message)
-      console.error('\n💡 If the tag already exists, delete it first:')
-      console.error(`   git tag -d v${this.newVersion}`)
-      console.error(`   git push --delete origin v${this.newVersion}`)
       throw error
     }
   }
@@ -712,25 +708,25 @@ function showHelp() {
 Usage: pnpm bump:versions [options] <version>
 
 Version Bump Script for Interfold Monorepo
-Bumps all versions, generates changelog, commits, tags, and pushes to trigger release.
+Bumps all versions, generates the changelog, commits, and pushes the release branch.
 
 Arguments:
   version             The new version (e.g., 1.0.0, 1.0.0-beta.1)
 
 Options:
-  --skip-git          Skip all git operations (add, commit, tag, push)
-  --no-push           Perform git operations but don't push (local only)
+  --skip-git          Skip all git operations (add, commit, push)
+  --no-push           Commit locally but do not push the release branch
   --dry-run           Show what would be done without making changes
   --help, -h          Show this help message
 
 Examples:
-  # Full release (bump, commit, tag, push)
+  # Prepare and push a release branch
   tsx scripts/bump-versions.ts 1.0.0
 
   # Pre-release
   tsx scripts/bump-versions.ts 1.0.0-beta.1
 
-  # Local only (don't push)
+  # Prepare and commit locally
   tsx scripts/bump-versions.ts --no-push 1.0.0
 
   # Manual git operations
@@ -745,10 +741,11 @@ The script will:
   3. Update lock files (Cargo.lock, pnpm-lock.yaml)
   4. Generate/update CHANGELOG.md
   5. Commit changes with message: "chore(release): bump version to X.Y.Z"
-  6. Create annotated tag: vX.Y.Z
-  7. Push commits and tag to trigger the release workflow
+  6. Push the release branch
 
-Note: Pushing the tag will automatically trigger the GitHub Actions release workflow.
+After CI passes and the release pull request is merged, update main and run
+\`pnpm release:tag X.Y.Z\`. That command tags only the protected main commit. The release workflow
+runs the complete CI suite for the tagged commit before it publishes any release output.
 `)
 }
 

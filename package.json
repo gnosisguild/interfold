@@ -14,6 +14,8 @@
   },
   "scripts": {
     "bump:versions": "tsx scripts/bump-versions.ts",
+    "release:tag": "node scripts/release.mjs tag",
+    "test:release": "node --test scripts/release.test.mjs",
     "build:circuits": "tsx scripts/build-circuits.ts",
     "generate:verifiers": "tsx scripts/generate-verifiers.ts --circuits dkg_aggregator,decryption_aggregator",
     "store:circuits": "tsx scripts/circuit-artifacts.ts",

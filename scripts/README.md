@@ -9,13 +9,13 @@ This directory contains utility scripts for the Interfold project.
 ### Usage
 
 ```bash
-# Full release (bump, commit, tag, and push)
+# Prepare, commit, and push a release branch
 pnpm bump:versions 1.0.0
 
 # Pre-release version
 pnpm bump:versions 1.0.0-beta.1
 
-# Local only (don't push to remote)
+# Commit locally without pushing the branch
 pnpm bump:versions --no-push 1.0.0
 
 # Manual git operations (just bump versions)
@@ -27,7 +27,7 @@ pnpm bump:versions --dry-run 1.0.0
 
 ### What it does
 
-**By default, the script performs a complete release:**
+**By default, the script prepares a release pull request:**
 
 1. **Validates** your working directory is clean (no uncommitted changes)
 2. **Updates versions** across the entire monorepo:
@@ -39,24 +39,22 @@ pnpm bump:versions --dry-run 1.0.0
    - `pnpm-lock.yaml` for npm dependencies
 4. **Generates changelog** from conventional commits (uses `CHANGELOG.md`)
 5. **Commits** all changes with message: `chore(release): bump version to X.Y.Z`
-6. **Creates** annotated git tag: `vX.Y.Z`
-7. **Pushes** commits and tag to GitHub
-8. **Triggers** the automated release workflow
+6. **Pushes** the release branch to GitHub
 
 ### Examples
 
 ```bash
-# One-command release (recommended)
+# Prepare and push the release branch
 pnpm bump:versions 1.2.3
-# This bumps everything, commits, tags, and pushes - triggering the full release!
+# Open a pull request after this command finishes.
 
 # Pre-release for testing
 pnpm bump:versions 1.2.3-beta.1
-# Automatically detected as pre-release, published to npm with 'next' tag
+# The later release workflow publishes this version with the npm 'next' tag.
 
-# Prepare release locally first
+# Prepare and commit locally first
 pnpm bump:versions --no-push 1.2.3
-# Does everything except push - review first, then: git push && git push --tags
+# Review the commit, then push the release branch.
 
 # Just bump versions (old behavior)
 pnpm bump:versions --skip-git 1.2.3
@@ -65,25 +63,40 @@ pnpm bump:versions --skip-git 1.2.3
 
 ### Options
 
-- `--skip-git` - Skip all git operations (add, commit, tag, push)
-- `--no-push` - Perform git operations locally but don't push
+- `--skip-git` - Skip all git operations (add, commit, push)
+- `--no-push` - Commit locally but do not push the release branch
 - `--dry-run` - Preview what would happen without making any changes
 - `--help` - Show help message
 
 ### Prerequisites
 
+- A release branch. The script rejects `main`, `dev`, and detached commits.
 - Clean working directory (no uncommitted changes)
 - Conventional commits for changelog generation
 - Valid semver version format
 
 ### After Running
 
-Once you run `pnpm bump:versions X.Y.Z` and the tag is pushed, GitHub Actions automatically:
+After the release pull request passes CI and is merged, update `main` and create the tag:
 
-- Builds binaries for all platforms (Linux, macOS)
-- Publishes to npm (with `latest` or `next` tag)
-- Publishes to crates.io
-- Creates GitHub release with changelog and binaries
+```bash
+git checkout main
+git pull --ff-only
+pnpm release:tag X.Y.Z
+```
+
+The tag workflow then:
+
+- Confirms that the tag belongs to `origin/main`.
+- Runs every CI job for the exact tagged commit.
+- Requires the Nix build, binaries, and source-matched circuit archive.
+- Publishes versioned containers and npm packages.
+- Creates the GitHub release only after every required publication succeeds.
+
+Rust workspace crates are not published because they use unreleased git dependencies.
+
+The workflow calls the small commands in `release.mjs`. The implementation is split by purpose in
+`scripts/release/`. Run `pnpm test:release` to test tag ancestry, npm retries, assets, and gates.
 
 ## License Header Checker
 

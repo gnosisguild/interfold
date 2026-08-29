@@ -1,9 +1,14 @@
 name: Release
 
 permissions:
+  actions: write
   id-token: write
   contents: write
   packages: write
+
+concurrency:
+  group: release-promotion-${{ github.repository }}
+  cancel-in-progress: false
 
 on:
   push:
@@ -26,103 +31,32 @@ jobs:
     name: Validate Tag and Prepare Release
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.get_version.outputs.version }}
-      is_prerelease: ${{ steps.get_version.outputs.is_prerelease }}
+      version: ${{ steps.release.outputs.version }}
+      is_prerelease: ${{ steps.release.outputs.is_prerelease }}
+      npm_tag: ${{ steps.release.outputs.npm_tag }}
+      candidate_sha: ${{ steps.release.outputs.candidate_sha }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Get version from tag
-        id: get_version
-        run: |
-          # Extract version from tag (remove 'v' prefix)
-          VERSION=${GITHUB_REF_NAME#v}
+      - name: Validate release candidate
+        id: release
+        run: node scripts/release.mjs prepare
 
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-          # Check if it's a pre-release (contains -, like beta, alpha, rc, etc.)
-          if [[ "$VERSION" =~ - ]]; then
-            echo "is_prerelease=true" >> $GITHUB_OUTPUT
-            echo "📦 Pre-release version: $VERSION"
-          else
-            echo "is_prerelease=false" >> $GITHUB_OUTPUT
-            echo "📦 Release version: $VERSION"
-          fi
-
-      - name: Verify versions match
-        run: |
-          VERSION=${{ steps.get_version.outputs.version }}
-
-          # Check Cargo.toml workspace version
-          CARGO_VERSION=$(grep -E '^\[workspace\.package\]' -A 5 Cargo.toml | grep '^version' | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          if [ "$CARGO_VERSION" != "$VERSION" ]; then
-            echo "❌ Cargo.toml version ($CARGO_VERSION) doesn't match tag ($VERSION)"
-            exit 1
-          fi
-
-          # Check root package.json if it exists
-          if [ -f package.json ]; then
-            NPM_VERSION=$(node -p "require('./package.json').version")
-            if [ "$NPM_VERSION" != "$VERSION" ]; then
-              echo "❌ package.json version ($NPM_VERSION) doesn't match tag ($VERSION)"
-              exit 1
-            fi
-          fi
-
-          # The ciphernode downloads `circuits-{version}.tar.gz` from the release whose tag has
-          # that same version. Refuse to publish a binary that points at an older circuit archive.
-          CIRCUITS_VERSION=$(node -p "require('./crates/zk-prover/versions.json').required_circuits_version")
-          if [ "$CIRCUITS_VERSION" != "$VERSION" ]; then
-            echo "❌ required circuit version ($CIRCUITS_VERSION) doesn't match tag ($VERSION)"
-            exit 1
-          fi
-
-          if [[ "${{ steps.get_version.outputs.is_prerelease }}" == "false" ]]; then
-            DAPPNODE_VERSION=$(node -p "require('./dappnode/dappnode_package.json').version")
-            DAPPNODE_UPSTREAM_VERSION=$(node -p "require('./dappnode/dappnode_package.json').upstreamVersion")
-            DAPPNODE_NPM_VERSION=$(node -p "require('./dappnode/package.json').version")
-            DAPPNODE_LOCK_VERSION=$(node -p "require('./dappnode/package-lock.json').version")
-            DAPPNODE_LOCK_PACKAGE_VERSION=$(node -p "require('./dappnode/package-lock.json').packages[''].version")
-            if [ "$DAPPNODE_UPSTREAM_VERSION" != "$VERSION" ]; then
-              echo "❌ DAppNode upstreamVersion ($DAPPNODE_UPSTREAM_VERSION) doesn't match tag ($VERSION)"
-              exit 1
-            fi
-            if [ "$DAPPNODE_NPM_VERSION" != "$DAPPNODE_VERSION" ]; then
-              echo "❌ DAppNode package.json version ($DAPPNODE_NPM_VERSION) doesn't match wrapper version ($DAPPNODE_VERSION)"
-              exit 1
-            fi
-            if [ "$DAPPNODE_LOCK_VERSION" != "$DAPPNODE_VERSION" ]; then
-              echo "❌ DAppNode package-lock version ($DAPPNODE_LOCK_VERSION) doesn't match wrapper version ($DAPPNODE_VERSION)"
-              exit 1
-            fi
-            if [ "$DAPPNODE_LOCK_PACKAGE_VERSION" != "$DAPPNODE_VERSION" ]; then
-              echo "❌ DAppNode package-lock root package version ($DAPPNODE_LOCK_PACKAGE_VERSION) doesn't match wrapper version ($DAPPNODE_VERSION)"
-              exit 1
-            fi
-            if ! grep -Fq "UPSTREAM_VERSION: $VERSION" dappnode/docker-compose.yml; then
-              echo "❌ DAppNode docker-compose UPSTREAM_VERSION doesn't match tag ($VERSION)"
-              exit 1
-            fi
-            if ! grep -Fq "ciphernode.interfold-ciphernode.public.dappnode.eth:$DAPPNODE_VERSION" dappnode/docker-compose.yml; then
-              echo "❌ DAppNode docker-compose image tag doesn't match package version ($DAPPNODE_VERSION)"
-              exit 1
-            fi
-            if ! grep -Fq "ARG UPSTREAM_VERSION=$VERSION" dappnode/Dockerfile; then
-              echo "❌ DAppNode Dockerfile default UPSTREAM_VERSION doesn't match tag ($VERSION)"
-              exit 1
-            fi
-          else
-            echo "Skipping DAppNode package version check for pre-release tag."
-          fi
-
-          echo "✅ All versions, including the circuit archive, match: $VERSION"
+  candidate-ci:
+    name: Validate Exact Release Candidate
+    needs: validate-and-prepare
+    uses: ./.github/workflows/ci.yml
+    with:
+      release_candidate: true
+    secrets: inherit
 
   build-ciphernode-image-release:
     name: Build & Push ciphernode (release)
     runs-on: ubuntu-latest
-    needs: validate-and-prepare
+    needs: [validate-and-prepare, release-candidate-gate]
     env:
       CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
     steps:
@@ -146,7 +80,6 @@ jobs:
           push: true
           tags: |
             ${{ env.CIPHERNODE_IMAGE_NAME }}:${{ needs.validate-and-prepare.outputs.version }}
-            ${{ env.CIPHERNODE_IMAGE_NAME }}:latest
           cache-from: |
             type=gha,scope=ciphernode
           cache-to: |
@@ -155,7 +88,7 @@ jobs:
   build-e3-support-release:
     name: Build & Push e3-support (release)
     runs-on: ubuntu-latest
-    needs: validate-and-prepare
+    needs: [validate-and-prepare, release-candidate-gate]
     env:
       SUPPORT_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/e3-support
     steps:
@@ -184,7 +117,6 @@ jobs:
           tags: |
             ${{ env.SUPPORT_IMAGE_NAME }}:${{ needs.validate-and-prepare.outputs.version }}
             ${{ env.SUPPORT_IMAGE_NAME }}:${{ steps.revision.outputs.short_sha }}
-            ${{ env.SUPPORT_IMAGE_NAME }}:latest
           cache-from: |
             type=gha,scope=e3-support
           cache-to: |
@@ -228,21 +160,15 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-      - uses: cachix/cachix-action@v15
-        with:
-          name: interfold
-          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-        # if the following fails it means some of our git dependencies or bb has updated
-        # to fix this basically what you need to do here is copy the actual hashes
-        # into the flake.nix where those hashes are expected. if you want to do this locally
-        # install the nix package manager and try running the scripts below.
-      - run: bash ./scripts/nix-versions.sh # display bad versions when deps change
-      - run: nix build .#default # build the nix flake
+      - name: Check pinned Nix dependency hashes
+        run: bash ./scripts/nix-versions.sh
+      - name: Build the Nix package
+        run: nix build .#default
 
   build-binaries:
     name: Build Binaries (${{ matrix.os_name }}-${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
-    needs: [validate-and-prepare, build-e3-support-release]
+    needs: validate-and-prepare
     strategy:
       matrix:
         include:
@@ -284,69 +210,22 @@ jobs:
         run: cargo build --locked --release --target ${{ matrix.target }} --bin interfoldup
 
       - name: Create release archives
-        shell: bash
         run: |
           mkdir -p dist
-
-          # Get the correct binary extension
-          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-            EXT=".exe"
-          else
-            EXT=""
-          fi
-
-          # Create interfold archive
-          cp "target/${{ matrix.target }}/release/interfold${EXT}" "./interfold${EXT}"
-          tar -czf "dist/interfold-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz" "interfold${EXT}"
-          rm "interfold${EXT}"
-
-          # Create interfoldup archive
-          cp "target/${{ matrix.target }}/release/interfoldup${EXT}" "./interfoldup${EXT}"
-          tar -czf "dist/interfoldup-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz" "interfoldup${EXT}"
-          rm "interfoldup${EXT}"
+          tar -C "target/${{ matrix.target }}/release" -czf "dist/interfold-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz" interfold
+          tar -C "target/${{ matrix.target }}/release" -czf "dist/interfoldup-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz" interfoldup
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: interfold-binaries-${{ matrix.os_name }}-${{ matrix.arch }}
+          if-no-files-found: error
           path: dist/
-
-  publish-rust-crates:
-    name: Publish Rust Crates
-    runs-on: ubuntu-latest
-    needs: [validate-and-prepare, build-e3-support-release]
-    continue-on-error: true
-    # Publish ALL versions to crates.io (including pre-releases)
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Publish to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          VERSION="${{ needs.validate-and-prepare.outputs.version }}"
-          IS_PRERELEASE="${{ needs.validate-and-prepare.outputs.is_prerelease }}"
-
-          if [[ "$IS_PRERELEASE" == "true" ]]; then
-            echo "📦 Publishing pre-release version to crates.io: $VERSION"
-          else
-            echo "📦 Publishing stable version to crates.io: $VERSION"
-          fi
-
-          cargo install cargo-workspaces@0.3.6 --locked
-          cargo workspaces publish --from-git --yes
 
   publish-npm-packages:
     name: Publish NPM Packages
     runs-on: ubuntu-latest
-    needs: validate-and-prepare
+    needs: [validate-and-prepare, release-candidate-gate]
     permissions:
       contents: read
       id-token: write
@@ -361,9 +240,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Upgrade npm
-        run: |
-          npm install -g npm@latest
-          echo "npm version: $(npm --version)"
+        run: npm install -g npm@latest
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -385,47 +262,29 @@ jobs:
       - name: Prepare packages for npm publishing
         run: pnpm prepare-publish
 
-      - name: Determine npm tag
-        id: npm_tag
-        run: |
-          if [[ "${{ needs.validate-and-prepare.outputs.is_prerelease }}" == "true" ]]; then
-            echo "tag=next" >> $GITHUB_OUTPUT
-            echo "📦 Publishing with 'next' tag for pre-release"
-          else
-            echo "tag=latest" >> $GITHUB_OUTPUT
-            echo "📦 Publishing with 'latest' tag for stable release"
-          fi
-
       - name: Publish @interfold/config
-        working-directory: packages/interfold-config
-        run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
+        run: node scripts/release.mjs publish-npm packages/interfold-config ${{ needs.validate-and-prepare.outputs.npm_tag }}
 
       - name: Publish @interfold/contracts
-        working-directory: packages/interfold-contracts
-        run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
+        run: node scripts/release.mjs publish-npm packages/interfold-contracts ${{ needs.validate-and-prepare.outputs.npm_tag }}
 
       - name: Publish @interfold/wasm
-        working-directory: crates/wasm
-        run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
+        run: node scripts/release.mjs publish-npm crates/wasm ${{ needs.validate-and-prepare.outputs.npm_tag }}
 
       - name: Publish @interfold/sdk
-        working-directory: packages/interfold-sdk
-        run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
+        run: node scripts/release.mjs publish-npm packages/interfold-sdk ${{ needs.validate-and-prepare.outputs.npm_tag }}
 
       - name: Publish @interfold/react
-        working-directory: packages/interfold-react
-        run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
+        run: node scripts/release.mjs publish-npm packages/interfold-react ${{ needs.validate-and-prepare.outputs.npm_tag }}
 
       - name: Publish @interfold/mcp
-        working-directory: packages/interfold-mcp
-        run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
+        run: node scripts/release.mjs publish-npm packages/interfold-mcp ${{ needs.validate-and-prepare.outputs.npm_tag }}
 
   download-circuits:
     name: Download Circuit Artifacts
     runs-on: ubuntu-latest
     needs: validate-and-prepare
     outputs:
-      found: ${{ steps.pull.outputs.found }}
       source_hash: ${{ steps.pull.outputs.source_hash }}
     steps:
       - uses: actions/checkout@v6
@@ -444,252 +303,130 @@ jobs:
         id: pull
         run: |
           SOURCE_HASH=$(pnpm tsx scripts/build-circuits.ts hash)
-          echo "source_hash=$SOURCE_HASH" >> $GITHUB_OUTPUT
+          echo "source_hash=$SOURCE_HASH" >> "$GITHUB_OUTPUT"
 
-          if git fetch origin circuit-artifacts 2>/dev/null; then
-            mkdir -p dist/circuits
-            git archive origin/circuit-artifacts | tar -x -C dist/circuits
-            echo "found=true" >> $GITHUB_OUTPUT
-          else
-            echo "found=false" >> $GITHUB_OUTPUT
+          if ! git fetch origin circuit-artifacts; then
+            echo "::error::Required circuit-artifacts branch is missing."
+            exit 1
           fi
+          mkdir -p dist/circuits
+          git archive --format=tar --output="$RUNNER_TEMP/circuit-artifacts.tar" origin/circuit-artifacts
+          tar -xf "$RUNNER_TEMP/circuit-artifacts.tar" -C dist/circuits
 
       - name: Verify circuit artifacts match source
-        if: steps.pull.outputs.found == 'true'
         # This check requires exactly one source-bound build stamp for each of the six supported
         # preset/committee pairs before the archive can be created.
         run: pnpm store:circuits verify-release --source-hash "${{ steps.pull.outputs.source_hash }}"
 
       - name: Create release archive
-        if: steps.pull.outputs.found == 'true'
-        run: |
-          cd dist
-          tar -czvf circuits-${{ needs.validate-and-prepare.outputs.version }}.tar.gz circuits/
+        working-directory: dist
+        run: tar -czvf circuits-${{ needs.validate-and-prepare.outputs.version }}.tar.gz circuits/
 
       - uses: actions/upload-artifact@v4
-        if: steps.pull.outputs.found == 'true'
         with:
           name: noir-circuits
+          if-no-files-found: error
           path: |
             dist/circuits-*.tar.gz
             dist/circuits/SHA256SUMS
             dist/circuits/checksums.json
 
+  release-candidate-gate:
+    name: Approve Fully Validated Candidate
+    runs-on: ubuntu-latest
+    needs: [validate-and-prepare, candidate-ci, build-nix-flake, build-binaries, download-circuits]
+    steps:
+      - name: Confirm candidate qualification
+        run: echo "Candidate ${{ needs.validate-and-prepare.outputs.candidate_sha }} passed full CI and artifact checks."
+
+  publication-gate:
+    name: Verify Every Release Publication
+    runs-on: ubuntu-latest
+    needs:
+      [validate-and-prepare, build-ciphernode-image-release, build-e3-support-release, publish-npm-packages, build-dappnode-package-release]
+    if: ${{ always() && !cancelled() }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Require all publications
+        env:
+          IS_PRERELEASE: ${{ needs.validate-and-prepare.outputs.is_prerelease }}
+          CIPHERNODE_RESULT: ${{ needs.build-ciphernode-image-release.result }}
+          SUPPORT_RESULT: ${{ needs.build-e3-support-release.result }}
+          NPM_RESULT: ${{ needs.publish-npm-packages.result }}
+          DAPPNODE_RESULT: ${{ needs.build-dappnode-package-release.result }}
+        run: node scripts/release.mjs verify-publications
+
   create-github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs:
-      [
-        validate-and-prepare,
-        build-ciphernode-image-release,
-        build-e3-support-release,
-        build-binaries,
-        publish-rust-crates,
-        publish-npm-packages,
-        download-circuits,
-        build-nix-flake,
-        build-dappnode-package-release,
-      ]
-    if:
-      always() && needs.validate-and-prepare.result == 'success' && needs.build-binaries.result == 'success' &&
-      needs.build-e3-support-release.result == 'success' && (needs.validate-and-prepare.outputs.is_prerelease == 'true' ||
-      needs.build-dappnode-package-release.result == 'success')
+    needs: [validate-and-prepare, build-binaries, download-circuits, publication-gate]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          # This job holds `contents: write` and runs `pnpm install`, which executes lifecycle
-          # scripts from every dependency. Persisting the token in .git/config would leave it on
-          # disk for all of them. The one step that needs it takes it explicitly instead.
+          # The stable-tag step uses a temporary credential helper.
           persist-credentials: false
 
-      - name: Download all binary artifacts
+      - name: Download candidate binaries
         uses: actions/download-artifact@v4
         with:
-          path: dist/
+          pattern: interfold-binaries-*
+          merge-multiple: true
+          path: dist/binaries
 
-      # Pinned to immutable SHAs: this job has `contents: write` and force-pushes `stable`, so a
-      # mutable tag could introduce unreviewed code into the release.
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - name: Download candidate circuits
+        uses: actions/download-artifact@v4
+        with:
+          name: noir-circuits
+          path: dist/circuits
+
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
-
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
 
       # The compute-provider provenance manifest is NOT generated here: it can only be complete on
       # a machine that built the guest (Elf.sol + builder image digest) with a deployed ciphertext
       # verifier to read (--rpc/--verifier), none of which this job has. It is produced manually per
       # docs/pages/verifying-the-compute-provider.mdx until the guest-build job can attach it.
 
-      - name: Prepare release assets
+      - name: Prepare release assets and notes
+        env:
+          RELEASE_VERSION: ${{ needs.validate-and-prepare.outputs.version }}
+          RELEASE_IS_PRERELEASE: ${{ needs.validate-and-prepare.outputs.is_prerelease }}
+          RELEASE_CANDIDATE_SHA: ${{ needs.validate-and-prepare.outputs.candidate_sha }}
+          CIRCUIT_SOURCE_HASH: ${{ needs.download-circuits.outputs.source_hash }}
+        run: node scripts/release.mjs prepare-assets
+
+      - name: Set up Buildx for stable aliases
+        if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote stable container aliases
+        if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
         run: |
-          mkdir -p release-assets
-          find dist/ -name "*.tar.gz" -exec cp {} release-assets/ \;
-          # `interfold config check` fetches this asset from the latest release,
-          # so a release without it leaves operators unable to detect a redeploy.
-          if [ ! -f deployments/manifest.json ]; then
-            echo "deployments/manifest.json is missing. Run \`pnpm gen:manifest\` and commit it." >&2
-            exit 1
-          fi
-          cp deployments/manifest.json release-assets/
-          ls -la release-assets/
+          VERSION="${{ needs.validate-and-prepare.outputs.version }}"
+          docker buildx imagetools create \
+            --tag "${CIPHERNODE_IMAGE_NAME}:latest" \
+            "${CIPHERNODE_IMAGE_NAME}:${VERSION}"
+          docker buildx imagetools create \
+            --tag "${SUPPORT_IMAGE_NAME}:latest" \
+            "${SUPPORT_IMAGE_NAME}:${VERSION}"
 
-      - name: Generate Release Notes
-        id: release_notes
-        run: |
-          VERSION=${{ needs.validate-and-prepare.outputs.version }}
-          IS_PRERELEASE=${{ needs.validate-and-prepare.outputs.is_prerelease }}
-
-          # Create release notes
-          cat > release_notes.md << EOF
-          ## 🚀 Release v${VERSION}
-
-          EOF
-
-          # Add pre-release warning if applicable
-          if [[ "${IS_PRERELEASE}" == "true" ]]; then
-            cat >> release_notes.md << EOF
-          > ⚠️ **This is a pre-release version**
-          > Pre-release versions may contain bugs and breaking changes.
-
-          EOF
-          fi
-
-          # Extract changelog section for this version if CHANGELOG.md exists
-          if [ -f CHANGELOG.md ]; then
-            echo "### What's Changed" >> release_notes.md
-            echo "" >> release_notes.md
-
-            # auto-changelog writes headings as "#### [v0.8.0](compare-url)", so the
-            # leading "v" must be optional. VERSION has it stripped from the tag, and
-            # matching the bare version produced an empty "What's Changed" section.
-            awk -v raw_ver="${VERSION}" '
-              function escape_ere(value,    i, char, escaped) {
-                escaped = ""
-                for (i = 1; i <= length(value); i++) {
-                  char = substr(value, i, 1)
-                  if (index("[]\\.^$*+?{}()|", char) > 0) {
-                    escaped = escaped "\\" char
-                  } else {
-                    escaped = escaped char
-                  }
-                }
-                return escaped
-              }
-              BEGIN {
-                ver = escape_ere(raw_ver)
-                start = "^#+ \\[?v?" ver "\\]?"
-                next_version = "^#+ \\[?v?[0-9]+\\.[0-9]+\\.[0-9]+([-+][a-zA-Z0-9.-]+)?"
-              }
-              !flag && $0 ~ start { flag = 1; next }
-              flag && $0 ~ next_version { exit }
-              flag { print }
-            ' CHANGELOG.md > changelog_section.md
-
-            # awk exits 0 on no match, so an empty section never reached the old
-            # `||` fallback. Test the output instead of the exit status.
-            if [ -s changelog_section.md ]; then
-              cat changelog_section.md >> release_notes.md
-            else
-              echo "::warning::No CHANGELOG.md section matched v${VERSION}"
-              echo "See CHANGELOG.md for details." >> release_notes.md
-            fi
-            rm -f changelog_section.md
-          fi
-
-          # Add installation instructions
-          cat >> release_notes.md << EOF
-
-          ---
-
-          ## 📦 Installation
-
-          ### Install via interfoldup (Recommended)
-
-          Install the installer:
-          \`\`\`bash
-          curl -fsSL https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash
-          \`\`\`
-
-          Then use it to install interfold:
-          \`\`\`bash
-          interfoldup install
-          \`\`\`
-
-          ### NPM Packages
-
-          EOF
-
-          if [[ "${IS_PRERELEASE}" == "true" ]]; then
-            cat >> release_notes.md << EOF
-          \`\`\`bash
-          # Install pre-release versions
-          npm install @interfold/sdk@next
-          npm install @interfold/contracts@next
-          npm install @interfold/config@next
-          npm install @interfold/react@next
-          \`\`\`
-          EOF
-          else
-            cat >> release_notes.md << EOF
-          \`\`\`bash
-          # Install stable versions
-          npm install @interfold/sdk@latest
-          npm install @interfold/contracts@latest
-          npm install @interfold/config@latest
-          npm install @interfold/react@latest
-          \`\`\`
-          EOF
-          fi
-
-          # Add Rust crates section only for stable releases
-          if [[ "${IS_PRERELEASE}" == "false" ]]; then
-            cat >> release_notes.md << EOF
-
-          ### Rust Crates
-
-          \`\`\`toml
-          [dependencies]
-          interfold = "${VERSION}"
-          \`\`\`
-          EOF
-          fi
-
-          # Add binary assets information
-          cat >> release_notes.md << EOF
-
-          ## 💾 Binary Assets
-
-          - \`interfold-*\`: The main Interfold CLI binary
-          - \`interfoldup-*\`: The installer/version manager binary
-
-          ### Supported Platforms
-          - Linux (x86_64)
-          - macOS (x86_64, aarch64 Apple Silicon)
-
-          ## 📝 Checksums
-
-          \`\`\`
-          EOF
-
-          # Generate checksums for the binaries
-          cd release-assets && sha256sum *.tar.gz >> ../release_notes.md || true
-          cd ..
-
-          echo '```' >> release_notes.md
-
-          if [[ "${{ needs.download-circuits.outputs.found }}" == "true" ]]; then
-            cat >> release_notes.md << EOF
-
-          ## 🔮 Noir Circuits
-
-          Source hash: \`${{ needs.download-circuits.outputs.source_hash }}\`
-          EOF
-          fi
+      - name: Update stable tag (for stable releases only)
+        if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/release.mjs promote-stable ${{ needs.validate-and-prepare.outputs.candidate_sha }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -699,25 +436,7 @@ jobs:
           body_path: release_notes.md
           draft: false
           prerelease: ${{ needs.validate-and-prepare.outputs.is_prerelease }}
-          generate_release_notes: false # We're providing our own
+          generate_release_notes: false
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Update stable tag (for stable releases only)
-        if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git tag -f stable
-          # Through a credential helper, so the token never reaches a process argument list. Every
-          # process on a runner shares one user, so anything left running by `pnpm install` can read
-          # /proc/*/cmdline; it cannot read another process's environment as easily. The config
-          # stores the helper only — the token is read from the environment when git invokes it.
-          git config --local credential.helper '!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f'
-          # --no-verify: `pnpm install` installs the husky pre-push hook, which needs tools the
-          # runner lacks (nargo). The hook gates development pushes; this job only moves a tag to
-          # a commit that already passed CI.
-          git push origin stable --force --no-verify
-          git config --local --unset credential.helper
-          echo "✅ Updated 'stable' tag to point to v${{ needs.validate-and-prepare.outputs.version }}"

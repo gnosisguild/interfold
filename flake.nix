@@ -1,9 +1,5 @@
 {
   description = "Interfold";
-  nixConfig = {
-    extra-substituters = ["https://interfold.cachix.org"];
-    extra-trusted-public-keys = ["interfold.cachix.org-1:B5SynR85iX/TRueDpZu4dh1xVR8lNfKoAaVWZkux1ss="];
-  };
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
