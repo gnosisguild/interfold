@@ -6,7 +6,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join, resolve } from 'path'
-import { execSync } from 'child_process'
+import { execFileSync, execSync } from 'child_process'
 
 interface PackageJson {
   name: string
@@ -297,33 +297,20 @@ class VersionBumper {
   private generateChangelog(): void {
     console.log('\n📝 Generating changelog...')
 
-    try {
-      execSync('pnpm auto-changelog --help', {
-        stdio: 'ignore',
+    // The version tag is created after this release branch merges. Assign the
+    // untagged commits to the new version now so that the release notes are not
+    // one version behind. The checked-in config also excludes release-bump
+    // commits, including the previous release PR merge that occurs after its tag.
+    execFileSync(
+      'pnpm',
+      ['auto-changelog', '--config', '.auto-changelog', '--output', 'CHANGELOG.md', '--latest-version', `v${this.newVersion}`],
+      {
         cwd: this.rootDir,
-      })
+        stdio: 'inherit',
+      },
+    )
 
-      console.log('\n📝 Generating changelog...')
-      try {
-        // This runs before the tag exists, so auto-changelog would otherwise file
-        // everything since the previous release as unreleased and omit it. The
-        // release workflow reads the section for the tag it builds, so without
-        // --latest-version the tagged CHANGELOG.md is always one release behind
-        // and "What's Changed" comes out empty.
-        execSync(`pnpm auto-changelog -o CHANGELOG.md --commit-limit false --tag-prefix v --latest-version v${this.newVersion}`, {
-          cwd: this.rootDir,
-          stdio: 'inherit',
-        })
-        console.log('   ✓ Changelog generated successfully')
-      } catch (error) {
-        console.warn('   ⚠️  Could not generate changelog:', error)
-      }
-
-      console.log('   ✓ Changelog generated successfully')
-    } catch (error) {
-      console.warn('   ⚠️  Could not generate changelog:', error)
-      console.log('   Continuing without changelog...')
-    }
+    console.log('   ✓ Changelog generated successfully')
   }
 
   /**

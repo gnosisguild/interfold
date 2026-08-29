@@ -1,0 +1,5 @@
+{
+  "commitLimit": false,
+  "ignoreCommitPattern": "^chore\\(release\\): bump version to(?:\\s|$)",
+  "tagPrefix": "v"
+}
