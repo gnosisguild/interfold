@@ -227,8 +227,12 @@ impl ZkBackend {
         let mut archive = Archive::new(decoder);
         for entry in archive.entries()? {
             let mut entry = entry?;
+            let entry_type = entry.header().entry_type();
+            if is_archive_metadata(entry_type) {
+                continue;
+            }
             let path = entry.path()?.into_owned();
-            validate_circuit_archive_entry(&path, entry.header().entry_type())?;
+            validate_circuit_archive_entry(&path, entry_type)?;
             if !entry.unpack_in(&staging_root)? {
                 return Err(invalid_circuit_archive_path(&path));
             }
@@ -291,6 +295,13 @@ fn invalid_circuit_archive_path(path: &Path) -> ZkError {
         "circuit archive entry must stay inside circuits: {}",
         path.display()
     ))
+}
+
+fn is_archive_metadata(entry_type: tar::EntryType) -> bool {
+    entry_type.is_pax_global_extensions()
+        || entry_type.is_pax_local_extensions()
+        || entry_type.is_gnu_longname()
+        || entry_type.is_gnu_longlink()
 }
 
 fn validate_circuit_archive_entry(path: &Path, entry_type: tar::EntryType) -> Result<(), ZkError> {
@@ -439,6 +450,18 @@ mod tests {
         builder.append_data(&mut header, path, contents).unwrap();
     }
 
+    fn append_global_pax_header<W: Write>(builder: &mut Builder<W>) {
+        let contents = b"19 comment=fixture\n";
+        let mut header = Header::new_gnu();
+        header.set_entry_type(tar::EntryType::XGlobalHeader);
+        header.set_mode(0o644);
+        header.set_size(contents.len() as u64);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "pax_global_header", &contents[..])
+            .unwrap();
+    }
+
     fn circuit_archive_with_entries(
         circuit: &[u8],
         include_manifest: bool,
@@ -447,6 +470,7 @@ mod tests {
         let rel_path = "insecure-512/minimum/default/dkg/pk/pk.json";
         let encoder = GzEncoder::new(Vec::new(), Compression::default());
         let mut builder = Builder::new(encoder);
+        append_global_pax_header(&mut builder);
         append_archive_file(&mut builder, &format!("circuits/{rel_path}"), circuit);
 
         if include_manifest {
@@ -483,7 +507,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_archive_is_verified_and_versioned() {
+    async fn local_archive_accepts_pax_metadata_and_records_version() {
         let temp = TempDir::new().unwrap();
         let archive_path = temp.path().join("circuits.tar.gz");
         fs::write(&archive_path, circuit_archive(b"circuit", true)).unwrap();
