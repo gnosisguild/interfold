@@ -1,31 +1,35 @@
 # Releasing the CRISP packages
 
-`@crisp-e3/sdk` and `@crisp-e3/contracts` are published as a matched pair on two channels, split by
-BFV preset.
+`@crisp-e3/sdk` and `@crisp-e3/contracts` are published as a matched pair on two channels.
 
 | channel    | tag       | preset         | who it is for                      |
 | ---------- | --------- | -------------- | ---------------------------------- |
 | testing    | `testing` | `insecure-512` | testnets, demos, local development |
-| production | `latest`  | `secure-8192`  | real rounds                        |
+| production | `latest`  | both presets   | deployed clients and real rounds   |
 
-## Why the channels are split by preset
+## Why presets are separate entry points
 
 The SDK inlines the compiled circuit and the contracts package ships the Solidity verifier generated
 from that same circuit's verification key. A verifier only accepts proofs from the circuit it was
 generated for, so mixing presets across the two packages produces a round that rejects every ballot
 — and it fails at on-chain verification, not anywhere a test would catch it.
 
-Each tarball therefore carries exactly one preset. Importing the other subpath fails to resolve,
-which is a loud, immediate error rather than a silently wrong proof:
+Each preset is a separate SDK subpath. The production package carries both subpaths so one client
+can read the E3's on-chain `paramSet` and load the matching preset. The testing package carries only
+the insecure preset so local and testnet installs stay small.
 
 ```ts
 // on @crisp-e3/sdk@testing
 import { loadCircuits } from '@crisp-e3/sdk/insecure-512' // resolves
 import { loadCircuits } from '@crisp-e3/sdk/secure-8192' // ERR_MODULE_NOT_FOUND
+
+// on @crisp-e3/sdk@latest
+import { loadCircuits as loadInsecure } from '@crisp-e3/sdk/insecure-512'
+import { loadCircuits as loadSecure } from '@crisp-e3/sdk/secure-8192'
 ```
 
-It also keeps the secure circuits out of every testing install. They are far larger than the
-insecure ones, and shipping both would put that weight in both channels.
+This keeps the secure circuits out of testing installs while making the production client flexible
+enough for secure mainnet rounds and insecure test deployments.
 
 ## Versioning
 
@@ -33,30 +37,29 @@ Testing releases carry a prerelease identifier; production releases do not.
 
 ```
 0.18.0-insecure.0   tag: testing    insecure-512
-0.18.0              tag: latest     secure-8192
+0.20.0              tag: latest     insecure-512 + secure-8192
 ```
 
 The identifier is load-bearing. npm excludes prerelease versions from ordinary ranges, so a consumer
 on `^0.18.0` can never drift onto a testing build through an update — reaching it takes an explicit
 `@testing` or an exact version.
 
-## The client stays on testing
+## The client tracks production
 
-`client/` is deployed against a testnet whose verifiers were deployed from `insecure-512` circuits,
-so it always pins a testing version. Only a testing publish moves it; a production publish leaves
-`client/package.json` and `client/pnpm-lock.yaml` untouched, and refuses to run at all if something
-else has moved the pin onto a plain release version.
+`client/` reads the E3 `paramSet` before proving and loads the matching preset. Because production
+SDK releases carry both presets, a production publish moves `client/package.json` and
+`client/pnpm-lock.yaml` to the published version. A testing publish leaves the client alone.
 
 The pin cannot be a `workspace:` range, because the same `client/package.json` also serves the
 standalone Vercel deploy, which installs with `ignore-workspace=true` (see `client/.npmrc`) and
 cannot resolve one. So it is an exact version, and that has a consequence worth stating plainly:
 
 **`linkWorkspacePackages: true` links `packages/crisp-sdk` only while its version still satisfies
-that exact pin.** Bump the workspace to `0.18.0` while the client pins `0.18.0-insecure.0` and pnpm
-stops linking and resolves the client from the registry instead. That is not a cosmetic difference.
-It re-resolves the whole client dependency tree (it pulled `zod@4` in place of `zod@3` across
-`viem`, `wagmi`, and `connectkit`), and it makes Vite pre-bundle the SDK as an ordinary dependency,
-which breaks the worker subpath:
+that exact pin.** Bump the workspace to `0.20.0` while the client pins `0.19.1` and pnpm stops
+linking and resolves the client from the registry instead. That is not a cosmetic difference. It
+re-resolves the whole client dependency tree (it pulled `zod@4` in place of `zod@3` across `viem`,
+`wagmi`, and `connectkit`), and it makes Vite pre-bundle the SDK as an ordinary dependency, which
+breaks the worker subpath:
 
 ```
 The file does not exist at ".../client/node_modules/.vite/deps/
@@ -64,12 +67,9 @@ workers/generateCircuitInputs.worker.js?worker_file&type=module"
 → [generateProof] failed → the e2e vote never reaches the wallet signature
 ```
 
-This is why a production publish restores the versions it bumped instead of committing them, and why
-`bumpsRepo` in `publish.ts` is tied to `tracksClient` rather than being independently selectable. A
-published version lives on npm; it does not need to live in the working tree.
-
-Moving the client to a production version is a deliberate change, made together with the redeploy
-that gives it `secure-8192` verifiers to prove against.
+This is why a production publish leaves the CRISP workspace packages and the client on the same
+exact version. A testing publish restores the versions it touched because the deployable client does
+not track the testing channel.
 
 ## Procedure
 
@@ -85,29 +85,29 @@ that `stage-preset-artifacts.mjs` records at staging time.
 ```sh
 pnpm -C examples/CRISP build:presets # slow: compiles both presets
 
-# testing — insecure-512 under the `testing` tag, and moves the client
+# testing — insecure-512 under the `testing` tag, leaves the client alone
 pnpm -C examples/CRISP publish:packages --channel testing 0.19.0-insecure.0
 
-# production — secure-8192 under the `latest` tag, and leaves the client alone
-pnpm -C examples/CRISP publish:packages --channel prod 0.19.0
+# production — both presets under the `latest` tag, and moves the client
+pnpm -C examples/CRISP publish:packages --channel prod 0.20.0
 ```
 
 Add `--dry-run` to print the exact steps for a channel without changing anything. The script bumps
-all three packages, builds the SDK against the channel's preset, and publishes in dependency order
-(`zk-inputs`, `sdk`, `contracts`). It never tags and never pushes.
+all three packages, builds the SDK against the channel's preset set, and publishes in dependency
+order (`zk-inputs`, `sdk`, `contracts`). It never tags and never pushes.
 
-What it leaves behind differs by channel. Testing commits the bump. Production restores it, so the
-tree ends exactly as it started — see "The client stays on testing" above for why. Either way, a
-failure at any point restores the tree too: a half-bumped workspace is worse than no bump, because
-the next `pnpm install` silently detaches the client from it.
+What it leaves behind differs by channel. Production commits the bump so the tree and client stay on
+the production version. Testing restores the version bump because the deployable client does not
+track the testing channel. Either way, a failure restores the tree: a half-bumped workspace is worse
+than no bump, because the next `pnpm install` silently detaches the client from it.
 
 Two gates run on the way:
 
 - `check-staged-preset.mjs` (in `build:testing` / `build:prod`) refuses staged artifacts the
   circuits have moved past.
 - `check-presets.mjs` (`prepublishOnly` on both packages) refuses to publish a channel whose
-  artifacts do not match its preset — a missing preset, a stub bundle, an exports entry pointing at
-  nothing, missing verifiers, or the _other_ preset's bundle being present.
+  artifacts do not match its preset set — a missing preset, a stub bundle, an exports entry pointing
+  at nothing, missing verifiers, or an unexpected preset bundle.
 
 ## Deploying
 
@@ -115,9 +115,8 @@ Generated aggregator verifiers are preset-specific and committee-specific. The p
 concrete PK and decryption verifier for each supported pair. A router selects the concrete verifier
 from the proof's public-input length and VK hash anchors.
 
-The SDK must also match the round. Pair a `latest` SDK with a `secure-8192` deployment. Pair a
-`testing` SDK with an `insecure-512` deployment. The testnet client reads `paramSet` from the E3
-before it proves and rejects a secure round with a directed error.
+The SDK must also match the round. A `latest` SDK can load either supported preset and should select
+from the E3's on-chain `paramSet`. Pair a `testing` SDK only with `insecure-512` deployments.
 
 For an existing paused mainnet bootstrap deployment, prepare the complete activation batch with:
 

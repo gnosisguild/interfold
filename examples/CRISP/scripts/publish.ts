@@ -24,32 +24,29 @@ const PACKAGE_DIRS = ['packages/crisp-sdk', 'packages/crisp-contracts', 'package
 /**
  * Release channels, split by BFV preset.
  *
- * The SDK inlines the compiled circuit and the contracts package ships the verifier generated from
- * that same circuit's verification key, so a channel that mixes presets produces a round which
- * rejects every ballot — and it fails at on-chain verification, not anywhere a test would catch it.
- * Each channel therefore carries exactly one preset, and the preset decides the build.
+ * The SDK inlines compiled circuit artifacts. Testing releases carry only the insecure preset so
+ * they stay small; production releases carry both presets so one client can select the preset from
+ * the E3's on-chain param set.
  *
  * Testing versions carry a prerelease identifier so npm keeps them out of ordinary ranges: a
  * consumer on `^0.18.0` can never drift onto a testing build through an update.
  *
- * `tracksClient` says whether a channel moves the demo client onto the version it publishes. The
- * deployed client runs against a testnet whose verifiers were deployed from insecure-512, so only
- * the testing channel moves it. A prod publish that bumped the client would put secure-8192
- * circuits in front of an insecure-512 deployment, and every ballot would fail on chain. Move the
- * client to a prod version deliberately, in the same change as the redeploy it needs.
+ * `tracksClient` says whether a channel moves the client onto the version it publishes. The
+ * production channel moves it because the published package contains both presets. Testing releases
+ * leave it alone.
  *
  * `bumpsRepo` says whether a channel leaves its version behind in the working tree. It follows from
  * `tracksClient` and cannot be chosen independently: the client pins an exact version, and pnpm
- * links a workspace package only while its version still satisfies that pin. Leaving the workspace
- * on a prod version therefore detaches the client from `packages/crisp-sdk` and silently resolves
- * it from the registry instead — which changes what the whole client dependency tree resolves to,
- * and makes Vite pre-bundle the SDK as an ordinary dependency, breaking its worker entry point. So
- * a prod publish restores the versions it bumped and leaves the tree exactly as it found it. The
- * release is recorded on npm, which is the only place a published version needs to exist.
+ * links a workspace package only while its version still satisfies that pin. A production publish
+ * leaves the workspace and client on the same exact version, so local development uses the
+ * workspace and standalone deploys use the matching npm package.
  */
+const PRESETS = ['insecure-512', 'secure-8192'] as const
+type Preset = (typeof PRESETS)[number]
+
 const CHANNELS = {
-  testing: { tag: 'testing', preset: 'insecure-512', prerelease: true, tracksClient: true, bumpsRepo: true },
-  prod: { tag: 'latest', preset: 'secure-8192', prerelease: false, tracksClient: false, bumpsRepo: false },
+  testing: { tag: 'testing', presets: ['insecure-512'] as readonly Preset[], prerelease: true, tracksClient: false, bumpsRepo: false },
+  prod: { tag: 'latest', presets: PRESETS, prerelease: false, tracksClient: true, bumpsRepo: true },
 } as const
 
 type Channel = keyof typeof CHANNELS
@@ -120,37 +117,16 @@ class CRISPPublisher {
     console.log(`   Package versions are back at ${this.oldVersion ?? 'their previous value'}; npm keeps what was published.`)
   }
 
-  /**
-   * The demo client stays on the testing channel, always.
-   *
-   * It is deployed against a testnet whose verifiers were deployed from insecure-512 circuits, so a
-   * secure-8192 SDK in front of it would make every ballot fail on chain. Only the testing channel
-   * moves the pin, and this refuses to publish at all when something else has moved it — a client
-   * on a plain release version is already wrong, and a publish would carry that wrong state
-   * forward.
-   *
-   * The pin is an exact version rather than the `testing` dist-tag: the client deploys from its own
-   * lock file (client/.npmrc, client/vercel.json), so the version has to be fixed at the point the
-   * lock file is written.
-   */
-  private assertClientOnTestingChannel(): void {
+  /** Report the client pin that the selected channel may update. */
+  private reportClientPin(): void {
     const pin = this.clientPin()
 
     if (pin === null) {
-      console.warn('   ⚠️  Could not read the client pin on @crisp-e3/sdk; skipping the channel check')
+      console.warn('   ⚠️  Could not read the client pin on @crisp-e3/sdk')
       return
     }
 
-    // Testing versions are the prereleases. See validateVersion().
-    if (!pin.includes('-')) {
-      throw new Error(
-        `client/package.json pins @crisp-e3/sdk ${pin}, which is not a testing version. The client ` +
-          `runs against an insecure-512 deployment and must stay on the testing channel. Restore a ` +
-          `prerelease pin (for example ${pin}-insecure.0) before publishing.`,
-      )
-    }
-
-    console.log(`📌 Client pin: ${pin} (testing channel)`)
+    console.log(`📌 Client pin: ${pin}`)
   }
 
   /** The version the demo client currently pins, for reporting. Null when it cannot be read. */
@@ -181,8 +157,7 @@ class CRISPPublisher {
       this.oldVersion = this.getCurrentVersion()
       console.log(`📌 Current version: ${this.oldVersion || 'unknown'}`)
 
-      // The client tracks the testing channel on every publish, whichever channel this one is.
-      this.assertClientOnTestingChannel()
+      this.reportClientPin()
 
       // Check for uncommitted changes
       if (!this.options.skipGit && !this.options.dryRun) {
@@ -198,7 +173,7 @@ class CRISPPublisher {
           ['Update package versions in:', ...packages],
           ...(this.tracksClient ? [['Update @crisp-e3/sdk dependency in client/package.json']] : []),
           ['Update pnpm-lock.yaml'],
-          [`Build packages against ${channel.preset}`],
+          [`Build packages against ${channel.presets.join(', ')}`],
           [`Publish to npm under the "${this.options.tag || channel.tag}" tag:`, ...packages],
           ...(this.tracksClient ? [['Update the standalone client/pnpm-lock.yaml']] : []),
           ...(channel.bumpsRepo
@@ -218,7 +193,7 @@ class CRISPPublisher {
           console.log(`\n   The client stays on ${this.clientPin() ?? 'its current pin'}; channel "${this.channel}" does not move it.`)
         }
         if (!channel.bumpsRepo) {
-          console.log(`   Nothing is committed: the workspace must keep satisfying that pin, or the client stops linking to it.`)
+          console.log('   Nothing is committed: this channel restores the package version bump after publishing.')
         }
 
         console.log('\n✅ Dry run complete. Run without --dry-run to perform these actions.')
@@ -232,7 +207,7 @@ class CRISPPublisher {
       this.bumpNpmPackages()
 
       try {
-        // Update client dependency. Only the testing channel does this — see tracksClient().
+        // Update client dependency when the selected channel owns the deployable client pin.
         if (this.tracksClient) {
           this.updateClientDependency()
         }
@@ -273,7 +248,7 @@ class CRISPPublisher {
       console.log(`   Previous version: ${this.oldVersion || 'unknown'}`)
       console.log(`   New version: ${this.newVersion}`)
       console.log(
-        `   Channel: ${this.channel} (${CHANNELS[this.channel].preset}, npm tag ${this.options.tag || CHANNELS[this.channel].tag})`,
+        `   Channel: ${this.channel} (${CHANNELS[this.channel].presets.join(', ')}, npm tag ${this.options.tag || CHANNELS[this.channel].tag})`,
       )
       console.log(`   Packages updated: ✓`)
       console.log(`   Client dependency: ${this.tracksClient ? '✓ updated' : `↷ left on ${this.clientPin() ?? 'its own pin'}`}`)
@@ -325,14 +300,20 @@ class CRISPPublisher {
         const packageJsonPath = join(pkgPath, 'package.json')
         const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'))
 
-        // The SDK bundles the preset-bound circuits, so it builds per channel. Everything else is
+        // The SDK bundles preset-bound circuits, so it builds per channel. Everything else is
         // preset-free and builds once.
         const buildScript = pkg.path === 'packages/crisp-sdk' ? `build:${this.channel}` : 'build'
         if (packageJson.scripts && packageJson.scripts[buildScript]) {
+          const buildEnv = { ...process.env }
+          if (CHANNELS[this.channel].presets.length === 1) {
+            buildEnv.CRISP_PRESET = CHANNELS[this.channel].presets[0]
+          } else {
+            delete buildEnv.CRISP_PRESET
+          }
           execSync(`pnpm ${buildScript}`, {
             cwd: pkgPath,
             stdio: 'inherit',
-            env: { ...process.env, CRISP_PRESET: CHANNELS[this.channel].preset },
+            env: buildEnv,
           })
           console.log(`   ✓ ${pkg.name} built successfully`)
         } else {
@@ -361,7 +342,7 @@ class CRISPPublisher {
     ]
 
     const tag = this.options.tag || CHANNELS[this.channel].tag
-    console.log(`   Channel: ${this.channel} (${CHANNELS[this.channel].preset}), npm tag: ${tag}`)
+    console.log(`   Channel: ${this.channel} (${CHANNELS[this.channel].presets.join(', ')}), npm tag: ${tag}`)
 
     for (const pkg of packagesToPublish) {
       try {
@@ -373,8 +354,9 @@ class CRISPPublisher {
           cwd: pkgPath,
           stdio: 'inherit',
           // `prepublishOnly` runs check-presets.mjs, which refuses to publish a channel whose
-          // artifacts carry the wrong preset. npm gives it no way to see --tag, so it reads this.
-          env: { ...process.env, CRISP_CHANNEL: tag },
+          // artifacts carry the wrong preset set. npm gives it no way to see our channel, so it
+          // reads this. A custom npm dist-tag must not change the preset policy.
+          env: { ...process.env, CRISP_CHANNEL: CHANNELS[this.channel].tag },
         })
 
         console.log(`   ✓ ${pkg.name}@${this.newVersion} published successfully`)
@@ -434,9 +416,20 @@ class CRISPPublisher {
         console.warn('   ⚠️  Prettier failed, continuing anyway')
       }
 
-      // Add all changes
+      // Add the exact files this script owns, including the root workspace lockfile.
       console.log('   Adding changes...')
-      execSync('git add .', { cwd: this.crispDir })
+      execSync(
+        [
+          'git add',
+          'examples/CRISP/packages/crisp-sdk/package.json',
+          'examples/CRISP/packages/crisp-contracts/package.json',
+          'examples/CRISP/packages/crisp-zk-inputs/package.json',
+          'examples/CRISP/client/package.json',
+          'examples/CRISP/client/pnpm-lock.yaml',
+          'pnpm-lock.yaml',
+        ].join(' '),
+        { cwd: rootDir },
+      )
 
       // Create commit message
       const commitMessage = `chore(crisp): publish version ${this.newVersion}
@@ -704,7 +697,7 @@ Arguments:
   version             The new version (e.g., 1.0.0, 1.0.0-beta.1)
 
 Options:
-  --channel <name>    Release channel: 'testing' (insecure-512) or 'prod' (secure-8192). Required.
+  --channel <name>    Release channel: 'testing' (insecure-512) or 'prod' (both presets). Required.
   --tag <name>        npm dist-tag override (default: the channel's tag)
   --skip-git          Skip all git operations (no commit)
   --dry-run           Show what would be done without making changes
@@ -712,18 +705,16 @@ Options:
 
 Channels:
   testing   npm tag 'testing', insecure-512 circuits, prerelease versions only
-  prod      npm tag 'latest',  secure-8192 circuits, plain release versions only
+  prod      npm tag 'latest',  insecure-512 and secure-8192 circuits, plain release versions only
 
-  Each channel carries exactly one preset. The SDK inlines the compiled circuit and the contracts
-  package ships the verifier generated from that circuit's verification key, so mixing them
-  produces a round that rejects every ballot, and it fails on chain rather than in any test.
+  Testing carries one preset to stay small. Production carries both presets so the client can select
+  the required circuit bundle from the E3's on-chain param set.
 
   Testing versions must carry a prerelease identifier. npm keeps prereleases out of ordinary
   ranges, so a consumer on '^0.18.0' cannot drift onto a testing build through an update.
 
-  Only 'testing' moves the demo client. The deployed client runs against a testnet whose verifiers
-  came from insecure-512, so a prod publish leaves client/package.json and client/pnpm-lock.yaml
-  alone. Move the client to a prod version in the same change as the redeploy it needs.
+  Only 'prod' moves the deployable client. A testing publish leaves client/package.json and
+  client/pnpm-lock.yaml alone.
 
 Prerequisite:
   Both channels build from the artifacts that 'pnpm build:presets' archives under circuits/dist/,
@@ -735,7 +726,7 @@ Examples:
   tsx scripts/publish.ts --channel testing 0.18.0-insecure.0
 
   # Publish to production
-  tsx scripts/publish.ts --channel prod 0.18.0
+  tsx scripts/publish.ts --channel prod 0.20.0
 
   # Test without publishing
   tsx scripts/publish.ts --channel testing --dry-run 0.18.0-insecure.0
@@ -746,12 +737,12 @@ Examples:
 The script will:
   1. Check for uncommitted changes
   2. Update versions in @crisp-e3/sdk, @crisp-e3/contracts, @crisp-e3/zk-inputs
-  2b. Build the SDK against the channel's preset
-  3. Update @crisp-e3/sdk dependency in client/package.json   (testing only)
+  2b. Build the SDK against the channel's preset set
+  3. Update @crisp-e3/sdk dependency in client/package.json   (prod only)
   4. Update pnpm-lock.yaml
   5. Build packages
   6. Publish to npm in dependency order (zk-inputs, then sdk, then contracts)
-  7. Update the standalone client/pnpm-lock.yaml               (testing only)
+  7. Update the standalone client/pnpm-lock.yaml               (prod only)
   8. Commit changes (no tags)
 
 Note: Make sure you're logged in to npm (npm login) before publishing.

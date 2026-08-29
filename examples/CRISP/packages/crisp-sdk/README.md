@@ -16,13 +16,13 @@ npm install @crisp-e3/sdk
 - **Merkle Tree Utilities**: Generate proofs for voter inclusion in the eligibility tree
 - **Vote Proof Generation**: Create zero-knowledge proofs for votes and mask votes
 - **Proof Verification**: Verify generated proofs using Noir circuits
-- **Selectable Parameters**: each release channel ships one preset as a separate entry point
+- **Selectable Parameters**: preset bundles are separate entry points and can be loaded on demand
 
 ## Choosing a preset
 
 Proving needs the BFV-shaped circuits, and those exist once per parameter set. They are not part of
-the main entry point: the `secure-8192` set is far larger than `insecure-512`, and no consumer needs
-both. Each release channel ships one preset subpath, so your bundler pulls only the one you import.
+the main entry point: the `secure-8192` set is far larger than `insecure-512`. Each preset has its
+own subpath, so your bundler can pull only the one the round needs.
 
 ```ts
 import { setCircuits } from '@crisp-e3/sdk'
@@ -39,7 +39,7 @@ In a browser, load it through a dynamic `import()` so the circuits become their 
 app boots without them:
 
 ```ts
-const { loadCircuits } = await import('@crisp-e3/sdk/insecure-512')
+const { loadCircuits } = await import('@crisp-e3/sdk/secure-8192')
 setCircuits(await loadCircuits())
 ```
 

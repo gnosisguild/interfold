@@ -1,6 +1,6 @@
 {
   "name": "@crisp-e3/sdk",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "type": "module",
   "author": {
     "name": "gnosisguild",
@@ -42,7 +42,7 @@
     "compile:fold": "cd ../../circuits/bin/fold && nargo compile",
     "compile:fold_onchain": "cd ../../circuits/bin/fold_onchain && nargo compile",
     "build:wasm": "pnpm -C ../crisp-zk-inputs build",
-    "build": "pnpm build:wasm && pnpm compile:circuits && pnpm stage:preset insecure-512 && tsup",
+    "build": "pnpm build:wasm && pnpm build:presets && tsup",
     "test": "pnpm stage:preset insecure-512 && vitest --run",
     "test:core-and-ballot-proofs": "pnpm stage:preset insecure-512 && vitest --run -t \"^(?!.*generateMaskVoteProof)\"",
     "test:mask-proofs": "pnpm stage:preset insecure-512 && vitest --run tests/vote.test.ts -t \"generateMaskVoteProof\"",
@@ -51,7 +51,7 @@
     "check:presets": "node ../../scripts/check-presets.mjs",
     "prepublishOnly": "pnpm check:presets",
     "build:testing": "pnpm build:wasm && pnpm check:staged insecure-512 && CRISP_PRESET=insecure-512 tsup",
-    "build:prod": "pnpm build:wasm && pnpm check:staged secure-8192 && CRISP_PRESET=secure-8192 tsup",
+    "build:prod": "pnpm build:wasm && pnpm check:staged insecure-512 && pnpm check:staged secure-8192 && tsup",
     "check:staged": "node ../../scripts/check-staged-preset.mjs"
   },
   "publishConfig": {

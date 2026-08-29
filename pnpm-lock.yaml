@@ -153,8 +153,8 @@ importers:
   examples/CRISP/client:
     dependencies:
       '@crisp-e3/sdk':
-        specifier: 0.18.0-insecure.0
-        version: 0.18.0-insecure.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.4.3)
+        specifier: 0.20.0
+        version: link:../packages/crisp-sdk
       '@emotion/babel-plugin':
         specifier: ^11.11.0
         version: 11.13.5
@@ -1725,12 +1725,6 @@ packages:
   '@colors/colors@1.5.0':
     resolution: {integrity: sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ==}
     engines: {node: '>=0.1.90'}
-
-  '@crisp-e3/sdk@0.18.0-insecure.0':
-    resolution: {integrity: sha512-1qwFF8sR1VDDoSH178gr+DzluMThGhdCNpx9SsMJLC+gpPlU8A7qKThNv1P7hxaMB12q15so6KJumhL7euf7Gg==}
-
-  '@crisp-e3/zk-inputs@0.18.0-insecure.0':
-    resolution: {integrity: sha512-vgIb8cixmxeLTYEfvmKlzGzMDQg1/Y1xc9wIcSrlDBZRxEdHz3bpnBV59GPVCG4Fx5obXHKDvILhyIdT2n8Nqw==}
 
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
@@ -12106,22 +12100,6 @@ snapshots:
 
   '@colors/colors@1.5.0':
     optional: true
-
-  '@crisp-e3/sdk@0.18.0-insecure.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.4.3)':
-    dependencies:
-      '@aztec/bb.js': 5.1.0
-      '@crisp-e3/zk-inputs': 0.18.0-insecure.0
-      '@noir-lang/noir_js': 1.0.0-beta.26
-      '@zk-kit/lean-imt': 2.2.5(bufferutil@4.1.0)(utf-8-validate@5.0.10)
-      poseidon-lite: 0.3.0
-      viem: 2.38.6(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.4.3)
-    transitivePeerDependencies:
-      - bufferutil
-      - typescript
-      - utf-8-validate
-      - zod
-
-  '@crisp-e3/zk-inputs@0.18.0-insecure.0': {}
 
   '@cspotcode/source-map-support@0.8.1':
     dependencies:

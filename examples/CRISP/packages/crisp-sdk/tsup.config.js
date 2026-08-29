@@ -7,15 +7,12 @@
 import { existsSync } from 'node:fs'
 import { defineConfig } from 'tsup'
 
-// Each preset is its own entry point, so a consumer's bundler pulls one set of BFV-shaped circuits
-// rather than both.
+// Each preset is its own entry point, so a consumer's bundler can load only the BFV-shaped circuits
+// the current round needs.
 //
-// A published tarball carries exactly one preset, selected by `CRISP_PRESET`, because the release
-// channels are split by preset: `testing` ships insecure-512 and `latest` ships secure-8192. The
-// secure circuits are far larger than the insecure ones, and shipping both would put that weight in
-// every install of either. Importing the preset a tarball does not carry then fails to resolve,
-// which is the right failure — the alternative is proving against parameters the deployed verifier
-// does not match, and that is only discovered on chain.
+// `CRISP_PRESET` builds one preset. The testing channel uses that to keep the package lightweight.
+// With `CRISP_PRESET` unset, every staged preset becomes an entry point. Production releases use
+// that path so one client can serve both secure mainnet rounds and insecure testnet rounds.
 //
 // With `CRISP_PRESET` unset the build takes whatever is staged, which is what local development
 // wants.

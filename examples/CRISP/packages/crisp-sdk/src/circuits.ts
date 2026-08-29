@@ -32,8 +32,8 @@ let registered: CircuitBundle | null = null
  * Install the preset-bound circuits used by `generateProof`.
  *
  * The bundle is not bundled into the main entry point, because the secure-8192 artifacts are more
- * than an order of magnitude larger than the insecure-512 ones and no consumer needs both. Load the
- * one you want from its subpath and register it once at start-up:
+ * than an order of magnitude larger than the insecure-512 ones. Load the preset selected by the
+ * round from its subpath and register it before proving:
  *
  * ```ts
  * import { setCircuits } from '@crisp-e3/sdk'

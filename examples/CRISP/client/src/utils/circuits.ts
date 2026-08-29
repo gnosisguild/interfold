@@ -5,46 +5,53 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { registeredPreset, setCircuits } from '@crisp-e3/sdk'
+import type { CircuitBundle, CircuitPreset } from '@crisp-e3/sdk'
 
-// The BFV-shaped circuits are ~2.9MB and ship as their own entry point per preset. Loading them
+// The BFV-shaped circuits ship as their own entry point per preset. Loading them
 // through a dynamic import gives the bundler a split point, so the app boots on the ~350KB main
 // entry and only pays for the circuits when someone actually votes.
 //
-// This testnet client carries only the insecure preset. Production clients install the `latest`
-// SDK release and import its secure preset instead. Check the round before proving so a deployment
-// mismatch fails here instead of producing a proof that the on-chain verifier rejects.
-let pending: Promise<void> | null = null
+// The production SDK carries both presets. The E3 stores the selected param set on chain, so the
+// client selects the matching circuits before proving instead of hardcoding one deployment mode.
+const LOADERS: Record<CircuitPreset, () => Promise<{ loadCircuits: () => Promise<CircuitBundle> }>> = {
+  'insecure-512': () => import('@crisp-e3/sdk/insecure-512'),
+  'secure-8192': () => import('@crisp-e3/sdk/secure-8192'),
+}
+
+let pending: Partial<Record<CircuitPreset, Promise<void>>> = {}
+
+const presetForParamSet = (paramSet: number): CircuitPreset | null => {
+  if (paramSet === 0) return 'insecure-512'
+  if (paramSet === 1) return 'secure-8192'
+  return null
+}
 
 /** Install the circuits needed for proving, at most once per session. */
 export const ensureCircuits = async (paramSet: number): Promise<void> => {
-  if (paramSet !== 0) {
-    throw new Error(
-      `This CRISP client carries insecure-512 circuits, but E3 param set ${paramSet} requires secure-8192. Use the production client built with @crisp-e3/sdk@latest.`,
-    )
+  const expectedPreset = presetForParamSet(paramSet)
+  if (!expectedPreset) {
+    throw new Error(`Unsupported E3 param set ${paramSet}.`)
   }
 
   const activePreset = registeredPreset()
-  if (activePreset) {
-    if (activePreset !== 'insecure-512') {
-      throw new Error(`The registered ${activePreset} circuits do not match E3 param set ${paramSet}.`)
-    }
+  if (activePreset === expectedPreset) {
     return
   }
 
-  pending ??= (async () => {
+  const load = (pending[expectedPreset] ??= (async () => {
     try {
-      const { loadCircuits } = await import('@crisp-e3/sdk/insecure-512')
+      const { loadCircuits } = await LOADERS[expectedPreset]()
       setCircuits(await loadCircuits())
     } catch (error) {
       // Let the next attempt retry rather than caching a failed fetch for the session.
-      pending = null
+      delete pending[expectedPreset]
       throw error
     }
-  })()
+  })())
 
-  await pending
+  await load
 
-  if (registeredPreset() !== 'insecure-512') {
-    throw new Error('The loaded circuit bundle does not match E3 param set 0.')
+  if (registeredPreset() !== expectedPreset) {
+    throw new Error(`The loaded circuit bundle does not match E3 param set ${paramSet}.`)
   }
 }
