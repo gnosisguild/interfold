@@ -189,26 +189,26 @@ pnpm test:integration --no-prebuild
 				</a>
 			</td>
 			<td align="center">
+				<a href="https://github.com/eccogrinder">
+					<img src="https://avatars.githubusercontent.com/u/100447090?v=4" width="100;" alt="eccogrinder"/>
+					<br />
+					<sub><b>marv</b></sub>
+				</a>
+			</td>
+			<td align="center">
 				<a href="https://github.com/0xkeygen">
 					<img src="https://avatars.githubusercontent.com/u/211014662?v=4" width="100;" alt="0xkeygen"/>
 					<br />
 					<sub><b>Bryant</b></sub>
 				</a>
 			</td>
+		</tr>
+		<tr>
 			<td align="center">
 				<a href="https://github.com/zahrajavar">
 					<img src="https://avatars.githubusercontent.com/u/81833289?v=4" width="100;" alt="zahrajavar"/>
 					<br />
 					<sub><b>Zara</b></sub>
-				</a>
-			</td>
-		</tr>
-		<tr>
-			<td align="center">
-				<a href="https://github.com/eccogrinder">
-					<img src="https://avatars.githubusercontent.com/u/100447090?v=4" width="100;" alt="eccogrinder"/>
-					<br />
-					<sub><b>marv</b></sub>
 				</a>
 			</td>
 			<td align="center">
