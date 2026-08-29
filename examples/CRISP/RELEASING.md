@@ -82,6 +82,11 @@ Both channels build from the artifacts that `pnpm build:presets` archives under
 The SDK build refuses artifacts that are missing or older than the sources, using the content digest
 that `stage-preset-artifacts.mjs` records at staging time.
 
+The default SDK build is intentionally the lightweight testing build. It ships only `insecure-512`
+so pull-request CI does not compile or bundle the large secure preset. Use the production channel,
+or `pnpm -C examples/CRISP/packages/crisp-sdk build:prod`, when the output must include both
+`insecure-512` and `secure-8192`.
+
 ```sh
 pnpm -C examples/CRISP build:presets # slow: compiles both presets
 

@@ -42,7 +42,7 @@
     "compile:fold": "cd ../../circuits/bin/fold && nargo compile",
     "compile:fold_onchain": "cd ../../circuits/bin/fold_onchain && nargo compile",
     "build:wasm": "pnpm -C ../crisp-zk-inputs build",
-    "build": "pnpm build:wasm && pnpm build:presets && tsup",
+    "build": "pnpm build:testing",
     "test": "pnpm stage:preset insecure-512 && vitest --run",
     "test:core-and-ballot-proofs": "pnpm stage:preset insecure-512 && vitest --run -t \"^(?!.*generateMaskVoteProof)\"",
     "test:mask-proofs": "pnpm stage:preset insecure-512 && vitest --run tests/vote.test.ts -t \"generateMaskVoteProof\"",

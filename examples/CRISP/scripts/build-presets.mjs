@@ -25,8 +25,8 @@ const REPO = resolve(CRISP, '..', '..')
 /**
  * Insecure is built last so the working tree is left on the default preset.
  *
- * A plain `pnpm build` in the SDK inlines whatever the tree currently holds, so ending on anything
- * else would quietly change what the next build produces.
+ * The default SDK build uses the insecure preset for CI speed, and production publishing uses the
+ * archived preset outputs. Ending on the default preset keeps local tools predictable.
  */
 const PRESETS = ['secure-8192', 'insecure-512']
 
@@ -53,4 +53,5 @@ for (const preset of PRESETS) {
 
 console.log(`\n✓ staged ${PRESETS.length} preset(s); tree left on ${PRESETS.at(-1)}`)
 console.log('  If the ballot circuits changed, regenerate the fold key hashes: scripts/compute_vk_hash.sh')
-console.log('  Then rebuild the SDK (pnpm -C packages/crisp-sdk build) and check: pnpm -C packages/crisp-sdk check:presets')
+console.log('  Then rebuild the production SDK: pnpm -C packages/crisp-sdk build:prod')
+console.log('  Then check it: CRISP_CHANNEL=latest pnpm -C packages/crisp-sdk check:presets')
