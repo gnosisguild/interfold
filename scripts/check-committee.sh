@@ -5,13 +5,16 @@
 # without even the implied warranty of MERCHANTABILITY
 # or FITNESS FOR A PARTICULAR PURPOSE.
 
-# Asserts that the committee selection is internally consistent across the five files
-# that encode it independently:
+# Asserts that the BFV parameters and committee selection are internally consistent across
+# the files that encode them independently:
 #
-#   1. circuits/lib/src/configs/committee/active.nr  (Noir-side active committee)
-#   2. packages/interfold-contracts/scripts/utils.ts   (BFV_DKG_H / BFV_THRESHOLD_T)
-#   3. crates/zk-helpers/src/ciphernodes_committee.rs (committee enum values, single source)
-#   4. packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol
+#   1. packages/interfold-contracts/scripts/protocol/constants.ts (deployment parameters)
+#   2. crates/fhe-params/src/constants.rs (ciphernode parameters)
+#   3. circuits/lib/src/configs/{insecure,secure}/threshold.nr (circuit parameters)
+#   4. circuits/lib/src/configs/committee/active.nr (Noir-side active committee)
+#   5. packages/interfold-contracts/scripts/utils.ts (deployment hashes and committee values)
+#   6. crates/zk-helpers/src/ciphernodes_committee.rs (committee enum values)
+#   7. packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol
 #
 # `circuits/bin/.active-preset.json` is only a local hydrated cache. It can point at Sepolia's
 # fast insecure-minimum artifacts while the checked-in production config points at secure-small.
@@ -29,8 +32,13 @@ cd "$REPO_ROOT"
 ACTIVE_NR="circuits/lib/src/configs/committee/active.nr"
 STAMP="circuits/bin/.active-preset.json"
 UTILS_TS="packages/interfold-contracts/scripts/utils.ts"
+PROTOCOL_CONSTANTS_TS="packages/interfold-contracts/scripts/protocol/constants.ts"
+FHE_CONSTANTS_RS="crates/fhe-params/src/constants.rs"
 COMMITTEE_RS="crates/zk-helpers/src/ciphernodes_committee.rs"
 ACTIVE_SOL="packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol"
+TASKS_TS="packages/interfold-contracts/tasks/interfold.ts"
+SDK_UTILS_TS="packages/interfold-sdk/src/utils.ts"
+EVM_HELPERS_RS="crates/evm-helpers/src/contracts.rs"
 RAN_STAMP_CHECK=false
 RAN_PARITY_CHECK=false
 
@@ -38,6 +46,16 @@ fail() {
   echo "❌ check:committee: $*" >&2
   exit 1
 }
+
+for required_file in \
+  "$PROTOCOL_CONSTANTS_TS" \
+  "$FHE_CONSTANTS_RS" \
+  "$ACTIVE_SOL" \
+  "$TASKS_TS" \
+  "$SDK_UTILS_TS" \
+  "$EVM_HELPERS_RS"; do
+  [[ -f "$required_file" ]] || fail "missing $required_file"
+done
 
 # 1. Extract committee name from active.nr (matches "crate::configs::committee::<name>::N_PARTIES").
 if [[ ! -f "$ACTIVE_NR" ]]; then
@@ -110,7 +128,100 @@ check_sol_committee minimum MINIMUM 0
 check_sol_committee micro MICRO 1
 check_sol_committee small SMALL 2
 
-# 5. Every chain-supported route in utils.ts must match the Noir committee shape and the
+# 5. The complete threshold parameter tuple must match across deployment tooling, ciphernodes,
+#    and Noir. The error variance is represented in Noir by the generated encryption bound.
+hex_csv_to_decimal() {
+  local input="$1"
+  local output=""
+  local item decimal
+  local -a items
+  IFS=',' read -r -a items <<< "$input"
+  for item in "${items[@]}"; do
+    decimal=$(printf '%u' "$((item))")
+    output="${output}${output:+,}${decimal}"
+  done
+  printf '%s' "$output"
+}
+
+error_bound_for_variance() {
+  node -e '
+const value = 3n * BigInt(process.argv[1]);
+if (value < 2n) {
+  process.stdout.write(value.toString());
+} else {
+  let current = value;
+  let next = (current + value / current) / 2n;
+  while (next < current) {
+    current = next;
+    next = (current + value / current) / 2n;
+  }
+  process.stdout.write(current.toString());
+}
+' "$1"
+}
+
+check_bfv_preset() {
+  local label="$1"
+  local ts_name="$2"
+  local rust_name="$3"
+  local noir_name="$4"
+  local ts_block rust_block rust_threshold noir_file
+  local ts_degree ts_plaintext ts_moduli ts_error
+  local rust_degree rust_plaintext rust_moduli rust_error
+  local noir_degree noir_plaintext noir_moduli noir_error_bound expected_error_bound
+
+  ts_block=$(awk -v marker="  ${ts_name}: {" '
+    $0 == marker { found = 1 }
+    found { print }
+    found && /^  },/ { exit }
+  ' "$PROTOCOL_CONSTANTS_TS")
+  rust_block=$(awk -v marker="pub mod ${rust_name} {" '
+    $0 == marker { found = 1 }
+    found { print }
+    found && /^}/ { exit }
+  ' "$FHE_CONSTANTS_RS")
+  rust_threshold=$(awk '
+    /^    pub mod threshold \{/ { found = 1 }
+    found { print }
+    found && /^    }/ { exit }
+  ' <<< "$rust_block")
+  noir_file="circuits/lib/src/configs/${noir_name}/threshold.nr"
+
+  [[ -n "$ts_block" && -n "$rust_threshold" && -f "$noir_file" ]] \
+    || fail "could not read the ${label} BFV parameter sources"
+
+  ts_degree=$(grep -E '^[[:space:]]*degree: [0-9]+n,' <<< "$ts_block" | sed -E 's/.*degree: ([0-9]+)n,.*/\1/')
+  ts_plaintext=$(grep -E '^[[:space:]]*plaintextModulus: [0-9]+n,' <<< "$ts_block" | sed -E 's/.*plaintextModulus: ([0-9]+)n,.*/\1/')
+  ts_moduli=$(grep -oE '0x[0-9a-fA-F]+n' <<< "$ts_block" | tr -d 'n' | tr '[:upper:]' '[:lower:]' | paste -sd, -)
+  ts_error=$(grep -E '^[[:space:]]*error1Variance: "[0-9]+",' <<< "$ts_block" | sed -E 's/.*"([0-9]+)".*/\1/')
+
+  rust_degree=$(grep -E '^[[:space:]]*pub const DEGREE: usize = [0-9]+;' <<< "$rust_block" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
+  rust_plaintext=$(grep -E 'PLAINTEXT_MODULUS: u64 = [0-9]+;' <<< "$rust_threshold" | sed -E 's/.*= ([0-9]+);/\1/')
+  rust_moduli=$(grep -oE '0x[0-9a-fA-F]+' <<< "$rust_threshold" | tr '[:upper:]' '[:lower:]' | paste -sd, -)
+  rust_error=$(grep -E 'ERROR1_VARIANCE: &str = "[0-9]+";' <<< "$rust_threshold" | sed -E 's/.*"([0-9]+)".*/\1/')
+
+  if [[ "$ts_degree" != "$rust_degree" || "$ts_plaintext" != "$rust_plaintext" || \
+        "$ts_moduli" != "$rust_moduli" || "$ts_error" != "$rust_error" ]]; then
+    fail "drift: ${label} BFV parameters differ between $PROTOCOL_CONSTANTS_TS and $FHE_CONSTANTS_RS"
+  fi
+
+  noir_degree=$(grep -E '^pub global N: u32 = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
+  noir_plaintext=$(grep -E '^pub global PLAINTEXT_MODULUS: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
+  noir_moduli=$(grep -E '^pub global QIS:' "$noir_file" | sed -E 's/.*= \[([^]]+)\];/\1/' | tr -d ' ')
+  noir_error_bound=$(grep -E '^pub global PK_GENERATION_B_ENC: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
+  expected_error_bound=$(error_bound_for_variance "$ts_error")
+
+  if [[ "$ts_degree" != "$noir_degree" || "$ts_plaintext" != "$noir_plaintext" || \
+        "$(hex_csv_to_decimal "$ts_moduli")" != "$noir_moduli" || \
+        "$expected_error_bound" != "$noir_error_bound" ]]; then
+    fail "drift: ${label} BFV parameters differ between $PROTOCOL_CONSTANTS_TS and $noir_file"
+  fi
+}
+
+check_bfv_preset insecure-512 insecure512 insecure_512 insecure
+check_bfv_preset secure-8192 secure8192 secure_8192 secure
+
+# 6. Every chain-supported route in utils.ts must match the Noir committee shape and the
 #    parameter/configuration hashes compiled into ActiveCryptoConfig.sol. Keep this check
 #    dependency-free because the Agent Harness runs it before Node dependencies are installed.
 sol_bytes32() {
@@ -134,6 +245,36 @@ for prefix in INSECURE SECURE; do
   sol_config_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
   if [[ "$utils_param_hash" != "$sol_param_hash" || "$utils_config_id" != "$sol_config_id" ]]; then
     fail "drift: $UTILS_TS ${prefix} hashes do not match $ACTIVE_SOL"
+  fi
+done
+
+extract_ts_config_id() {
+  local file="$1"
+  local param_set="$2"
+  sed -n '/function cryptoConfigIdForParamSet/,/^}/p' "$file" \
+    | grep -A2 "paramSet === ${param_set}" \
+    | grep -oE '0x[0-9a-fA-F]{64}' \
+    | head -n1
+}
+
+extract_rust_config_id() {
+  local file="$1"
+  local param_set="$2"
+  sed -n '/^fn crypto_config_id_for_param_set/,/^}/p' "$file" \
+    | grep -E "^[[:space:]]*${param_set} =>" \
+    | grep -oE '0x[0-9a-fA-F]{64}' \
+    | head -n1
+}
+
+for prefix_and_param_set in INSECURE:0 SECURE:1; do
+  prefix="${prefix_and_param_set%%:*}"
+  param_set="${prefix_and_param_set##*:}"
+  expected_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
+  task_id=$(extract_ts_config_id "$TASKS_TS" "$param_set")
+  sdk_id=$(extract_ts_config_id "$SDK_UTILS_TS" "$param_set")
+  evm_helper_id=$(extract_rust_config_id "$EVM_HELPERS_RS" "$param_set")
+  if [[ "$task_id" != "$expected_id" || "$sdk_id" != "$expected_id" || "$evm_helper_id" != "$expected_id" ]]; then
+    fail "drift: paramSet=${param_set} config ID must match $ACTIVE_SOL in tasks, SDK, and EVM helpers"
   fi
 done
 
@@ -181,7 +322,7 @@ EXPECTED_MAINNET_ROUTES="SECURE_SMALL_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_
 [[ "$MAINNET_ROUTES" == "$EXPECTED_MAINNET_ROUTES" ]] \
   || fail "$UTILS_TS mainnet routes must be secure-only small, micro, minimum; got $MAINNET_ROUTES"
 
-# 6. Optional local-cache note (when circuits have been built locally).
+# 7. Optional local-cache note (when circuits have been built locally).
 if [[ -f "$STAMP" ]]; then
   # Older stamps (written before build-circuits.ts learned about committees) lack the field.
   STAMP_COMMITTEE=$(grep -oE '"committee"\s*:\s*"[a-z]+"' "$STAMP" 2>/dev/null | grep -oE '"[a-z]+"$' | tr -d '"' || true)
@@ -194,7 +335,7 @@ if [[ -f "$STAMP" ]]; then
   fi
 fi
 
-# 7. Check every Rust enum row against its Noir committee module.
+# 8. Check every Rust enum row against its Noir committee module.
 if [[ ! -f "$COMMITTEE_RS" ]]; then
   fail "missing $COMMITTEE_RS"
 fi
@@ -226,7 +367,7 @@ $COMMITTEE_RS has (N=$rust_n, T=$rust_t, H=$rust_h) for $capitalized"
   fi
 done
 
-# 8. Parity matrices for every committee must match what `generate_parity_matrices` would
+# 9. Parity matrices for every committee must match what `generate_parity_matrices` would
 #    write right now. Hand-edits to parity_*.nr would slip past every other check, so verify
 #    them by regenerating into a tempdir and diffing. On-disk files are kept `nargo fmt`-clean
 #    (see `scripts/lint-circuits.sh`), so we format the generator output before comparing.
@@ -319,4 +460,4 @@ else
   echo "  (skipping parity-matrix drift check: $GEN_BIN not built. Run \`cargo build -p e3-zk-helpers --bin generate_parity_matrices --release\` to enable.)" >&2
 fi
 
-echo "✓ check:committee: all six BFV routes and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) consistent across active.nr, ActiveCryptoConfig.sol, utils.ts, Rust committee rows$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"
+echo "✓ check:committee: BFV tuples, configuration IDs, all six routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) are consistent across TypeScript, Rust, Noir, and Solidity$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"

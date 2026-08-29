@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 // Shared test constants. Importable by every spec file.
+import { BFV_PARAMS } from "../../scripts/protocol/constants";
 import { ethers } from "./connection";
 
 // ── Addresses ────────────────────────────────────────────────────────────────
@@ -33,39 +34,32 @@ export const PROOF = "0x1337";
 // ── Active BFV parameter set ────────────────────────────────────────────────
 const abiCoder = ethers.AbiCoder.defaultAbiCoder();
 
-/** The insecure-512 parameter set compiled into the active test circuits. */
-export const BFV_PARAMS_DEFAULT = abiCoder.encode(
-  [
-    "tuple(uint256 degree,uint256 plaintext_modulus,uint256[] moduli,string error1_variance)",
-  ],
-  [
+function encodeBfvParams(params: {
+  degree: bigint;
+  plaintextModulus: bigint;
+  moduli: readonly bigint[];
+  error1Variance: string;
+}): string {
+  return abiCoder.encode(
     [
-      ethers.toBigInt(512),
-      ethers.toBigInt(100),
-      [ethers.toBigInt("0xffffee001"), ethers.toBigInt("0xffffc4001")],
-      "3",
+      "tuple(uint256 degree,uint256 plaintext_modulus,uint256[] moduli,string error1_variance)",
     ],
-  ],
-);
+    [
+      [
+        params.degree,
+        params.plaintextModulus,
+        [...params.moduli],
+        params.error1Variance,
+      ],
+    ],
+  );
+}
+
+/** The insecure-512 parameter set compiled into the active test circuits. */
+export const BFV_PARAMS_DEFAULT = encodeBfvParams(BFV_PARAMS.insecure512);
 
 /** The secure-8192 parameter set that Sepolia/local deployments can also register. */
-export const BFV_PARAMS_SECURE = abiCoder.encode(
-  [
-    "tuple(uint256 degree,uint256 plaintext_modulus,uint256[] moduli,string error1_variance)",
-  ],
-  [
-    [
-      ethers.toBigInt(8192),
-      ethers.toBigInt(131072),
-      [
-        ethers.toBigInt("0x0400000001460001"),
-        ethers.toBigInt("0x0400000000ea0001"),
-        ethers.toBigInt("0x0400000000920001"),
-      ],
-      "2331171231419734472395201298275918858425592709120",
-    ],
-  ],
-);
+export const BFV_PARAMS_SECURE = encodeBfvParams(BFV_PARAMS.secure8192);
 
 /** Circuit, BFV parameters, and verifier generation used by this build. */
 export const ACTIVE_CRYPTO_CONFIG_ID = ethers.keccak256(

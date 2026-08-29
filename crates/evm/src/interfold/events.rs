@@ -485,6 +485,50 @@ mod tests {
     }
 
     #[test]
+    fn preset_config_ids_are_accepted() {
+        let expected = [
+            (
+                0,
+                "0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78",
+            ),
+            (
+                1,
+                "0xd9c86e581f8291ffb5b63595600e8d096ed30b16e2e0a6634a76c22b1f58fb4e",
+            ),
+        ];
+
+        for (param_set, expected_id) in expected {
+            let preset = BfvPreset::from_on_chain_param_set(param_set).unwrap();
+            let event = IInterfold::E3Requested {
+                e3Id: U256::from(param_set),
+                e3: IInterfold::E3 {
+                    seed: U256::ZERO,
+                    committeeSize: 0,
+                    requestBlock: U256::ZERO,
+                    inputWindow: [U256::ZERO; 2],
+                    encryptionSchemeId: B256::ZERO,
+                    e3Program: Address::ZERO,
+                    paramSet: param_set,
+                    customParams: Bytes::new(),
+                    decryptionVerifier: Address::ZERO,
+                    pkVerifier: Address::ZERO,
+                    committeePublicKey: B256::ZERO,
+                    ciphertextOutput: B256::ZERO,
+                    plaintextOutput: Bytes::new(),
+                    requester: Address::ZERO,
+                    ciphertextCommitment: B256::ZERO,
+                },
+                cryptoConfigId: expected_id.parse::<B256>().unwrap(),
+            };
+
+            let converted = E3RequestedWithChainId(event, 1)
+                .try_into_e3_requested()
+                .unwrap();
+            assert_eq!(converted.params_preset, preset);
+        }
+    }
+
+    #[test]
     fn test_extractor_decodes_e3_stage_changed() {
         let event = IInterfold::E3StageChanged {
             e3Id: U256::from(42u64),

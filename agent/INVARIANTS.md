@@ -337,14 +337,20 @@ design citation alone does not establish current runtime behavior.
 
 ### Committee config sync (the `check:committee` gate)
 
-- Committee `(N, T, H)` must stay synchronized across:
-  `circuits/lib/src/configs/committee/active.nr`, `packages/interfold-contracts/scripts/utils.ts`
-  (`BFV_DKG_H`/`BFV_THRESHOLD_T`), `crates/zk-helpers/src/ciphernodes_committee.rs`, and
-  `packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol`. The Solidity file also binds
-  the BFV parameter-set hashes. `circuits/bin/.active-preset.json` records only the local hydrated
-  cache and may differ from the production chain pair. Drift means the next build silently produces
-  verifiers or proofs for the wrong configuration. Switch only with
-  `pnpm build:circuits --committee <name>`; enforced by `scripts/check-committee.sh`.
+- Committee `(N, T, H)` and each complete BFV parameter tuple must stay synchronized. The tuple is
+  defined for deployment in `packages/interfold-contracts/scripts/protocol/constants.ts`, for
+  ciphernodes in `crates/fhe-params/src/constants.rs`, and for circuits in
+  `circuits/lib/src/configs/{insecure,secure}/threshold.nr`. Committee values also appear in
+  `circuits/lib/src/configs/committee/active.nr`, `packages/interfold-contracts/scripts/utils.ts`,
+  `crates/zk-helpers/src/ciphernodes_committee.rs`, and
+  `packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol`. The generated Solidity and
+  TypeScript values bind the BFV parameter-set hashes and configuration IDs. The gate verifies the
+  tuple, the circuit error bound, and every runtime configuration-ID copy. The local
+  `circuits/bin/.active-preset.json` cache may differ from the production chain pair. Drift means a
+  deployment can register parameters that ciphernodes or circuits do not implement. Regenerate
+  configuration constants with `pnpm build:circuits sync-config --preset <name> --committee <name>`;
+  switch and build circuits only with `pnpm build:circuits --committee <name>`. Both paths are
+  enforced by `scripts/check-committee.sh`.
 - Canonical sizes: `minimum` (3,1,2) · `micro` (9,4,5) · `small` (19,9,10) — must mirror `mod.nr`
   and `CiphernodesCommitteeSize::values()`. — `scripts/circuit-constants.ts`
 - Wrapper Solidity verifiers (`BfvPkVerifier`, `BfvDecryptionVerifier`) have an `(H, T)`-specific

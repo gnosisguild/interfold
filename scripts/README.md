@@ -187,6 +187,9 @@ pnpm build:circuits --dry-run
 
 # Get source hash for change detection
 pnpm build:circuits hash
+
+# Regenerate protocol hashes and config IDs without compiling circuits
+pnpm build:circuits sync-config --preset insecure-512 --committee minimum
 ```
 
 ### Committee sizes
@@ -223,7 +226,7 @@ the generator would produce.
 
 - `--preset <name>` - Parameter preset: `insecure-512` (default), `secure-8192`, or `all`
 - `--committee <name>` - Committee size: `minimum` (default), `micro`, `small`
-- `--skip-utils-patch` - Skip rewriting `BFV_DKG_H` / `BFV_THRESHOLD_T` in
+- `--skip-utils-patch` - Skip rewriting committee values and BFV configuration hashes in
   `packages/interfold-contracts/scripts/utils.ts`
 - `--group <groups>` - Circuit groups (comma-separated: dkg,threshold)
 - `--circuit <name>` - Build specific circuit(s)
@@ -232,6 +235,10 @@ the generator would produce.
 - `-o, --output <dir>` - Output directory (default: dist/circuits)
 - `--dry-run` - Show what would be built
 - `--no-clean` - Don't clean output directory
+
+`sync-config` updates only `scripts/utils.ts` and `ActiveCryptoConfig.sol`. Use it when BFV
+parameter constants change and the prebuilt circuit artifacts already exist. It does not compile
+Noir circuits or regenerate verification keys.
 
 ### Prerequisites
 

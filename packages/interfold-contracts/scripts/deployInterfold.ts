@@ -3,7 +3,6 @@
 // This file is provided WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
-import { ethers as ethersLib } from "ethers";
 import hre from "hardhat";
 
 import { autoCleanForLocalhost } from "./cleanIgnitionState";
@@ -27,7 +26,9 @@ import { deployAndSavePoseidonT3 } from "./deployAndSave/poseidonT3";
 import { deployAndSaveSlashingManager } from "./deployAndSave/slashingManager";
 import { deployAndSaveAllVerifiers } from "./deployAndSave/verifiers";
 import { deployMocks } from "./deployMocks";
+import { BFV_PARAMS } from "./protocol/constants";
 import { currentNodeRelease } from "./protocol/nodeRelease";
+import { encodeBfvParams } from "./protocol/values";
 import {
   ACTIVE_BFV_COMMITTEE_N,
   ACTIVE_BFV_COMMITTEE_SIZE,
@@ -36,45 +37,6 @@ import {
   isLocalDeploymentChain,
   send,
 } from "./utils";
-
-// BFV parameter presets — hardcoded from crates/fhe-params/src/constants.rs
-// to avoid a cyclic dependency on @interfold/sdk.
-const BFV_PARAMS = {
-  insecure512: {
-    degree: 512n,
-    plaintextModulus: 100n,
-    moduli: [0xffffee001n, 0xffffc4001n],
-    error1Variance: "3",
-  },
-  secure8192: {
-    degree: 8192n,
-    plaintextModulus: 131072n,
-    moduli: [0x0400000001460001n, 0x0400000000ea0001n, 0x0400000000920001n],
-    error1Variance: "2331171231419734472395201298275918858425592709120",
-  },
-} as const;
-
-function encodeBfvParams(params: {
-  degree: bigint;
-  plaintextModulus: bigint;
-  moduli: readonly bigint[];
-  error1Variance: string;
-}): string {
-  const abiCoder = ethersLib.AbiCoder.defaultAbiCoder();
-  return abiCoder.encode(
-    [
-      "tuple(uint256 degree, uint256 plaintext_modulus, uint256[] moduli, string error1_variance)",
-    ],
-    [
-      [
-        params.degree,
-        params.plaintextModulus,
-        [...params.moduli],
-        params.error1Variance,
-      ],
-    ],
-  );
-}
 
 /**
  * Default timeout configuration (in seconds)

@@ -24,7 +24,7 @@ function cryptoConfigIdForParamSet(paramSet: number): string {
     return "0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78";
   }
   if (paramSet === 1) {
-    return "0x17654d80a8bd5631a6f52cc9f86ac091b352ac95943366a8a41e7336e9a920fc";
+    return "0xd9c86e581f8291ffb5b63595600e8d096ed30b16e2e0a6634a76c22b1f58fb4e";
   }
   throw new Error(`Unsupported BFV parameter set: ${paramSet}`);
 }
