@@ -58,10 +58,14 @@ export function checkReleaseSafeguards(rootDir = ROOT_DIR) {
   requireText(release, 'node scripts/release.mjs prepare', 'the release tag is not bound to main history')
   requireText(release, 'group: release-promotion-${{ github.repository }}', 'release promotions can overlap')
 
-  for (const unsafeText of ['continue-on-error: true', 'cachix/cachix-action', 'cargo workspaces publish']) {
+  for (const unsafeText of ['continue-on-error: true', 'cachix/cachix-action', 'cargo workspaces publish', 'npm@latest']) {
     if (release.includes(unsafeText)) {
       fail(`release workflow contains unsafe operation: ${unsafeText}`)
     }
+  }
+
+  if (!/^  NPM_VERSION: '\d+\.\d+\.\d+'$/m.test(release)) {
+    fail('release workflow does not pin an exact npm version')
   }
 
   for (const publisher of ['build-ciphernode-image-release', 'build-e3-support-release', 'publish-npm-packages']) {
@@ -71,6 +75,11 @@ export function checkReleaseSafeguards(rootDir = ROOT_DIR) {
   requireText(release, 'Required circuit-artifacts branch is missing', 'missing circuit artifacts do not fail closed')
   requireText(release, 'if-no-files-found: error', 'missing release archives do not fail artifact upload')
   requireText(release, 'node scripts/release.mjs publish-npm', 'npm publication cannot resume safely')
+  requireText(
+    jobSource(release, 'publish-npm-packages'),
+    'npm install -g "npm@${NPM_VERSION}"',
+    'npm publication does not install the pinned npm version',
+  )
 
   const createRelease = jobSource(release, 'create-github-release')
   requireText(createRelease, 'publication-gate', 'GitHub release creation does not require all publications')

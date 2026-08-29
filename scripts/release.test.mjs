@@ -105,12 +105,19 @@ describe('npm publication recovery', () => {
       remoteMissing: false,
       tagVersion: '1.2.3',
       viewError: '',
+      packOutput: [
+        {
+          filename: 'release-test-1.2.3.tgz',
+          integrity: 'sha512-candidate',
+          name: '@interfold/release-test',
+        },
+      ],
     }
     const execute = (_command, args, cwd) => {
       switch (args[0]) {
         case 'pack':
           writeFileSync(join(cwd, 'release-test-1.2.3.tgz'), '')
-          return result('[{"filename":"release-test-1.2.3.tgz","integrity":"sha512-candidate"}]\n')
+          return result(`${JSON.stringify(state.packOutput)}\n`)
         case 'view':
           if (state.viewError) return result('', 1, state.viewError)
           if (args[2] === 'dist.integrity') {
@@ -134,6 +141,21 @@ describe('npm publication recovery', () => {
 
   test('skips matching bytes that already have the requested tag', () => {
     const { execute, packageDir, rootDir, state } = fixture()
+    assert.equal(publishNpmPackage(packageDir, 'latest', { execute, rootDir }), 'skipped')
+    assert.equal(state.published, false)
+    assert.equal(existsSync(join(packageDir, 'release-test-1.2.3.tgz')), false)
+  })
+
+  test('accepts npm 12 package-keyed pack output', () => {
+    const { execute, packageDir, rootDir, state } = fixture()
+    state.packOutput = {
+      '@interfold/release-test': {
+        filename: 'release-test-1.2.3.tgz',
+        integrity: 'sha512-candidate',
+        name: '@interfold/release-test',
+      },
+    }
+
     assert.equal(publishNpmPackage(packageDir, 'latest', { execute, rootDir }), 'skipped')
     assert.equal(state.published, false)
     assert.equal(existsSync(join(packageDir, 'release-test-1.2.3.tgz')), false)

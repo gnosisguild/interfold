@@ -21,6 +21,7 @@ env:
   SUPPORT_DOCKERFILE_PATH: crates/support/Dockerfile
   CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
   SUPPORT_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/e3-support
+  NPM_VERSION: '11.19.1'
   NOIR_TOOLCHAIN: v1.0.0-beta.26
   MNEMONIC: 'test test test test test test test test test test test junk'
   INFURA_API_KEY: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
@@ -224,8 +225,8 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Upgrade npm
-        run: npm install -g npm@latest
+      - name: Install npm
+        run: npm install -g "npm@${NPM_VERSION}"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4

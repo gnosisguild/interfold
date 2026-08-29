@@ -27,6 +27,18 @@ function isMissingNpmPackage(result) {
   return result.status !== 0 && /(?:E404|404 Not Found|is not in this registry)/i.test(`${result.stdout}\n${result.stderr}`)
 }
 
+function packedArchive(packed, packageName) {
+  if (Array.isArray(packed)) {
+    return packed.find((entry) => entry?.name === packageName) ?? packed[0]
+  }
+
+  if (packed && typeof packed === 'object') {
+    return packed[packageName]
+  }
+
+  return undefined
+}
+
 export function publishNpmPackage(packageDirectory, distTag, options = {}) {
   if (!['latest', 'next'].includes(distTag)) {
     fail(`refusing unsupported npm distribution tag: ${distTag}`)
@@ -38,7 +50,7 @@ export function publishNpmPackage(packageDirectory, distTag, options = {}) {
   const packageJson = readJson(packageDir, 'package.json')
   const packageSpec = `${packageJson.name}@${packageJson.version}`
   const packed = JSON.parse(runChecked(execute, 'npm', ['pack', '--json'], packageDir))
-  const { filename, integrity: localIntegrity } = packed[0] ?? {}
+  const { filename, integrity: localIntegrity } = packedArchive(packed, packageJson.name) ?? {}
 
   if (!filename || !localIntegrity) {
     fail(`npm pack did not return an archive and integrity for ${packageSpec}`)
