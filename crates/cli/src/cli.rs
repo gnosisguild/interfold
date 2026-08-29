@@ -101,9 +101,21 @@ impl Cli {
                 // Existing init branch
                 match self.command {
                     Commands::Rev { features } => rev::execute(out, features).await?,
-                    Commands::Init {path, template, skip_cleanup} => {
+                    Commands::Init {
+                        path,
+                        template,
+                        skip_cleanup,
+                        skip_install,
+                    } => {
                         setup_simple_tracing(log_level);
-                        init::execute(path, template, skip_cleanup, self.verbose > 0).await?
+                        init::execute(
+                            path,
+                            template,
+                            skip_cleanup,
+                            skip_install,
+                            self.verbose > 0,
+                        )
+                        .await?
                     },
                     Commands::Ciphernode {
                         command: CiphernodeCommands::Setup {
@@ -260,6 +272,11 @@ pub enum Commands {
         /// for testing the installer.
         #[arg(long)]
         skip_cleanup: bool,
+
+        /// Do not install JavaScript packages. Use this option for offline setup or unpublished
+        /// release candidates.
+        #[arg(long)]
+        skip_install: bool,
     },
 
     /// Compile an Interfold project

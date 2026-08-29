@@ -36,7 +36,12 @@ const TEMP_DIR: &str = "/tmp/__interfold-tmp-folder.1";
 const DEFAULT_TEMPLATE_PATH: &str = ".";
 const DEFAULT_BRANCH: &str = "main";
 
-async fn install_interfold(cwd: &PathBuf, template: Option<String>, verbose: bool) -> Result<()> {
+async fn install_interfold(
+    cwd: &PathBuf,
+    template: Option<String>,
+    skip_install: bool,
+    verbose: bool,
+) -> Result<()> {
     let mut spinner = TaskSpinner::new("".to_string(), verbose);
 
     spinner.update("Downloading template...".to_string()).await;
@@ -265,22 +270,26 @@ async fn install_interfold(cwd: &PathBuf, template: Option<String>, verbose: boo
 
     spinner.complete_task("Submodules set up\n");
 
-    spinner
-        .update("Installing packages with pnpm...".to_string())
-        .await;
+    if skip_install {
+        spinner.complete_task("Package installation skipped\n");
+    } else {
+        spinner
+            .update("Installing packages with pnpm...".to_string())
+            .await;
 
-    spinner
-        .run("", || async {
-            let npm = PkgMan::new(pkgman::PkgManKind::PNPM)?.with_cwd(cwd.clone());
-            let mut args = vec!["install"];
-            if !verbose {
-                args.push("--silent");
-            }
-            npm.run(&args).await
-        })
-        .await?;
+        spinner
+            .run("", || async {
+                let npm = PkgMan::new(pkgman::PkgManKind::PNPM)?.with_cwd(cwd.clone());
+                let mut args = vec!["install"];
+                if !verbose {
+                    args.push("--silent");
+                }
+                npm.run(&args).await
+            })
+            .await?;
 
-    spinner.complete_task("Packages installed\n");
+        spinner.complete_task("Packages installed\n");
+    }
 
     spinner.update("Setting up local git repository...").await;
 
@@ -311,6 +320,7 @@ pub async fn execute(
     location: Option<PathBuf>,
     template: Option<String>,
     skip_cleanup: bool,
+    skip_install: bool,
     verbose: bool,
 ) -> Result<()> {
     println!(
@@ -365,7 +375,7 @@ pub async fn execute(
     task_spinner.complete_task("Paths prepared");
     task_spinner.done("");
 
-    match install_interfold(&cwd, template, verbose).await {
+    match install_interfold(&cwd, template, skip_install, verbose).await {
         Ok(_) => Ok(()),
         Err(e) => {
             if !skip_cleanup {

@@ -23,13 +23,21 @@ use std::path::Path;
 /// Default committee for downloaded release artifacts (minimum matches dev/CI convention).
 const RELEASE_COMMITTEE: CiphernodesCommitteeSize = CiphernodesCommitteeSize::Minimum;
 
+fn integration_config() -> ZkConfig {
+    let mut config = ZkConfig::default();
+    if let Ok(url) = env::var("E3_TEST_CIRCUITS_DOWNLOAD_URL") {
+        config.circuits_download_url = url;
+    }
+    config
+}
+
 fn preset_committee_dir(circuits_dir: &Path, preset: &BfvPreset) -> std::path::PathBuf {
     circuits_dir.join(preset.artifacts_dir_for_committee(RELEASE_COMMITTEE.as_str()))
 }
 
 #[tokio::test]
 async fn test_full_flow_download_circuits_prove_and_verify() {
-    let config = ZkConfig::default();
+    let config = integration_config();
 
     let temp = get_tempdir().unwrap();
     let backend = test_backend(temp.path(), config);
@@ -193,7 +201,7 @@ async fn test_download_bb_rejects_wrong_checksum() {
 
 #[tokio::test]
 async fn test_download_circuits_verifies_checksums() {
-    let config = ZkConfig::default();
+    let config = integration_config();
     let temp = get_tempdir().unwrap();
     let backend = test_backend(temp.path(), config);
 

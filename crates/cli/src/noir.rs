@@ -9,6 +9,7 @@ use clap::Subcommand;
 use e3_config::AppConfig;
 use e3_console::{log, Console};
 use e3_zk_prover::{SetupStatus, ZkBackend};
+use std::path::PathBuf;
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum NoirCommands {
@@ -16,6 +17,10 @@ pub enum NoirCommands {
     Setup {
         #[arg(long, short)]
         force: bool,
+
+        /// Install circuits from a local release archive instead of downloading them.
+        #[arg(long, value_name = "PATH")]
+        circuits_archive: Option<PathBuf>,
     },
 }
 
@@ -26,8 +31,11 @@ pub async fn execute(out: Console, command: NoirCommands, config: &AppConfig) ->
         NoirCommands::Status => {
             execute_status(out, &backend).await?;
         }
-        NoirCommands::Setup { force } => {
-            execute_setup(out, &backend, force).await?;
+        NoirCommands::Setup {
+            force,
+            circuits_archive,
+        } => {
+            execute_setup(out, &backend, force, circuits_archive).await?;
         }
     }
 
@@ -42,8 +50,11 @@ pub async fn execute_without_config(out: Console, command: NoirCommands) -> Resu
         NoirCommands::Status => {
             execute_status(out, &backend).await?;
         }
-        NoirCommands::Setup { force } => {
-            execute_setup(out, &backend, force).await?;
+        NoirCommands::Setup {
+            force,
+            circuits_archive,
+        } => {
+            execute_setup(out, &backend, force, circuits_archive).await?;
         }
     }
 
@@ -121,7 +132,12 @@ async fn execute_status(out: Console, backend: &ZkBackend) -> Result<()> {
     Ok(())
 }
 
-async fn execute_setup(out: Console, backend: &ZkBackend, force: bool) -> Result<()> {
+async fn execute_setup(
+    out: Console,
+    backend: &ZkBackend,
+    force: bool,
+    circuits_archive: Option<PathBuf>,
+) -> Result<()> {
     log!(out, "Setting up ZK prover...\n");
     log!(
         out,
@@ -134,6 +150,14 @@ async fn execute_setup(out: Console, backend: &ZkBackend, force: bool) -> Result
         backend.config.required_circuits_version
     );
 
+    if let Some(archive) = circuits_archive.as_deref() {
+        log!(out, "  circuits archive:      {}\n", archive.display());
+        backend
+            .install_circuits_archive(archive)
+            .await
+            .map_err(|e| anyhow!("Failed to install circuits archive: {}", e))?;
+    }
+
     if force {
         log!(out, "Force reinstalling ZK prover components...\n");
 
@@ -142,10 +166,12 @@ async fn execute_setup(out: Console, backend: &ZkBackend, force: bool) -> Result
             .download_bb()
             .await
             .map_err(|e| anyhow!("Failed to download bb: {}", e))?;
-        backend
-            .download_circuits()
-            .await
-            .map_err(|e| anyhow!("Failed to download circuits: {}", e))?;
+        if circuits_archive.is_none() {
+            backend
+                .download_circuits()
+                .await
+                .map_err(|e| anyhow!("Failed to download circuits: {}", e))?;
+        }
     } else {
         let status = backend.check_status().await;
         if matches!(status, SetupStatus::Ready) {
