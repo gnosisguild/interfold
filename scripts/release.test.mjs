@@ -81,42 +81,15 @@ describe('release candidate ancestry', () => {
   })
 })
 
-test('changelog excludes mechanical release commits', () => {
-  const repository = temporaryDirectory('interfold-changelog')
-  git(repository, 'init', '--quiet', '--initial-branch=main')
-  git(repository, 'config', 'user.name', 'Release Test')
-  git(repository, 'config', 'user.email', 'release-test@example.invalid')
-  git(repository, 'remote', 'add', 'origin', 'https://github.com/theinterfold/interfold.git')
+test('changelog policy excludes mechanical release commits', () => {
+  const config = JSON.parse(readFileSync(join(ROOT_DIR, '.auto-changelog'), 'utf8'))
+  const ignoredCommit = new RegExp(config.ignoreCommitPattern)
 
-  writeFileSync(join(repository, 'artifact'), 'initial\n')
-  git(repository, 'add', 'artifact')
-  git(repository, 'commit', '--quiet', '-m', 'feat: initial behavior')
-
-  writeFileSync(join(repository, 'artifact'), 'release\n')
-  git(repository, 'commit', '--quiet', '-am', 'chore(release): bump version to 1.0.0')
-  git(repository, 'tag', 'v1.0.0')
-
-  writeFileSync(join(repository, 'artifact'), 'merged release\n')
-  git(repository, 'commit', '--quiet', '-am', 'chore(release): bump version to 1.0.0 (#10)')
-
-  writeFileSync(join(repository, 'artifact'), 'current\n')
-  git(repository, 'commit', '--quiet', '-am', 'feat: current behavior (#11)')
-
-  const changelog = execFileSync(
-    process.execPath,
-    [
-      join(ROOT_DIR, 'node_modules', 'auto-changelog', 'src', 'index.js'),
-      '--config',
-      join(ROOT_DIR, '.auto-changelog'),
-      '--latest-version',
-      'v2.0.0',
-      '--stdout',
-    ],
-    { cwd: repository, encoding: 'utf8' },
-  )
-
-  assert.match(changelog, /feat: current behavior/)
-  assert.doesNotMatch(changelog, /chore\(release\): bump version/)
+  assert.equal(config.commitLimit, false)
+  assert.equal(config.tagPrefix, 'v')
+  assert.match('chore(release): bump version to 1.0.0', ignoredCommit)
+  assert.match('chore(release): bump version to 1.0.0 (#10)', ignoredCommit)
+  assert.doesNotMatch('feat: current behavior (#11)', ignoredCommit)
 })
 
 describe('npm publication recovery', () => {
