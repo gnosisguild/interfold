@@ -150,21 +150,6 @@ jobs:
         working-directory: dappnode
         run: npx --no-install dappnodesdk build --skip_upload --skip_save --arch linux/amd64
 
-  build-nix-flake:
-    name: Build Nix Flake
-    runs-on: ubuntu-latest
-    needs: validate-and-prepare
-    steps:
-      - uses: actions/checkout@v6
-      - uses: cachix/install-nix-action@v30
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-      - name: Check pinned Nix dependency hashes
-        run: bash ./scripts/nix-versions.sh
-      - name: Build the Nix package
-        run: nix build .#default
-
   build-binaries:
     name: Build Binaries (${{ matrix.os_name }}-${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
@@ -334,7 +319,7 @@ jobs:
   release-candidate-gate:
     name: Approve Fully Validated Candidate
     runs-on: ubuntu-latest
-    needs: [validate-and-prepare, candidate-ci, build-nix-flake, build-binaries, download-circuits]
+    needs: [validate-and-prepare, candidate-ci, build-binaries, download-circuits]
     steps:
       - name: Confirm candidate qualification
         run: echo "Candidate ${{ needs.validate-and-prepare.outputs.candidate_sha }} passed full CI and artifact checks."

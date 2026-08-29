@@ -354,7 +354,6 @@ run. Publication cannot start until these checks succeed:
 - The tag points to a commit in `origin/main`.
 - Every regular CI job passes, including CRISP and recovery tests.
 - Linux and Apple Silicon binaries build.
-- The Nix package builds without the private Cachix cache.
 - The `circuit-artifacts` branch contains the complete source-matched release matrix.
 
 After qualification, the workflow publishes versioned container images and npm packages. A stable

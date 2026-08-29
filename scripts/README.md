@@ -89,7 +89,7 @@ The tag workflow then:
 
 - Confirms that the tag belongs to `origin/main`.
 - Runs every CI job for the exact tagged commit.
-- Requires the Nix build, binaries, and source-matched circuit archive.
+- Requires the binaries and source-matched circuit archive.
 - Publishes versioned containers and npm packages.
 - Creates the GitHub release only after every required publication succeeds.
 

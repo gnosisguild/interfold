@@ -69,41 +69,6 @@ interfoldup uninstall
 interfoldup uninstall --system
 ```
 
-## Install with Nix
-
-If you use [Nix](https://nixos.org/) with flakes enabled, you can get a complete runtime environment
-with no additional dependencies — Nix handles everything including installing the `bb` backend.
-
-Get a devshell directly without installing it:
-
-```bash
-nix develop github:theinterfold/interfold/{branch,tag,commit}
-```
-
-This will build from source using the nix package manager and provide a runtime environemnt for
-interfold. It might take some time but the result will be cached on your local nix store for future
-execution.
-
-```bash
-❯ nix develop github:theinterfold/interfold/v0.2.2
-❯ interfold --version
-interfold 0.2.2
-❯ bb --version
-3.0.0-nightly.20251104
-❯ echo $E3_CUSTOM_BB
-/nix/store/6da5va1malbj4pjrzn5lan6n51m4hg9h-bb/bin/bb
-```
-
-NOTE: On first run, Nix will ask you to trust our binary cache. Say yes to both prompts to download
-pre-built binaries instead of building from source:
-
-```
-do you want to allow configuration setting 'extra-substituters' to be set to '...'? y
-do you want to permanently mark this value as trusted? y
-```
-
-If you decline, everything still works — it just builds from source, which takes longer.
-
 ## Manual Installation
 
 If you prefer to install manually:
