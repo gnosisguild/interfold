@@ -10,9 +10,11 @@ import { defineConfig } from 'tsup'
 // Each preset is its own entry point, so a consumer's bundler can load only the BFV-shaped circuits
 // the current round needs.
 //
-// `CRISP_PRESET` builds one preset. The testing channel uses that to keep the package lightweight.
-// With `CRISP_PRESET` unset, every staged preset becomes an entry point. Production releases use
-// that path so one client can serve both secure mainnet rounds and insecure testnet rounds.
+// `CRISP_PRESET` builds one real preset. The testing channel uses that to keep the package
+// lightweight, and emits resolver-safe stubs for the other exported preset subpaths.
+//
+// With `CRISP_PRESET` unset, every staged preset becomes a real entry point. Production releases
+// use that path so one client can serve both secure mainnet rounds and insecure testnet rounds.
 //
 // With `CRISP_PRESET` unset the build takes whatever is staged, which is what local development
 // wants.
@@ -26,6 +28,11 @@ if (requested !== undefined && !PRESETS.includes(requested)) {
 }
 
 let selected
+const entry = {
+  index: 'src/index.ts',
+  'workers/generateCircuitInputs.worker': 'src/workers/generateCircuitInputs.worker.ts',
+}
+
 if (requested === undefined) {
   selected = PRESETS.filter(staged)
   for (const preset of PRESETS) {
@@ -40,8 +47,12 @@ if (requested === undefined) {
   console.log(`tsup: building the ${requested} entry only (CRISP_PRESET).`)
 }
 
+for (const preset of PRESETS) {
+  entry[`presets/${preset}`] = selected.includes(preset) ? `src/presets/${preset}.ts` : `src/presets/${preset}.unavailable.ts`
+}
+
 export default defineConfig({
-  entry: ['src/index.ts', 'src/workers/generateCircuitInputs.worker.ts', ...selected.map((preset) => `src/presets/${preset}.ts`)],
+  entry,
   include: ['src/**/*.ts'],
   splitting: false,
   sourcemap: true,

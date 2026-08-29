@@ -40,6 +40,13 @@ const EXPECTED_DEGREE = { 'insecure-512': 512, 'secure-8192': 8192 }
 /** Below this a "built" entry is a stub or a failed inline rather than a real circuit bundle. */
 const MIN_BYTES = 100 * 1024
 
+/** Above this an off-channel entry is probably a real circuit bundle rather than a resolver stub. */
+const MAX_STUB_BYTES = 10 * 1024
+
+// The bundler may emit the inlined JSON as a JS object literal, so the key can be quoted or bare
+// and the space is optional. Match all of those rather than one spelling.
+const hasDegree = (source, value) => new RegExp(`["']?length["']?\\s*:\\s*${value}\\b`).test(source)
+
 // npm gives `prepublishOnly` no way to see `--tag`, so the channel comes through the environment
 // when the publish scripts set it, and through argv when run by hand.
 const channel = process.argv[2] ?? process.env.CRISP_CHANNEL
@@ -82,8 +89,15 @@ for (const preset of wanted) {
 }
 
 for (const other of others) {
-  if (existsSync(join(SDK, 'dist', 'presets', `${other}.js`))) {
-    problems.push(`${other}: dist/presets/${other}.js must not ship on "${channel}".`)
+  const path = join(SDK, 'dist', 'presets', `${other}.js`)
+  if (!existsSync(path)) continue
+
+  const source = readFileSync(path, 'utf8')
+  const size = statSync(path).size
+  const containsKnownDegree = Object.values(EXPECTED_DEGREE).some((degree) => hasDegree(source, degree))
+
+  if (size > MAX_STUB_BYTES || containsKnownDegree) {
+    problems.push(`${other}: "${channel}" may ship only a resolver stub for off-channel presets, not a real circuit bundle.`)
   }
 }
 
@@ -100,15 +114,11 @@ for (const preset of wanted) {
   const degree = EXPECTED_DEGREE[preset]
   const unexpected = Object.entries(EXPECTED_DEGREE).filter(([candidate]) => candidate !== preset)
 
-  // The bundler may emit the inlined JSON as a JS object literal, so the key can be quoted or bare
-  // and the space is optional. Match all of those rather than one spelling.
-  const hasDegree = (value) => new RegExp(`["']?length["']?\\s*:\\s*${value}\\b`).test(source)
-
-  if (!hasDegree(degree)) {
+  if (!hasDegree(source, degree)) {
     problems.push(`${preset}: dist/presets/${preset}.js contains no length-${degree} arrays; the inlined circuits are not ${preset}.`)
   }
   for (const [otherPreset, otherDegree] of unexpected) {
-    if (hasDegree(otherDegree)) {
+    if (hasDegree(source, otherDegree)) {
       problems.push(`${preset}: dist/presets/${preset}.js contains length-${otherDegree} arrays, which belong to ${otherPreset}.`)
     }
   }

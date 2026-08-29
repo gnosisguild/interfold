@@ -24,7 +24,7 @@ import { circuitSourcesDigest } from './circuit-sources.mjs'
 const CRISP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const PRESETS = ['insecure-512', 'secure-8192']
 
-const RESTAGE = 'Run `pnpm build:presets` from examples/CRISP; it compiles both presets and archives them.'
+const RESTAGE = 'Run `pnpm build:presets` for one preset, or `pnpm build:presets:all` for both presets, from examples/CRISP.'
 
 const fail = (...lines) => {
   for (const line of lines) console.error(line)

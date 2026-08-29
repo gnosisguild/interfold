@@ -16,12 +16,14 @@ generated for, so mixing presets across the two packages produces a round that r
 
 Each preset is a separate SDK subpath. The production package carries both subpaths so one client
 can read the E3's on-chain `paramSet` and load the matching preset. The testing package carries only
-the insecure preset so local and testnet installs stay small.
+the real insecure preset so local and testnet installs stay small. It also ships tiny stubs for the
+other exported subpaths, so bundlers can resolve the client import graph without bundling secure
+circuits into test builds.
 
 ```ts
 // on @crisp-e3/sdk@testing
 import { loadCircuits } from '@crisp-e3/sdk/insecure-512' // resolves
-import { loadCircuits } from '@crisp-e3/sdk/secure-8192' // ERR_MODULE_NOT_FOUND
+import { loadCircuits } from '@crisp-e3/sdk/secure-8192' // resolves, throws if called
 
 // on @crisp-e3/sdk@latest
 import { loadCircuits as loadInsecure } from '@crisp-e3/sdk/insecure-512'
@@ -81,10 +83,11 @@ SDK builds stage their required artifacts under `circuits/dist/<preset>/`, which
 The build refuses artifacts that are missing or older than the sources, using the content digest
 that `stage-preset-artifacts.mjs` records at staging time.
 
-The default SDK build is intentionally the lightweight testing build. It builds and ships only
-`insecure-512` so pull-request CI does not compile or bundle the large secure preset. Use the
-production channel, or `pnpm -C examples/CRISP/packages/crisp-sdk build:prod`, when the output must
-include both `insecure-512` and `secure-8192`.
+The default SDK build is intentionally the lightweight testing build. It builds and ships only the
+real `insecure-512` bundle, plus resolver stubs for off-channel presets, so pull-request CI does not
+compile or bundle the large secure preset. Use the production channel, or
+`pnpm -C examples/CRISP/packages/crisp-sdk build:prod`, when the output must include real
+`insecure-512` and `secure-8192` bundles.
 
 ```sh
 # testing — insecure-512 under the `testing` tag, leaves the client alone
@@ -108,8 +111,8 @@ Two gates run on the way:
 - `check-staged-preset.mjs` (in `build:testing` / `build:prod`) refuses staged artifacts the
   circuits have moved past.
 - `check-presets.mjs` (`prepublishOnly` on both packages) refuses to publish a channel whose
-  artifacts do not match its preset set — a missing preset, a stub bundle, an exports entry pointing
-  at nothing, missing verifiers, or an unexpected preset bundle.
+  artifacts do not match its preset set — a missing preset, a wanted preset that is only a stub, an
+  exports entry pointing at nothing, missing verifiers, or an unexpected real preset bundle.
 
 ## Deploying
 
