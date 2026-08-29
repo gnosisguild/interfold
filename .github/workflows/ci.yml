@@ -965,10 +965,12 @@ jobs:
       - name: Build interfold circuits
         run: pnpm build:circuits --preset insecure-512 --committee minimum --skip-if-built
 
-      - name: Setup ZK prover
+      - name: Install and verify candidate circuits
+        working-directory: ./examples/CRISP
         run: |
-          tar -C dist -czf "$RUNNER_TEMP/circuits-candidate.tar.gz" circuits/
+          tar -C "$GITHUB_WORKSPACE/dist" -czf "$RUNNER_TEMP/circuits-candidate.tar.gz" circuits/
           interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz"
+          interfold noir setup
 
       - name: Run Playwright tests
         working-directory: ./examples/CRISP
@@ -1463,10 +1465,12 @@ jobs:
       - name: Build interfold circuits
         run: pnpm build:circuits --preset insecure-512 --committee minimum --skip-if-built
 
-      - name: Setup ZK prover
+      - name: Install and verify candidate circuits
+        working-directory: ./templates/default
         run: |
-          tar -C dist -czf "$RUNNER_TEMP/circuits-candidate.tar.gz" circuits/
+          tar -C "$GITHUB_WORKSPACE/dist" -czf "$RUNNER_TEMP/circuits-candidate.tar.gz" circuits/
           interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz"
+          interfold noir setup
 
       - name: Verify downloaded artifacts
         run: |
