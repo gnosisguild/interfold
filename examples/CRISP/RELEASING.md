@@ -35,7 +35,7 @@ enough for secure mainnet rounds and insecure test deployments.
 
 Testing releases carry a prerelease identifier; production releases do not.
 
-```
+```text
 0.18.0-insecure.0   tag: testing    insecure-512
 0.20.0              tag: latest     insecure-512 + secure-8192
 ```
@@ -61,7 +61,7 @@ re-resolves the whole client dependency tree (it pulled `zod@4` in place of `zod
 `wagmi`, and `connectkit`), and it makes Vite pre-bundle the SDK as an ordinary dependency, which
 breaks the worker subpath:
 
-```
+```text
 The file does not exist at ".../client/node_modules/.vite/deps/
 workers/generateCircuitInputs.worker.js?worker_file&type=module"
 → [generateProof] failed → the e2e vote never reaches the wallet signature
@@ -77,19 +77,16 @@ Publish through `scripts/publish.ts`. It selects the preset from the release cha
 packages, publishes in dependency order, and updates the standalone client lockfile after npm serves
 the new SDK version.
 
-Both channels build from the artifacts that `pnpm build:presets` archives under
-`circuits/dist/<preset>/`, which git does not track. Run that command whenever the circuits change.
-The SDK build refuses artifacts that are missing or older than the sources, using the content digest
+SDK builds stage their required artifacts under `circuits/dist/<preset>/`, which git does not track.
+The build refuses artifacts that are missing or older than the sources, using the content digest
 that `stage-preset-artifacts.mjs` records at staging time.
 
-The default SDK build is intentionally the lightweight testing build. It ships only `insecure-512`
-so pull-request CI does not compile or bundle the large secure preset. Use the production channel,
-or `pnpm -C examples/CRISP/packages/crisp-sdk build:prod`, when the output must include both
-`insecure-512` and `secure-8192`.
+The default SDK build is intentionally the lightweight testing build. It builds and ships only
+`insecure-512` so pull-request CI does not compile or bundle the large secure preset. Use the
+production channel, or `pnpm -C examples/CRISP/packages/crisp-sdk build:prod`, when the output must
+include both `insecure-512` and `secure-8192`.
 
 ```sh
-pnpm -C examples/CRISP build:presets # slow: compiles both presets
-
 # testing — insecure-512 under the `testing` tag, leaves the client alone
 pnpm -C examples/CRISP publish:packages --channel testing 0.19.0-insecure.0
 

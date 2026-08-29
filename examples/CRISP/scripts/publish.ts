@@ -717,9 +717,9 @@ Channels:
   client/pnpm-lock.yaml alone.
 
 Prerequisite:
-  Both channels build from the artifacts that 'pnpm build:presets' archives under circuits/dist/,
-  which git does not track. Run it first when the circuits changed; the SDK build refuses stale or
-  missing artifacts (pnpm -C packages/crisp-sdk check:staged <preset>).
+  The SDK build stages the circuit artifacts it needs under circuits/dist/, which git does not
+  track. The testing channel stages only insecure-512. The production channel stages both presets.
+  The build refuses stale or missing artifacts (pnpm -C packages/crisp-sdk check:staged <preset>).
 
 Examples:
   # Publish to the testing channel (testnets, demos)

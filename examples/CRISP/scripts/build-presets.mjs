@@ -5,7 +5,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-// Compile and stage the CRISP circuits for every preset, so the SDK can publish both.
+// Compile and stage the CRISP circuits for the requested preset set.
 //
 // The preset is a global compile-time choice (circuits/lib/src/configs/default/mod.nr), so the
 // presets cannot be built concurrently — each pass switches the tree, compiles, and archives the
@@ -21,14 +21,34 @@ import { fileURLToPath } from 'node:url'
 
 const CRISP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(CRISP, '..', '..')
+const ALL_PRESETS = ['secure-8192', 'insecure-512']
 
-/**
- * Insecure is built last so the working tree is left on the default preset.
- *
- * The default SDK build uses the insecure preset for CI speed, and production publishing uses the
- * archived preset outputs. Ending on the default preset keeps local tools predictable.
- */
-const PRESETS = ['secure-8192', 'insecure-512']
+const usage = () => {
+  console.error('Usage: build-presets.mjs [--preset insecure-512|secure-8192] [--all]')
+  console.error('Defaults to --preset insecure-512 for pull-request CI and local development.')
+}
+
+const args = process.argv.slice(2)
+let requested = 'insecure-512'
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i]
+  if (arg === '--all') {
+    requested = 'all'
+  } else if (arg === '--preset') {
+    requested = args[++i]
+  } else {
+    usage()
+    process.exit(1)
+  }
+}
+
+const PRESETS = requested === 'all' ? ALL_PRESETS : [requested]
+for (const preset of PRESETS) {
+  if (!ALL_PRESETS.includes(preset)) {
+    usage()
+    process.exit(1)
+  }
+}
 
 const run = (cmd, args, cwd) => {
   console.log(`   $ ${cmd} ${args.join(' ')}`)
@@ -53,5 +73,9 @@ for (const preset of PRESETS) {
 
 console.log(`\n✓ staged ${PRESETS.length} preset(s); tree left on ${PRESETS.at(-1)}`)
 console.log('  If the ballot circuits changed, regenerate the fold key hashes: scripts/compute_vk_hash.sh')
-console.log('  Then rebuild the production SDK: pnpm -C packages/crisp-sdk build:prod')
-console.log('  Then check it: CRISP_CHANNEL=latest pnpm -C packages/crisp-sdk check:presets')
+if (requested === 'all') {
+  console.log('  Then rebuild the production SDK: pnpm -C packages/crisp-sdk build:prod')
+  console.log('  Then check it: CRISP_CHANNEL=latest pnpm -C packages/crisp-sdk check:presets')
+} else {
+  console.log('  Then rebuild the testing SDK: pnpm -C packages/crisp-sdk build')
+}

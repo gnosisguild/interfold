@@ -39,17 +39,18 @@ export const ensureCircuits = async (paramSet: number): Promise<void> => {
   }
 
   const load = (pending[expectedPreset] ??= (async () => {
-    try {
-      const { loadCircuits } = await LOADERS[expectedPreset]()
-      setCircuits(await loadCircuits())
-    } catch (error) {
-      // Let the next attempt retry rather than caching a failed fetch for the session.
-      delete pending[expectedPreset]
-      throw error
-    }
+    const { loadCircuits } = await LOADERS[expectedPreset]()
+    setCircuits(await loadCircuits())
   })())
 
-  await load
+  try {
+    await load
+  } finally {
+    // Cache only in-flight loads. A later preset switch must rerun setCircuits().
+    if (pending[expectedPreset] === load) {
+      delete pending[expectedPreset]
+    }
+  }
 
   if (registeredPreset() !== expectedPreset) {
     throw new Error(`The loaded circuit bundle does not match E3 param set ${paramSet}.`)
