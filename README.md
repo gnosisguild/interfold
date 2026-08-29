@@ -348,11 +348,10 @@ pnpm release:tag 1.0.0-beta.1
 
 ### What the Release Workflow Requires
 
-The tag starts a new full CI run for the exact tagged commit. Path filters are disabled for this
-run. Publication cannot start until these checks succeed:
+The tag workflow does not repeat the repository CI that qualified the merged `main` commit.
+Publication cannot start until these release checks succeed:
 
 - The tag points to a commit in `origin/main`.
-- Every regular CI job passes, including CRISP and recovery tests.
 - Linux and Apple Silicon binaries build.
 - The `circuit-artifacts` branch contains the complete source-matched release matrix.
 

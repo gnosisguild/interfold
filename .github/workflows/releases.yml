@@ -1,7 +1,6 @@
 name: Release
 
 permissions:
-  actions: write
   id-token: write
   contents: write
   packages: write
@@ -45,14 +44,6 @@ jobs:
       - name: Validate release candidate
         id: release
         run: node scripts/release.mjs prepare
-
-  candidate-ci:
-    name: Validate Exact Release Candidate
-    needs: validate-and-prepare
-    uses: ./.github/workflows/ci.yml
-    with:
-      release_candidate: true
-    secrets: inherit
 
   build-ciphernode-image-release:
     name: Build & Push ciphernode (release)
@@ -318,12 +309,12 @@ jobs:
             dist/circuits/checksums.json
 
   release-candidate-gate:
-    name: Approve Fully Validated Candidate
+    name: Approve Release Artifacts
     runs-on: ubuntu-latest
-    needs: [validate-and-prepare, candidate-ci, build-binaries, download-circuits]
+    needs: [validate-and-prepare, build-binaries, download-circuits]
     steps:
       - name: Confirm candidate qualification
-        run: echo "Candidate ${{ needs.validate-and-prepare.outputs.candidate_sha }} passed full CI and artifact checks."
+        run: echo "Candidate ${{ needs.validate-and-prepare.outputs.candidate_sha }} is on main and passed release artifact checks."
 
   publication-gate:
     name: Verify Every Release Publication

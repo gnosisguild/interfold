@@ -42,21 +42,16 @@ function requireText(source, text, message) {
 }
 
 export function checkReleaseSafeguards(rootDir = ROOT_DIR) {
-  const ci = readFileSync(join(rootDir, '.github/workflows/ci.yml'), 'utf8')
   const release = readFileSync(join(rootDir, '.github/workflows/releases.yml'), 'utf8')
   const bump = readFileSync(join(rootDir, 'scripts/bump-versions.ts'), 'utf8')
   const packageJson = readJson(rootDir, 'package.json')
 
-  requireText(ci, 'workflow_call:', 'the release workflow cannot call CI')
-  requireText(
-    ci,
-    `FORCE="\${{ github.event_name == 'workflow_dispatch' || inputs.release_candidate }}"`,
-    'release candidate CI does not force every path-filtered job',
-  )
-  requireText(release, 'uses: ./.github/workflows/ci.yml', 'the release does not test its exact tagged commit')
-  requireText(release, 'release_candidate: true', 'the release does not run complete CI')
   requireText(release, 'node scripts/release.mjs prepare', 'the release tag is not bound to main history')
   requireText(release, 'group: release-promotion-${{ github.repository }}', 'release promotions can overlap')
+
+  if (release.includes('uses: ./.github/workflows/ci.yml')) {
+    fail('release workflow repeats CI that already qualified the main commit')
+  }
 
   for (const unsafeText of ['continue-on-error: true', 'cachix/cachix-action', 'cargo workspaces publish', 'npm@latest']) {
     if (release.includes(unsafeText)) {
@@ -71,6 +66,11 @@ export function checkReleaseSafeguards(rootDir = ROOT_DIR) {
   for (const publisher of ['build-ciphernode-image-release', 'build-e3-support-release', 'publish-npm-packages']) {
     requireText(jobSource(release, publisher), 'release-candidate-gate', `${publisher} can publish before candidate qualification`)
   }
+
+  const candidateGate = jobSource(release, 'release-candidate-gate')
+  requireText(candidateGate, 'validate-and-prepare', 'release artifacts are not bound to the validated main commit')
+  requireText(candidateGate, 'build-binaries', 'publication can start without release binaries')
+  requireText(candidateGate, 'download-circuits', 'publication can start without source-matched circuits')
 
   requireText(release, 'Required circuit-artifacts branch is missing', 'missing circuit artifacts do not fail closed')
   requireText(release, 'if-no-files-found: error', 'missing release archives do not fail artifact upload')
