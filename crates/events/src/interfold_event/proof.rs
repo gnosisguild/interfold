@@ -148,6 +148,18 @@ pub enum CircuitName {
     DkgAggregator,
     /// Phase-7 decryption aggregator (folded C6 via `c6_fold` + C7).
     DecryptionAggregator,
+    /// SK coefficient-range proof used by the root-committed chunk pipeline.
+    SkShareComputationChunk,
+    /// ESM coefficient-range proof used by the root-committed chunk pipeline.
+    ESmShareComputationChunk,
+    /// Recursive batch of C2 chunk proofs.
+    C2ChunkBatch,
+    /// Type-bound SK terminal projection from a complete C2 chunk accumulator.
+    SkC2ChunkFinalize,
+    /// Type-bound ESM terminal projection from a complete C2 chunk accumulator.
+    ESmC2ChunkFinalize,
+    /// Combines type-bound terminal C2a and C2b chunk proofs.
+    C2abChunkFold,
 }
 
 impl CircuitName {
@@ -157,6 +169,9 @@ impl CircuitName {
             CircuitName::PkGeneration => "pk_generation",
             CircuitName::SkShareComputation => "sk_share_computation",
             CircuitName::ESmShareComputation => "e_sm_share_computation",
+            CircuitName::SkShareComputationChunk => "sk_share_computation_chunk",
+            CircuitName::ESmShareComputationChunk => "esm_share_computation_chunk",
+            CircuitName::C2ChunkBatch => "c2_chunk_batch",
             CircuitName::ShareEncryption => "share_encryption",
             CircuitName::DkgShareDecryption => "share_decryption",
             CircuitName::PkAggregation => "pk_aggregation",
@@ -164,6 +179,9 @@ impl CircuitName {
             CircuitName::DecryptedSharesAggregation => "decrypted_shares_aggregation",
             CircuitName::C3Fold => "c3_fold",
             CircuitName::C3FoldKernel => "c3_fold_kernel",
+            CircuitName::SkC2ChunkFinalize => "sk_c2_chunk_finalize",
+            CircuitName::ESmC2ChunkFinalize => "esm_c2_chunk_finalize",
+            CircuitName::C2abChunkFold => "c2ab_chunk_fold",
             CircuitName::C6Fold => "c6_fold",
             CircuitName::C6FoldKernel => "c6_fold_kernel",
             CircuitName::C2abFold => "c2ab_fold",
@@ -182,6 +200,8 @@ impl CircuitName {
             CircuitName::PkBfv => "dkg",
             CircuitName::SkShareComputation => "dkg",
             CircuitName::ESmShareComputation => "dkg",
+            CircuitName::SkShareComputationChunk => "dkg",
+            CircuitName::ESmShareComputationChunk => "dkg",
             CircuitName::ShareEncryption => "dkg",
             CircuitName::DkgShareDecryption => "dkg",
             CircuitName::PkGeneration => "threshold",
@@ -190,6 +210,10 @@ impl CircuitName {
             CircuitName::DecryptedSharesAggregation => "threshold",
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
+            | CircuitName::C2ChunkBatch
+            | CircuitName::SkC2ChunkFinalize
+            | CircuitName::ESmC2ChunkFinalize
+            | CircuitName::C2abChunkFold
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
             | CircuitName::C2abFold
@@ -219,7 +243,10 @@ impl CircuitName {
                 fields: PK_GENERATION_OUTPUTS,
             },
             CircuitName::SkShareComputation | CircuitName::ESmShareComputation => {
-                CircuitOutputLayout::Dynamic
+                CircuitOutputLayout::None
+            }
+            CircuitName::SkShareComputationChunk | CircuitName::ESmShareComputationChunk => {
+                CircuitOutputLayout::None
             }
             CircuitName::DkgShareDecryption => CircuitOutputLayout::Fixed {
                 fields: DKG_SHARE_DECRYPTION_OUTPUTS,
@@ -236,6 +263,10 @@ impl CircuitName {
             CircuitName::DecryptedSharesAggregation => CircuitOutputLayout::None,
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
+            | CircuitName::C2ChunkBatch
+            | CircuitName::SkC2ChunkFinalize
+            | CircuitName::ESmC2ChunkFinalize
+            | CircuitName::C2abChunkFold
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
             | CircuitName::C2abFold
@@ -279,6 +310,43 @@ mod tests {
             ArcBytes::from_bytes(&[0u8; 8]),
             ArcBytes::from_bytes(signals),
         )
+    }
+
+    #[test]
+    fn circuit_name_discriminants_preserve_durable_order() {
+        let expected = [
+            (CircuitName::PkBfv, 0),
+            (CircuitName::PkGeneration, 1),
+            (CircuitName::SkShareComputation, 2),
+            (CircuitName::ESmShareComputation, 3),
+            (CircuitName::ShareEncryption, 4),
+            (CircuitName::DkgShareDecryption, 5),
+            (CircuitName::PkAggregation, 6),
+            (CircuitName::ThresholdShareDecryption, 7),
+            (CircuitName::DecryptedSharesAggregation, 8),
+            (CircuitName::C3Fold, 9),
+            (CircuitName::C3FoldKernel, 10),
+            (CircuitName::C6Fold, 11),
+            (CircuitName::C6FoldKernel, 12),
+            (CircuitName::C2abFold, 13),
+            (CircuitName::C3abFold, 14),
+            (CircuitName::C4abFold, 15),
+            (CircuitName::NodeFold, 16),
+            (CircuitName::NodesFold, 17),
+            (CircuitName::NodesFoldKernel, 18),
+            (CircuitName::DkgAggregator, 19),
+            (CircuitName::DecryptionAggregator, 20),
+            (CircuitName::SkShareComputationChunk, 21),
+            (CircuitName::ESmShareComputationChunk, 22),
+            (CircuitName::C2ChunkBatch, 23),
+            (CircuitName::SkC2ChunkFinalize, 24),
+            (CircuitName::ESmC2ChunkFinalize, 25),
+            (CircuitName::C2abChunkFold, 26),
+        ];
+
+        for (circuit, discriminant) in expected {
+            assert_eq!(circuit as u32, discriminant, "{circuit:?}");
+        }
     }
 
     #[test]
@@ -398,7 +466,9 @@ mod tests {
     #[test]
     fn input_layout_share_encryption() {
         let layout = CircuitName::ShareEncryption.input_layout();
-        assert_eq!(layout.field_count(), Some(2));
+        // C3 has 4 public inputs: expected_pk_commitment, expected_message_commitment,
+        // party_idx, mod_idx (matches the Noir main and SHARE_ENCRYPTION_INPUTS).
+        assert_eq!(layout.field_count(), Some(4));
     }
 
     #[test]

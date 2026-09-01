@@ -217,6 +217,9 @@ class NoirCircuitBuilder {
       '/// `configs::{insecure,secure}::dkg` re-exports the relevant one as `PARITY_MATRIX`.',
       `pub use crate::configs::committee::${committee}::parity_insecure::PARITY_MATRIX as PARITY_MATRIX_INSECURE;`,
       `pub use crate::configs::committee::${committee}::parity_secure::PARITY_MATRIX as PARITY_MATRIX_SECURE;`,
+      `pub use crate::configs::committee::${committee}::smudging::{`,
+      '    INSECURE_E_SM_BIT, INSECURE_E_SM_BOUND, SECURE_E_SM_BIT, SECURE_E_SM_BOUND,',
+      '};',
       '',
     ].join('\n')
     writeFileSync(activeNrPath, content)
@@ -239,7 +242,7 @@ class NoirCircuitBuilder {
         stdio: ['ignore', 'pipe', 'inherit'],
       })
       execSync('nargo fmt', { cwd: libDir, stdio: ['ignore', 'pipe', 'inherit'] })
-      console.log(`   📋 Regenerated parity_{insecure,secure}.nr for committee: ${committee}`)
+      console.log(`   📋 Regenerated parity and smudging artifacts for committee: ${committee}`)
     } catch (err: any) {
       throw new Error(
         `Failed to regenerate parity matrices for committee=${committee}: ${err.message}\n` +
@@ -923,7 +926,9 @@ library ActiveCryptoConfig {
   }
 
   private isFoldOrAggregation(circuit: CircuitInfo): boolean {
-    return circuit.group === CIRCUIT_GROUPS.AGGREGATION
+    // C2 terminal projections are ZK leaves for C2abChunkFold, not non-ZK accumulators.
+    const name = basename(circuit.path)
+    return circuit.group === CIRCUIT_GROUPS.AGGREGATION && !['sk_c2_chunk_finalize', 'esm_c2_chunk_finalize'].includes(name)
   }
 
   /** Aggregation circuits that are also published on-chain as EVM verifiable proofs. */

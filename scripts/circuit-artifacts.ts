@@ -18,11 +18,11 @@ const METADATA_FILES = new Set(['.git', 'SOURCE_HASH', 'SHA256SUMS', 'checksums.
 export const RELEASE_REQUIRED_PAIRS = SUPPORTED_PRESET_COMMITTEE_PAIRS.map(({ preset, committee }) => [preset, committee] as const)
 
 const REQUIRED_BASE_CIRCUITS = [
-  'dkg/e_sm_share_computation/e_sm_share_computation',
+  'dkg/esm_share_computation_chunk/esm_share_computation_chunk',
   'dkg/pk/pk',
   'dkg/share_decryption/share_decryption',
   'dkg/share_encryption/share_encryption',
-  'dkg/sk_share_computation/sk_share_computation',
+  'dkg/sk_share_computation_chunk/sk_share_computation_chunk',
   'threshold/decrypted_shares_aggregation/decrypted_shares_aggregation',
   'threshold/pk_aggregation/pk_aggregation',
   'threshold/pk_generation/pk_generation',
@@ -30,10 +30,13 @@ const REQUIRED_BASE_CIRCUITS = [
   'threshold/user_data_encryption/user_data_encryption',
   'threshold/user_data_encryption_ct0/user_data_encryption_ct0',
   'threshold/user_data_encryption_ct1/user_data_encryption_ct1',
+  'recursive_aggregation/esm_c2_chunk_finalize/esm_c2_chunk_finalize',
+  'recursive_aggregation/sk_c2_chunk_finalize/sk_c2_chunk_finalize',
 ] as const
 
 const REQUIRED_AGGREGATION_CIRCUITS = [
-  'recursive_aggregation/c2ab_fold/c2ab_fold',
+  'recursive_aggregation/c2_chunk_batch/c2_chunk_batch',
+  'recursive_aggregation/c2ab_chunk_fold/c2ab_chunk_fold',
   'recursive_aggregation/c3_fold/c3_fold',
   'recursive_aggregation/c3_fold_kernel/c3_fold_kernel',
   'recursive_aggregation/c3ab_fold/c3ab_fold',

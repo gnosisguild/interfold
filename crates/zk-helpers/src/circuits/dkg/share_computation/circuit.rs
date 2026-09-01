@@ -31,4 +31,7 @@ pub struct ShareComputationCircuitData {
     pub parity_matrix: Vec<ParityMatrix>,
     pub n_parties: u32,
     pub threshold: u32,
+    /// C2 coefficient chunk size (must divide the polynomial degree). Must equal the
+    /// `SHARE_COMPUTATION_CHUNK_SIZE` compiled into the Noir circuit.
+    pub chunk_size: u32,
 }
