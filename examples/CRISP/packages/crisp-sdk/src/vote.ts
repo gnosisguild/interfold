@@ -17,7 +17,7 @@ import { Barretenberg, BackendType, UltraHonkBackend } from '@aztec/bb.js'
 // The BFV-shaped circuits arrive through `setCircuits()` — see ./circuits.
 import foldCircuit from '../../../circuits/bin/fold/target/crisp_fold.json'
 import foldOnchainCircuit from '../../../circuits/bin/fold_onchain/target/crisp_onchain_fold.json'
-import userDataEncryptionCircuit from '../../../../../circuits/bin/threshold/user_data_encryption/target/user_data_encryption.json'
+import userDataEncryptionCircuit from '../../../../../circuits/bin/threshold/target/user_data_encryption.json'
 import { requireCircuits } from './circuits'
 import { bytesToHex, encodeAbiParameters, parseAbiParameters, numberToHex, getAddress, keccak256 } from 'viem/utils'
 import { Hex } from 'viem'
