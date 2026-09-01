@@ -69,6 +69,22 @@ describe('CommitteePublicKeyAssembler', () => {
     expect(new CommitteePublicKeyAssembler().add(event)).toBeUndefined()
   })
 
+  it('allows another publisher after a candidate fails semantic validation', () => {
+    const wrongBytes = new Uint8Array([1, 2, 3])
+    const validBytes = new Uint8Array([4, 5, 6])
+    const [wrong] = eventsFor(wrongBytes, keccak256(wrongBytes), 13n)
+    const [valid] = eventsFor(validBytes, keccak256(validBytes), 13n)
+    const assembler = new CommitteePublicKeyAssembler()
+
+    expect(assembler.add(wrong)?.publicKey).toEqual(wrongBytes)
+    expect(
+      assembler.add({
+        ...valid,
+        publisher: '0x2222222222222222222222222222222222222222',
+      })?.publicKey,
+    ).toEqual(validBytes)
+  })
+
   it('evicts old partial and completed E3 state at the configured bound', () => {
     const large = new Uint8Array(MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES + 1).fill(3)
     const [oldFirst, oldSecond] = eventsFor(large, keccak256(large), 7n)

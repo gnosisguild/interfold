@@ -424,6 +424,7 @@ await sdk.onInterfoldEvent(
       throw new Error('Committee public-key commitment mismatch')
     }
 
+    assembler.clear(assembled.e3Id)
     // assembled.publicKey is now safe to pass to the encryption methods.
   },
 )

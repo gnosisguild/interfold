@@ -5,9 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import express, { Request, Response } from 'express'
-import { InterfoldSDK } from '@interfold/sdk'
-import { RegistryEventType, type CommitteePublishedData } from '@interfold/sdk/events'
-import { keccak256 } from 'viem'
+import { CommitteePublicKeyAssembler, InterfoldSDK } from '@interfold/sdk'
+import { RegistryEventType } from '@interfold/sdk/events'
+import { hexToBytes, keccak256 } from 'viem'
 import { hardhat } from 'viem/chains'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -49,7 +49,7 @@ async function createPrivateSDK(): Promise<InterfoldSDK> {
 }
 
 // The only state the server keeps, purely for idempotency: E3s already scheduled
-// (so a repeated CommitteePublished does not double-schedule) and E3s already
+// (so repeated public-key candidates do not double-schedule) and E3s already
 // submitted to the runner (so a run is not sent twice).
 const scheduled = new Set<string>()
 const inFlight = new Set<string>()
@@ -152,8 +152,7 @@ async function runProgram(e3Id: bigint): Promise<void> {
  * When a committee publishes for an E3, schedule the FHE run for the moment the
  * input window closes (or run immediately if it has already passed).
  */
-async function handleCommitteePublishedEvent(event: { data: CommitteePublishedData }) {
-  const e3Id = event.data.e3Id
+async function scheduleE3(e3Id: bigint) {
   const key = e3Id.toString()
 
   if (scheduled.has(key)) return
@@ -188,12 +187,29 @@ async function handleCommitteePublishedEvent(event: { data: CommitteePublishedDa
 
 async function setupEventListeners() {
   const sdk = await createPrivateSDK()
+  const committeeKeyAssembler = new CommitteePublicKeyAssembler()
 
   console.log('📡 Setting up event listeners...')
 
-  // Listen to CommitteePublished to know when an E3 is ready and when its input
-  // window closes; inputs themselves are read on demand at run time.
-  await sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_PUBLISHED, handleCommitteePublishedEvent)
+  // Schedule computation only after the transported key matches the commitment
+  // accepted with the DKG proof.
+  await sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED, async (event) => {
+    try {
+      const assembled = committeeKeyAssembler.add(event.data)
+      if (!assembled) return
+
+      const isBoundKey = await sdk.validatePublicKeyCommitment(assembled.publicKey, hexToBytes(assembled.pkCommitment))
+      if (!isBoundKey) {
+        console.warn(`Ignored committee public-key candidate for E3 ${assembled.e3Id}: commitment mismatch`)
+        return
+      }
+
+      committeeKeyAssembler.clear(assembled.e3Id)
+      await scheduleE3(assembled.e3Id)
+    } catch (error) {
+      console.error('Failed to process a committee public-key chunk:', error)
+    }
+  })
 
   console.log('✅ Event listeners set up successfully')
 }
