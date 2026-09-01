@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 
-GIT_SHA=$(interfold rev)
+# Resolve the revision from this CLI binary, not from a running node. In an Interfold project,
+# `interfold rev` is normally forwarded to the node daemon and can therefore return the revision
+# of an older node while a new CLI is starting its matching support image.
+GIT_SHA=$(cd / && interfold rev)
 CONTAINER_NAME="e3-support.1"
 IMAGE_REPOSITORY="${E3_SUPPORT_IMAGE_REPOSITORY:-ghcr.io/theinterfold/e3-support}"
 IMAGE="$IMAGE_REPOSITORY:$GIT_SHA"

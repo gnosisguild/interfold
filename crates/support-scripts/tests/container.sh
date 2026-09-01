@@ -27,7 +27,11 @@ interfold() {
   if [[ "${1:-}" != "rev" ]]; then
     return 1
   fi
-  printf '%s\n' "$TEST_REVISION"
+  if [[ "$PWD" == "/" ]]; then
+    printf '%s\n' "$TEST_REVISION"
+  else
+    printf '%s\n' "running-node-revision"
+  fi
 }
 
 docker() {
