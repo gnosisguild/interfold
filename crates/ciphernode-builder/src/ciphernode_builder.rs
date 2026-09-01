@@ -25,7 +25,7 @@ use e3_aggregator::{
 use e3_config::{chain_config::ChainConfig, NetworkProfile};
 use e3_crypto::Cipher;
 use e3_data::{InMemStore, RepositoriesFactory};
-use e3_events::DkgFoldAttestationContext;
+use e3_events::{hlc::Hlc, DkgFoldAttestationContext};
 use e3_events::{
     AggregateConfig, AggregateId, BusHandle, E3Stage, E3id, EventBus, EventBusConfig,
     EventSubscriber, EventType, EvmEventConfig, InterfoldEvent,
@@ -630,7 +630,9 @@ impl CiphernodeBuilder {
 
         // Resolve node address and enable the bus
         let addr = provider_cache.ensure_signer().await?.address().to_string();
-        let bus = event_system.handle()?.enable(&addr);
+        let bus = event_system
+            .handle()?
+            .enable_with_hlc(event_clock(&addr, &resolved_chain_ids));
 
         if self.logging {
             let logger_name = self.name.as_deref().unwrap_or("ciphernode");
@@ -1197,6 +1199,19 @@ fn validate_vrf_chain_id(chain_id: u64) -> Result<()> {
     Ok(())
 }
 
+fn event_clock(node_id: &str, chain_ids: &[u64]) -> Hlc {
+    let clock = Hlc::from_str(node_id);
+    // Local EVM tests advance block timestamps. Public chains keep the default drift fence.
+    if !chain_ids.is_empty()
+        && chain_ids
+            .iter()
+            .all(|chain_id| matches!(chain_id, 1_337 | 31_337))
+    {
+        return clock.with_max_drift(u64::MAX);
+    }
+    clock
+}
+
 /// Build delay configuration for a specific chain
 fn create_aggregate_delay(chain: &ChainConfig, actual_chain_id: u64) -> (AggregateId, Duration) {
     let aggregate_id = AggregateId::from_chain_id(Some(actual_chain_id));
@@ -1478,15 +1493,18 @@ async fn wait_for_evm_gateways(gateways: Vec<EvmChainGatewayHandle>) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::{
-        create_aggregate_delay, reconcile_committee_snapshots, recovered_ciphernode_selections,
-        validate_vrf_chain_id,
+        create_aggregate_delay, event_clock, reconcile_committee_snapshots,
+        recovered_ciphernode_selections, validate_vrf_chain_id,
     };
     use e3_config::{
         chain_config::ChainConfig,
         contract::{Contract, ContractAddresses},
         rpc::RpcAuth,
     };
-    use e3_events::{Committee, E3Stage, E3id, Seed};
+    use e3_events::{
+        hlc::{HlcError, HlcMethods, HlcTimestamp},
+        Committee, E3Stage, E3id, Seed,
+    };
     use e3_fhe_params::BfvPreset;
     use e3_request::E3Meta;
     use e3_sortition::CiphernodeSelectorState;
@@ -1545,6 +1563,23 @@ mod tests {
         let error = validate_vrf_chain_id(42_161).expect_err("Arbitrum must be rejected");
 
         assert!(error.to_string().contains("Ethereum mainnet"));
+    }
+
+    #[test]
+    fn local_event_clock_allows_time_travel_only_on_dev_chains() {
+        let future_timestamp = |clock: &e3_events::hlc::Hlc| {
+            let now = clock.tick().unwrap();
+            HlcTimestamp::new(now.ts + 3_600_000_000, 0, now.node + 1)
+        };
+
+        let local = event_clock("local", &[31_337]);
+        assert!(local.receive(&future_timestamp(&local)).is_ok());
+
+        let public = event_clock("public", &[1]);
+        assert!(matches!(
+            public.receive(&future_timestamp(&public)),
+            Err(HlcError::DriftExceeded { .. })
+        ));
     }
 
     #[test]
