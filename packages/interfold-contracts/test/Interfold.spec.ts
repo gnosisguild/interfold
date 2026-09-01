@@ -522,6 +522,7 @@ describe("Interfold", function () {
     });
     it("allows total duration equal to maxDuration", async function () {
       const { interfold, request, usdcToken } = await loadFixture(setup);
+      await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
       const requestAt = BigInt((await time.latest()) + 10);
       const maxDuration = await interfold.maxDuration();
       const inputEnd =
@@ -533,7 +534,6 @@ describe("Interfold", function () {
         ...request,
         inputWindow: [requestAt, inputEnd] as [bigint, bigint],
       };
-      await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
       await time.setNextBlockTimestamp(requestAt);
 
       await interfold.request(exactDurationRequest);
