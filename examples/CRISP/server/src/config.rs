@@ -54,6 +54,8 @@ pub struct Config {
     pub e3_compute_provider_name: String,
     pub e3_compute_provider_parallel: bool,
     pub e3_compute_provider_batch_size: u32,
+    /// Optional on localhost and on deployments that do not use Etherscan-backed holder lookup.
+    #[serde(default)]
     pub etherscan_api_key: String,
     /// Block to start indexing from on a FRESH database. Absent means "start at the chain head",
     /// which is what this server did before backfill existed — set it to the deployment block of
@@ -176,6 +178,7 @@ pub static CONFIG: Lazy<Config> =
 mod tests {
     use super::Config;
     use config::{Config as ConfigManager, Environment};
+    use serde_json::json;
     use std::collections::HashMap;
 
     #[derive(serde::Deserialize)]
@@ -209,10 +212,12 @@ mod tests {
 
     #[test]
     fn blank_optional_environment_value_is_unset() {
-        let source = Environment::default().ignore_empty(true).source(Some(HashMap::from([(
-            "AVAIL_APP_ID".to_owned(),
-            String::new(),
-        )])));
+        let source = Environment::default()
+            .ignore_empty(true)
+            .source(Some(HashMap::from([(
+                "AVAIL_APP_ID".to_owned(),
+                String::new(),
+            )])));
         let config: OptionalAvailConfig = ConfigManager::builder()
             .add_source(source)
             .build()
@@ -220,5 +225,31 @@ mod tests {
             .try_deserialize()
             .unwrap();
         assert_eq!(config.avail_app_id, None);
+    }
+
+    #[test]
+    fn etherscan_key_defaults_to_empty() {
+        let config: Config = serde_json::from_value(json!({
+            "program_server_url": "http://127.0.0.1:3000",
+            "interfold_server_url": "http://127.0.0.1:4000",
+            "private_key": "test-key",
+            "http_rpc_url": "http://127.0.0.1:8545",
+            "ws_rpc_url": "ws://127.0.0.1:8545",
+            "interfold_address": "0x1",
+            "e3_program_address": "0x2",
+            "ciphernode_registry_address": "0x3",
+            "fee_token_address": "0x4",
+            "chain_id": 31_337,
+            "cron_api_key": "test-cron-key",
+            "e3_param_set": 0,
+            "e3_committee_size": 0,
+            "e3_duration": 3_600,
+            "e3_compute_provider_name": "test",
+            "e3_compute_provider_parallel": false,
+            "e3_compute_provider_batch_size": 1
+        }))
+        .unwrap();
+
+        assert!(config.etherscan_api_key.is_empty());
     }
 }
