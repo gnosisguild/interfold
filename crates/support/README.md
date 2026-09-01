@@ -100,7 +100,9 @@ program:
       rpc_url: 'https://sepolia.base.org' # or your RPC URL
       private_key: '${PRIVATE_KEY}' # use env var for secrets!
       pinata_jwt: '${PINATA_JWT}'
-      program_url: 'https://gateway.pinata.cloud/ipfs/Qm...' # after upload (Step 3)
+      # Use a dedicated public gateway. Boundless provers download the complete input from it.
+      ipfs_gateway_url: 'https://your-gateway.mypinata.cloud'
+      program_url: 'https://your-gateway.mypinata.cloud/ipfs/Qm...' # after upload (Step 3)
       onchain: true
       # Optional auction parameters with their built-in defaults:
       # min_price_eth: 0.00005
@@ -159,8 +161,8 @@ The order matters:
 
 Skipping step 4 leaves a deployed verifier that accepts a guest no longer matching this tree. The
 provenance manifest records the committed image ID and can compare it with a deployed verifier, but
-it does not rebuild the guest, so this build order remains mandatory.
-enforces. The reviewer-facing procedure is `docs/pages/verifying-the-compute-provider.mdx`.
+it does not rebuild the guest, so this build order remains mandatory. enforces. The reviewer-facing
+procedure is `docs/pages/verifying-the-compute-provider.mdx`.
 
 ### Step 3: Upload Program to IPFS (Pinata)
 

@@ -31,10 +31,10 @@ program:
   #     rpc_url: "https://sepolia.infura.io/v3/YOUR_KEY"
   #     private_key: "PRIVATE_KEY" # Use env vars for secrets
   #     pinata_jwt: "PINATA_JWT" # For uploading programs
-  #     program_url: "https://gateway.pinata.cloud/ipfs/QmNMRAB7DW43JSmENfzGmD96G6sqaeBBNfTVrrq5WQae3D" # Pre-uploaded program
+  #     ipfs_gateway_url: "https://your-gateway.mypinata.cloud" # Public full-download gateway for programs and inputs
+  #     program_url: "https://your-gateway.mypinata.cloud/ipfs/QmNMRAB7DW43JSmENfzGmD96G6sqaeBBNfTVrrq5WQae3D" # Pre-uploaded program
   #     onchain: true # true = onchain requests, false = offchain
-  #     # Built-in auction defaults, shown for reference. Leave these unset.
-  #     # If you set one, `interfold program start` fails. See #1812.
+  #     # Optional auction parameters with their built-in defaults:
   #     # min_price_eth: 0.00005
   #     # max_price_eth: 0.002
   #     # timeout_secs: 600

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-unset RISC0_DEV_MODE RPC_URL PRIVATE_KEY PINATA_JWT PROGRAM_URL BOUNDLESS_ONCHAIN
+unset RISC0_DEV_MODE RPC_URL PRIVATE_KEY PINATA_JWT IPFS_GATEWAY_URL PROGRAM_URL BOUNDLESS_ONCHAIN
 unset BOUNDLESS_MIN_PRICE_ETH BOUNDLESS_MAX_PRICE_ETH
 unset BOUNDLESS_TIMEOUT_SECS BOUNDLESS_LOCK_TIMEOUT_SECS BOUNDLESS_RAMP_UP_SECS
 unset BOUNDLESS_LOCK_COLLATERAL_ZKC
@@ -21,6 +21,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --pinata-jwt)
       PINATA_JWT="$2"
+      shift 2
+      ;;
+    --ipfs-gateway-url)
+      IPFS_GATEWAY_URL="$2"
       shift 2
       ;;
     --program-url)
@@ -79,6 +83,10 @@ fi
 
 if [[ -n "$PINATA_JWT" ]]; then
   CONTAINER_ARGS+=("--pinata-jwt" "$PINATA_JWT")
+fi
+
+if [[ -n "$IPFS_GATEWAY_URL" ]]; then
+  CONTAINER_ARGS+=("--ipfs-gateway-url" "$IPFS_GATEWAY_URL")
 fi
 
 if [[ -n "$PROGRAM_URL" ]]; then

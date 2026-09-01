@@ -52,6 +52,10 @@ impl ProgramSupportApi for ProgramSupportRisc0 {
                 args.extend_from_slice(&["--pinata-jwt".into(), jwt.clone()]);
             }
 
+            if let Some(url) = &boundless.ipfs_gateway_url {
+                args.extend_from_slice(&["--ipfs-gateway-url".into(), url.clone()]);
+            }
+
             if let Some(url) = &boundless.program_url {
                 args.extend_from_slice(&["--program-url".into(), url.clone()]);
             }
@@ -97,6 +101,9 @@ impl ProgramSupportApi for ProgramSupportRisc0 {
             if let Some(boundless) = &risc0_config.boundless {
                 if let Some(jwt) = &boundless.pinata_jwt {
                     args.extend(["--pinata-jwt", jwt.as_str()]);
+                }
+                if let Some(url) = &boundless.ipfs_gateway_url {
+                    args.extend(["--ipfs-gateway-url", url.as_str()]);
                 }
             }
         }

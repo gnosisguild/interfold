@@ -158,7 +158,9 @@ program:
       rpc_url: 'https://sepolia.infura.io/v3/YOUR_KEY' # RPC endpoint
       private_key: 'YOUR_PRIVATE_KEY' # Wallet with funds for proving
       pinata_jwt: 'YOUR_PINATA_JWT' # Required for uploading programs to IPFS
-      program_url: 'https://gateway.pinata.cloud/ipfs/YOUR_CID' # Pre-uploaded program URL
+      # The gateway must allow full, unauthenticated downloads by Boundless provers.
+      ipfs_gateway_url: 'https://your-gateway.mypinata.cloud'
+      program_url: 'https://your-gateway.mypinata.cloud/ipfs/YOUR_CID' # Pre-uploaded program URL
       onchain: true # true = onchain requests, false = offchain
 ```
 
@@ -187,7 +189,8 @@ program URL:
    the full URL:
 
    ```yaml
-   program_url: 'https://gateway.pinata.cloud/ipfs/QmXxx...'
+   ipfs_gateway_url: 'https://your-gateway.mypinata.cloud'
+   program_url: 'https://your-gateway.mypinata.cloud/ipfs/QmXxx...'
    ```
 
 > **_Important:_** Every time you modify the guest program code in `program/`, you must rebuild and
@@ -230,9 +233,9 @@ E3_DURATION=43200
 ```
 
 DAO deployments can set `DEFER_PROTOCOL_WIRING=true` to deploy CRISP before the governance wiring
-transaction. On Ethereum mainnet, the deployment also requires
-`ALLOW_MAINNET_DEFERRED_WIRING=true` as an explicit acknowledgement that CRISP is unusable until the
-DAO batch is executed and validated. Keep E3 requests paused throughout that interval.
+transaction. On Ethereum mainnet, the deployment also requires `ALLOW_MAINNET_DEFERRED_WIRING=true`
+as an explicit acknowledgement that CRISP is unusable until the DAO batch is executed and validated.
+Keep E3 requests paused throughout that interval.
 
 The server first validates the Noir proof and durably stores the exact encrypted bytes. It signs a
 compact proof commitment only after storage succeeds. On mainnet, the voter submits that commitment

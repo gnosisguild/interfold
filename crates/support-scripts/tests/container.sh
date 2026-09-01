@@ -127,6 +127,7 @@ run_case 0 0 "registry.example/e3-support"
 assert_contains "registry.example/e3-support:$TEST_REVISION"
 
 run_case 0 0 "" \
+  --ipfs-gateway-url https://dedicated.example \
   --boundless-min-price-eth 0.0001 \
   --boundless-max-price-eth 0.004 \
   --boundless-timeout-secs 2700 \
@@ -134,11 +135,27 @@ run_case 0 0 "" \
   --boundless-ramp-up-secs 300 \
   --boundless-lock-collateral-zkc 3.5
 [[ "$CASE_STATUS" -eq 0 ]]
+assert_contains "--ipfs-gateway-url https://dedicated.example"
 assert_contains "--boundless-min-price-eth 0.0001"
 assert_contains "--boundless-max-price-eth 0.004"
 assert_contains "--boundless-timeout-secs 2700"
 assert_contains "--boundless-lock-timeout-secs 1200"
 assert_contains "--boundless-ramp-up-secs 300"
 assert_contains "--boundless-lock-collateral-zkc 3.5"
+
+UPLOAD_DIRECTORY=$(mktemp -d "$TEST_PARENT/e3-support-test.XXXXXX")
+TEST_DIRECTORIES+=("$UPLOAD_DIRECTORY")
+PROGRAM_DIRECTORY="$UPLOAD_DIRECTORY/target/riscv-guest/methods/guests/riscv32im-risc0-zkvm-elf/release"
+mkdir -p "$PROGRAM_DIRECTORY"
+printf 'cached-program' > "$PROGRAM_DIRECTORY/program.bin"
+sha256sum "$PROGRAM_DIRECTORY/program.bin" | awk '{print $1}' > "$UPLOAD_DIRECTORY/target/.program_hash"
+printf 'https://gateway.pinata.cloud/ipfs/bafytestcid\n' > "$UPLOAD_DIRECTORY/target/.program_url"
+(
+  cd "$UPLOAD_DIRECTORY"
+  bash "$REPOSITORY_ROOT/crates/support/scripts/container/upload.sh" \
+    --pinata-jwt test-jwt \
+    --ipfs-gateway-url https://dedicated.example/
+)
+[[ "$(cat "$UPLOAD_DIRECTORY/target/.program_url")" == "https://dedicated.example/ipfs/bafytestcid" ]]
 
 echo "Support image container tests passed."

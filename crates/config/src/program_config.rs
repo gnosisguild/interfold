@@ -17,6 +17,12 @@ pub struct BoundlessConfig {
     pub private_key: String,
     #[serde(default)]
     pub pinata_jwt: Option<String>,
+    /// Public gateway base URL used in Boundless program and input references.
+    ///
+    /// Use a dedicated gateway for production. The shared Pinata gateway can accept a HEAD
+    /// request and then rate-limit the full object download that a prover needs.
+    #[serde(default)]
+    pub ipfs_gateway_url: Option<String>,
     #[serde(default)]
     pub program_url: Option<String>,
     #[serde(default = "default_true")]
@@ -80,5 +86,35 @@ impl ProgramConfig {
 
     pub fn dev(&self) -> bool {
         self.dev.unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProgramConfig;
+
+    #[test]
+    fn deserializes_dedicated_ipfs_gateway() {
+        let config: ProgramConfig = serde_yaml::from_str(
+            r#"
+risc0:
+  risc0_dev_mode: 0
+  boundless:
+    rpc_url: "https://base.example"
+    private_key: "demo"
+    pinata_jwt: "demo"
+    ipfs_gateway_url: "https://dedicated.example"
+"#,
+        )
+        .expect("program config must deserialize");
+
+        let boundless = config
+            .risc0()
+            .and_then(|risc0| risc0.boundless.as_ref())
+            .expect("Boundless config must be present");
+        assert_eq!(
+            boundless.ipfs_gateway_url.as_deref(),
+            Some("https://dedicated.example")
+        );
     }
 }
