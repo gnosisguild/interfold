@@ -17,6 +17,7 @@ import {
 import { useApi } from '../generic/useFetchApi'
 import { PollRequestResult } from '@/model/poll.model'
 import { ROUND_REQUESTERS } from '@/utils/constants'
+import axios from 'axios'
 
 const INTERFOLD_API = import.meta.env.VITE_INTERFOLD_API
 
@@ -42,7 +43,18 @@ export const useInterfoldServer = () => {
     fetchData<CurrentRound, { requesters: string[] }>(GetCurrentRound, 'post', { requesters: ROUND_REQUESTERS }, { suppressNotFound: true })
   const getRoundStateLite = (round_id: string) =>
     fetchData<VoteStateLite, { round_id: string }>(GetRoundStateLite, 'post', { round_id }, { suppressNotFound: true })
-  const getVoteAvailability = (jobId: string) => fetchData<BroadcastVoteResponse>(`${GetVoteAvailability}/${encodeURIComponent(jobId)}`)
+  const getVoteAvailability = async (jobId: string): Promise<BroadcastVoteResponse | null | undefined> => {
+    const url = `${GetVoteAvailability}/${encodeURIComponent(jobId)}`
+    try {
+      return (await axios.get<BroadcastVoteResponse>(url)).data
+    } catch (error) {
+      // A server replacement can legitimately lose its local job database. Tell the caller this
+      // job is gone so it can clear localStorage and submit again. Other failures are transient.
+      if (axios.isAxiosError(error) && error.response?.status === 404) return null
+      handleGenericError(`API Error - ${url}`, error as Error)
+      return undefined
+    }
+  }
   const broadcastVote = async (
     vote: BroadcastVoteRequest,
     onJobCreated?: (jobId: string) => void,

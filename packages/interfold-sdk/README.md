@@ -409,17 +409,29 @@ import { CommitteePublicKeyAssembler, RegistryEventType } from '@interfold/sdk'
 
 const assembler = new CommitteePublicKeyAssembler()
 
-await sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED, async (event) => {
-  const assembled = assembler.add(event.data)
-  if (!assembled) return
+await sdk.onInterfoldEvent(
+  RegistryEventType.COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED,
+  async (event) => {
+    const assembled = assembler.add(event.data)
+    if (!assembled) return
 
-  if (!(await sdk.validatePublicKeyCommitment(assembled.publicKey, hexToBytes(assembled.pkCommitment)))) {
-    throw new Error('Committee public-key commitment mismatch')
-  }
+    if (
+      !(await sdk.validatePublicKeyCommitment(
+        assembled.publicKey,
+        hexToBytes(assembled.pkCommitment),
+      ))
+    ) {
+      throw new Error('Committee public-key commitment mismatch')
+    }
 
-  // assembled.publicKey is now safe to pass to the encryption methods.
-})
+    // assembled.publicKey is now safe to pass to the encryption methods.
+  },
+)
 ```
+
+The assembler tracks at most 128 E3s by default. Pass a positive limit to the constructor if the
+application needs a different memory bound. Evicted incomplete keys can be rebuilt by replaying
+their chunk events.
 
 #### Encryption
 

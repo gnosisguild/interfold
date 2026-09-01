@@ -261,6 +261,8 @@ On restart:
 │        to the existing admission state
 │      → For each persisted context, read the E3 stage and failure reason from Ethereum's
 │        finalized block before actor hydration
+│      → If the E3 exists at chain head but not at the finalized block, retain the context without
+│        applying an irreversible terminal reconciliation
 │      → Remove a complete E3 or a non-slashing failed E3 from the active context set
 │      → Retain a failed E3 that still requires accusation or slashing work
 │      → Ignore earlier canonical EVM observations and checkpoint-covered events for a removed E3
@@ -528,6 +530,8 @@ The finalized Ethereum lifecycle is the canonical terminal authority. Startup ch
 context against that state before actor hydration. This check repairs a node that did not record the
 terminal EVM event. The check removes only complete E3s and failures that require no slashing work.
 It retains failures that still require accusation or slashing work. A read failure stops startup.
+An E3 that is absent from the finalized block but present at chain head is still waiting for
+finality, not unknown. Startup keeps its context and continues without applying terminal cleanup.
 
 ---
 

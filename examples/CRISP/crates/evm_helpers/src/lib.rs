@@ -68,6 +68,8 @@ sol! {
         ) external view returns (bytes32);
         function inputAvailabilityDigest(uint256 e3Id, bytes32 inputId) external view returns (bytes32);
         function inputAvailabilitySigner() external view returns (address);
+        function availabilityFinalizationWindow() external view returns (uint256);
+        function MIN_VOTING_DURATION() external view returns (uint256);
         function pendingInputCount(uint256 e3Id) external view returns (uint40);
         function inputCommitmentDeadline(uint256 e3Id) external view returns (uint256);
         function verify(
@@ -77,6 +79,12 @@ sol! {
             bytes proof
         ) external view returns (bool);
         function getRoundData(uint256 e3_id) external view returns (uint256 merkleRoot, bytes32 paramsHash, uint256 numOptions, uint8 creditMode, uint256 inputRoot, uint40 numberOfVotes);
+    }
+
+    #[sol(rpc)]
+    contract CiphernodeRegistryTiming {
+        function randomnessRequestTimeout() external view returns (uint256);
+        function sortitionSubmissionWindow() external view returns (uint256);
     }
 }
 
@@ -119,8 +127,8 @@ pub enum SimulateError {
 impl std::fmt::Display for SimulateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Reverted(message) => write!(f, "publishInput simulation reverted: {message}"),
-            Self::Provider(message) => write!(f, "publishInput simulation unavailable: {message}"),
+            Self::Reverted(message) => write!(f, "contract simulation reverted: {message}"),
+            Self::Provider(message) => write!(f, "contract simulation unavailable: {message}"),
         }
     }
 }
@@ -231,6 +239,42 @@ impl CRISPContract<CRISPWriteProvider> {
                 }
             }
             Err(e) => Err(SimulateError::Provider(e.to_string())),
+        }
+    }
+
+    /// Dry-run `finalizeInput` before the relay pays for the transaction.
+    pub async fn simulate_finalize_input(
+        &self,
+        e3_id: U256,
+        slot_address: Address,
+        encrypted_vote_commitment: B256,
+        encrypted_vote_hash: B256,
+        parent_index_plus_one: u64,
+        availability_proof: Bytes,
+    ) -> Result<(), SimulateError> {
+        let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
+        match contract
+            .finalizeInput(
+                e3_id,
+                slot_address,
+                encrypted_vote_commitment,
+                encrypted_vote_hash,
+                alloy::primitives::Uint::<40, 1>::from(parent_index_plus_one),
+                availability_proof,
+            )
+            .call()
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(alloy::contract::Error::TransportError(RpcError::ErrorResp(payload))) => {
+                let message = payload.to_string();
+                if payload.as_revert_data().is_some() || message.to_lowercase().contains("revert") {
+                    Err(SimulateError::Reverted(message))
+                } else {
+                    Err(SimulateError::Provider(message))
+                }
+            }
+            Err(error) => Err(SimulateError::Provider(error.to_string())),
         }
     }
 
@@ -351,6 +395,24 @@ impl CRISPContract<CRISPWriteProvider> {
         Ok(contract.inputAvailabilitySigner().call().await?)
     }
 
+    pub async fn availability_finalization_window(&self) -> Result<U256> {
+        let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
+        Ok(contract.availabilityFinalizationWindow().call().await?)
+    }
+
+    pub async fn minimum_voting_duration(&self) -> Result<U256> {
+        let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
+        Ok(contract.MIN_VOTING_DURATION().call().await?)
+    }
+
+    pub async fn committee_setup_windows(&self, registry: Address) -> Result<(U256, U256)> {
+        let registry = CiphernodeRegistryTiming::new(registry, self.provider.as_ref());
+        Ok((
+            registry.randomnessRequestTimeout().call().await?,
+            registry.sortitionSubmissionWindow().call().await?,
+        ))
+    }
+
     /// Check the aggregate ciphertext and its compute proof before paying to publish it to DA.
     ///
     /// This calls the same CRISP verifier that Interfold calls after the availability receipt is
@@ -382,6 +444,8 @@ impl CRISPContract<CRISPWriteProvider> {
             .get_receipt()
             .await?;
 
+        eyre::ensure!(receipt.status(), "publishInput transaction reverted");
+
         Ok(receipt)
     }
 
@@ -409,6 +473,8 @@ impl CRISPContract<CRISPWriteProvider> {
             .await?
             .get_receipt()
             .await?;
+
+        eyre::ensure!(receipt.status(), "finalizeInput transaction reverted");
 
         Ok(receipt)
     }

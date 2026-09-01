@@ -208,8 +208,9 @@ Sepolia and Ethereum mainnet use Avail. Before starting the CRISP server:
    available and resumes the job after a restart.
 4. Deploy CRISP with `INPUT_AVAILABILITY_SIGNER` set to the Ethereum address derived from the
    server's `PRIVATE_KEY`.
-5. Configure a 12-hour input window. This covers the current worst-case committee setup, at least
-   one hour for voters, and a three-hour VectorX finalization target.
+5. Configure an input window that covers the current on-chain committee setup, voting minimum, and
+   VectorX finalization tail. The server reads those values at startup. Twelve hours covers the
+   current production defaults with margin.
 
 ```dotenv
 # Sepolia + Avail Turing
@@ -227,6 +228,11 @@ E3_DURATION=43200
 # AVAIL_RPC_URL=wss://avail-rpc.publicnode.com/
 # AVAIL_BRIDGE_API_URL=https://bridge-api.avail.so
 ```
+
+DAO deployments can set `DEFER_PROTOCOL_WIRING=true` to deploy CRISP before the governance wiring
+transaction. On Ethereum mainnet, the deployment also requires
+`ALLOW_MAINNET_DEFERRED_WIRING=true` as an explicit acknowledgement that CRISP is unusable until the
+DAO batch is executed and validated. Keep E3 requests paused throughout that interval.
 
 The server first validates the Noir proof and durably stores the exact encrypted bytes. It signs a
 compact proof commitment only after storage succeeds. On mainnet, the voter submits that commitment

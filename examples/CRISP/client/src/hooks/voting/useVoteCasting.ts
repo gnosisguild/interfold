@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSignTypedData, usePublicClient, useChainId, useWalletClient } from 'wagmi'
 import type { Address } from 'viem'
@@ -30,6 +30,7 @@ const INTERFOLD_API = import.meta.env.VITE_INTERFOLD_API
 interface PendingAvailabilityJob {
   jobId: string
   isMask: boolean
+  encodedProof?: string
 }
 
 const availabilityJobKey = (chainId: number, roundId: string, address: string): string => {
@@ -45,6 +46,7 @@ const readAvailabilityJob = (key: string): PendingAvailabilityJob | undefined =>
     return {
       jobId: parsed.jobId,
       isMask: 'isMask' in parsed && parsed.isMask === true,
+      encodedProof: 'encodedProof' in parsed && typeof parsed.encodedProof === 'string' ? parsed.encodedProof : undefined,
     }
   } catch {
     return undefined
@@ -55,8 +57,14 @@ const writeAvailabilityJob = (key: string, job: PendingAvailabilityJob): void =>
   try {
     localStorage.setItem(key, JSON.stringify(job))
   } catch {
-    // The durable server job remains valid. A browser with disabled storage cannot resume it
-    // automatically after a reload.
+    // Large secure ballots can exceed a browser's storage quota. Preserve the small server job
+    // pointer when possible, even though a server-database loss would then need operator recovery.
+    try {
+      localStorage.setItem(key, JSON.stringify({ jobId: job.jobId, isMask: job.isMask }))
+    } catch {
+      // The durable server job remains valid. A browser with disabled storage cannot resume it
+      // automatically after a reload.
+    }
   }
 }
 
@@ -167,6 +175,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
   const [votingStep, setVotingStep] = useState<VotingStep>('idle')
   const [lastActiveStep, setLastActiveStep] = useState<VotingStep | null>(null)
   const [stepMessage, setStepMessage] = useState<string>('')
+  const submissionInProgress = useRef(false)
 
   /**
    * Encrypt the ballot, have the voter sign the digest that binds it, then prove it.
@@ -405,6 +414,11 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         return
       }
 
+      // One account has one durable resume pointer per round. Do not let concurrent actions
+      // replace that pointer before the first request records its job ID.
+      if (submissionInProgress.current) return
+      submissionInProgress.current = true
+
       const pendingJobKey = availabilityJobKey(chainId, roundState.id, user.address)
 
       const finishCommitment = async (response: BroadcastVoteResponse, operationIsMask: boolean): Promise<boolean> => {
@@ -482,12 +496,29 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           setStepMessage('Checking the durable vote job...')
 
           const resumed = await getVoteAvailability(pendingJob.jobId)
-          if (!resumed) throw new Error('Could not read the pending data-availability job.')
-          if (resumed.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-          if (await finishCommitment(resumed, pendingJob.isMask)) {
-            clearAvailabilityJob(pendingJobKey)
+          if (resumed === null) {
+            // The server lost its job database. Re-stage the same bytes: a fresh ciphertext could
+            // leave an earlier on-chain commitment unresolved and stop the complete round.
+            if (!pendingJob.encodedProof) {
+              throw new Error('The server lost this legacy vote job. An operator must recover it before another vote is submitted.')
+            }
+            const restaged = await broadcastVote({ round_id: roundState.id, encoded_proof: pendingJob.encodedProof }, (jobId) =>
+              writeAvailabilityJob(pendingJobKey, { ...pendingJob, jobId }),
+            )
+            if (!restaged) throw new Error('Could not restore the pending data-availability job.')
+            if (restaged.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
+            if (await finishCommitment(restaged, pendingJob.isMask)) {
+              clearAvailabilityJob(pendingJobKey)
+            }
+            return
+          } else {
+            if (!resumed) throw new Error('Could not read the pending data-availability job.')
+            if (resumed.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
+            if (await finishCommitment(resumed, pendingJob.isMask)) {
+              clearAvailabilityJob(pendingJobKey)
+            }
+            return
           }
-          return
         }
 
         if (!isAMask && !pollSelected) {
@@ -566,7 +597,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           encoded_proof: encodedProof,
         }
         const broadcastVoteResponse = await broadcastVote(voteRequest, (jobId) => {
-          writeAvailabilityJob(pendingJobKey, { jobId, isMask: isAMask })
+          writeAvailabilityJob(pendingJobKey, { jobId, isMask: isAMask, encodedProof })
         })
 
         if (!broadcastVoteResponse) {
@@ -585,6 +616,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           persistent: true,
         })
       } finally {
+        submissionInProgress.current = false
         setIsVoting(false)
         setIsMasking(false)
       }

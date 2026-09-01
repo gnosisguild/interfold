@@ -218,7 +218,11 @@ pub async fn check_committee_key_published(
         .send()
         .await?;
 
-    Ok(response.status().is_success())
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(false);
+    }
+    response.error_for_status()?;
+    Ok(true)
 }
 
 pub async fn initialize_crisp_round(

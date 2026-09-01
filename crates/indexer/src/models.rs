@@ -7,6 +7,13 @@
 use e3_evm_helpers::contracts::CommitteeSize;
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CiphertextOutputReference {
+    pub content_hash: Vec<u8>,
+    pub availability_block: u32,
+    pub availability_leaf_index: u128,
+}
+
 // This correlates with the information from the contract
 // with an addition of a chain_id
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -14,6 +21,8 @@ pub struct E3 {
     pub chain_id: u64,
     pub ciphertext_inputs: Vec<(Vec<u8>, u64)>,
     pub ciphertext_output: Vec<u8>,
+    #[serde(default)]
+    pub ciphertext_output_reference: Option<CiphertextOutputReference>,
     #[serde(default)]
     pub ciphertext_commitment: Vec<u8>,
     pub committee_public_key: Vec<u8>,

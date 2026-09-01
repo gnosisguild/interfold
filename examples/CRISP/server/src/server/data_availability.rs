@@ -5,7 +5,7 @@
 use crate::{config::Config, server::models::e3_id_to_u256};
 use alloy::{
     eips::{BlockId, BlockNumberOrTag},
-    primitives::{keccak256, Bytes, B256},
+    primitives::{keccak256, Address, Bytes, B256, U256},
     providers::{Provider, ProviderBuilder},
     signers::{local::PrivateKeySigner, SignerSync},
     sol,
@@ -16,7 +16,7 @@ use e3_data_availability::{
     PendingPublication, ProofStatus,
 };
 use e3_evm_helpers::contracts::{E3Stage, InterfoldContractFactory, InterfoldRead, InterfoldWrite};
-use evm_helpers::CRISPContract;
+use evm_helpers::{CRISPContract, SimulateError};
 use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::{collections::HashSet, sync::Arc, time::Duration};
@@ -26,6 +26,48 @@ use tracing::warn;
 const JOB_POLL_INTERVAL: Duration = Duration::from_secs(30);
 const JOB_STEP_TIMEOUT: Duration = Duration::from_secs(120);
 const JOB_STATUS_REFRESH_TIMEOUT: Duration = Duration::from_secs(15);
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct InputRejected(&'static str);
+
+fn reject_input(message: &'static str) -> anyhow::Error {
+    anyhow::Error::new(InputRejected(message))
+}
+
+fn duration_u64(value: U256, name: &str) -> anyhow::Result<u64> {
+    value
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("{name} does not fit in u64"))
+}
+
+fn minimum_input_duration(
+    randomness_window: u64,
+    sortition_window: u64,
+    dkg_window: u64,
+    voting_window: u64,
+    finalization_window: u64,
+) -> anyhow::Result<u64> {
+    randomness_window
+        .checked_add(sortition_window)
+        .and_then(|value| value.checked_add(dkg_window))
+        .and_then(|value| value.checked_add(voting_window))
+        .and_then(|value| value.checked_add(finalization_window))
+        .ok_or_else(|| anyhow::anyhow!("required CRISP input duration overflows u64"))
+}
+
+/// Return a stable client message only when the caller's ballot was conclusively rejected.
+pub fn input_rejection_message(error: &anyhow::Error) -> Option<&'static str> {
+    for cause in error.chain() {
+        if let Some(rejection) = cause.downcast_ref::<InputRejected>() {
+            return Some(rejection.0);
+        }
+        if matches!(cause.downcast_ref::<SimulateError>(), Some(SimulateError::Reverted(_))) {
+            return Some("The vote proof or ciphertext was rejected");
+        }
+    }
+    None
+}
 
 sol! {
     struct InputEnvelope {
@@ -261,6 +303,8 @@ pub struct AvailabilityService {
     private_key: String,
     interfold_address: String,
     e3_program_address: String,
+    ciphernode_registry_address: String,
+    input_duration_seconds: u64,
     proof_lead_seconds: u64,
 }
 
@@ -306,8 +350,70 @@ impl AvailabilityService {
             private_key: config.private_key.clone(),
             interfold_address: config.interfold_address.clone(),
             e3_program_address: config.e3_program_address.clone(),
+            ciphernode_registry_address: config.ciphernode_registry_address.clone(),
+            input_duration_seconds: config.e3_duration,
             proof_lead_seconds: config.avail_proof_lead_seconds.unwrap_or(10_800),
         })
+    }
+
+    /// Check local timing against the current registry, Interfold, and CRISP contract values.
+    pub async fn validate_onchain_configuration(&self) -> anyhow::Result<()> {
+        if !matches!(&*self.backend, Backend::Avail { .. }) {
+            return Ok(());
+        }
+        let contract = CRISPContract::new(
+            &self.http_rpc_url,
+            &self.private_key,
+            &self.e3_program_address,
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let onchain = duration_u64(
+            contract
+                .availability_finalization_window()
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+            "CRISP finalization window",
+        )?;
+        anyhow::ensure!(
+            onchain == self.proof_lead_seconds,
+            "AVAIL_PROOF_LEAD_SECONDS ({}) does not match CRISPProgram.availabilityFinalizationWindow() ({onchain})",
+            self.proof_lead_seconds
+        );
+
+        let registry: Address = self
+            .ciphernode_registry_address
+            .parse()
+            .map_err(|error| anyhow::anyhow!("invalid ciphernode registry address: {error}"))?;
+        let (randomness, sortition) = contract
+            .committee_setup_windows(registry)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let interfold =
+            InterfoldContractFactory::create_read(&self.http_rpc_url, &self.interfold_address)
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let timeouts = interfold
+            .get_timeout_config()
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let voting = contract
+            .minimum_voting_duration()
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let required = minimum_input_duration(
+            duration_u64(randomness, "randomness request timeout")?,
+            duration_u64(sortition, "sortition submission window")?,
+            duration_u64(timeouts.dkgWindow, "DKG window")?,
+            duration_u64(voting, "minimum voting duration")?,
+            onchain,
+        )?;
+        anyhow::ensure!(
+            self.input_duration_seconds >= required,
+            "E3_DURATION ({}) is shorter than the current on-chain committee, voting, and availability windows ({required})",
+            self.input_duration_seconds
+        );
+        Ok(())
     }
 
     pub async fn stage_input(
@@ -315,12 +421,16 @@ impl AvailabilityService {
         e3_id: &str,
         encoded_envelope: Vec<u8>,
     ) -> anyhow::Result<AvailabilityJobView> {
-        let envelope = decode_input_envelope(&encoded_envelope)?;
+        let envelope = decode_input_envelope(&encoded_envelope)
+            .map_err(|_| reject_input("The encoded vote envelope is invalid"))?;
+        e3_data_availability::validate_object_bytes(&envelope.availabilityProof)
+            .map_err(|_| reject_input("The encrypted vote is too large"))?;
         let actual = keccak256(&envelope.availabilityProof);
-        anyhow::ensure!(
-            actual == envelope.encryptedVoteHash,
-            "the staged ciphertext does not match encryptedVoteHash"
-        );
+        if actual != envelope.encryptedVoteHash {
+            return Err(reject_input(
+                "The encrypted vote does not match its committed hash",
+            ));
+        }
 
         // A proof system can produce more than one valid proof for the same public statement.
         // Keep the durable job keyed by that statement, not by the proof bytes, or retrying with
@@ -347,23 +457,25 @@ impl AvailabilityService {
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         contract
             .validate_input_proof(
-                e3_id_to_u256(e3_id)?,
+                e3_id_to_u256(e3_id)
+                    .map_err(|_| reject_input("The E3 identifier is invalid"))?,
                 envelope.noirProof.clone(),
                 envelope.slotAddress,
                 envelope.encryptedVoteCommitment,
                 envelope.encryptedVoteHash,
                 envelope.parentIndexPlusOne.to::<u64>(),
             )
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            .await?;
 
         let (deadline, commitment_deadline) = if matches!(&*self.backend, Backend::Avail { .. }) {
             let interfold =
                 InterfoldContractFactory::create_read(&self.http_rpc_url, &self.interfold_address)
                     .await
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            let e3_id_value = e3_id_to_u256(e3_id)
+                .map_err(|_| reject_input("The E3 identifier is invalid"))?;
             let e3 = interfold
-                .get_e3(e3_id_to_u256(e3_id)?)
+                .get_e3(e3_id_value)
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             let now = self.chain_timestamp().await?;
@@ -371,20 +483,19 @@ impl AvailabilityService {
                 .try_into()
                 .map_err(|_| anyhow::anyhow!("input deadline does not fit in u64"))?;
             let deadline: u64 = interfold
-                .get_deadlines(e3_id_to_u256(e3_id)?)
+                .get_deadlines(e3_id_value)
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?
                 .computeDeadline
                 .try_into()
                 .map_err(|_| anyhow::anyhow!("compute deadline does not fit in u64"))?;
             let commitment_deadline = contract
-                .input_commitment_deadline(e3_id_to_u256(e3_id)?)
+                .input_commitment_deadline(e3_id_value)
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            anyhow::ensure!(
-                commitment_deadline > now,
-                "the input proof commitment deadline has passed"
-            );
+            if commitment_deadline <= now {
+                return Err(reject_input("The vote commitment deadline has passed"));
+            }
             anyhow::ensure!(
                 input_deadline.saturating_sub(commitment_deadline) >= self.proof_lead_seconds,
                 "the CRISP finalization tail is shorter than AVAIL_PROOF_LEAD_SECONDS"
@@ -429,6 +540,7 @@ impl AvailabilityService {
         ciphertext_commitment: [u8; 32],
         compute_proof: Vec<u8>,
     ) -> anyhow::Result<AvailabilityJobView> {
+        e3_data_availability::validate_object_bytes(&ciphertext)?;
         let hash = keccak256(&ciphertext);
         // The output statement is the E3, exact ciphertext hash, and ciphertext commitment. The
         // RISC Zero seal proves that statement but is not its identity: another valid seal must be
@@ -1030,14 +1142,27 @@ impl AvailabilityService {
         )
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let e3_id = e3_id_to_u256(e3_id)?;
+        let availability_proof = Bytes::copy_from_slice(availability_proof);
         contract
-            .finalize_input(
-                e3_id_to_u256(e3_id)?,
+            .simulate_finalize_input(
+                e3_id,
                 envelope.slotAddress,
                 envelope.encryptedVoteCommitment,
                 envelope.encryptedVoteHash,
                 envelope.parentIndexPlusOne.to::<u64>(),
-                Bytes::copy_from_slice(availability_proof),
+                availability_proof.clone(),
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        contract
+            .finalize_input(
+                e3_id,
+                envelope.slotAddress,
+                envelope.encryptedVoteCommitment,
+                envelope.encryptedVoteHash,
+                envelope.parentIndexPlusOne.to::<u64>(),
+                availability_proof,
             )
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))
@@ -1329,5 +1454,32 @@ mod tests {
             encode_input_commitment_envelope(&commitment_envelope),
             encoded
         );
+    }
+
+    #[test]
+    fn only_conclusive_input_errors_have_a_client_rejection_message() {
+        let malformed = reject_input("The encoded vote envelope is invalid");
+        assert_eq!(
+            input_rejection_message(&malformed),
+            Some("The encoded vote envelope is invalid")
+        );
+
+        let reverted = anyhow::Error::new(SimulateError::Reverted("node detail".to_owned()));
+        assert_eq!(
+            input_rejection_message(&reverted),
+            Some("The vote proof or ciphertext was rejected")
+        );
+
+        let provider = anyhow::Error::new(SimulateError::Provider("secret RPC detail".to_owned()));
+        assert_eq!(input_rejection_message(&provider), None);
+    }
+
+    #[test]
+    fn input_duration_adds_current_onchain_windows() {
+        assert_eq!(
+            minimum_input_duration(1_200, 300, 3_600, 3_600, 10_800).unwrap(),
+            19_500
+        );
+        assert!(minimum_input_duration(u64::MAX, 1, 0, 0, 0).is_err());
     }
 }

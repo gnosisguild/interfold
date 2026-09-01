@@ -256,10 +256,11 @@ design citation alone does not establish current runtime behavior.
 - **E3 program allowlist:** production initialization registers one deployed E3 program and assigns
   Interfold ownership to the configured protocol owner. Later registrations are append-only and
   owner-only. Every registered address must contain runtime code. `MockE3Program` is the stateless
-  launch option. It has no administrative controls and applies no application rules. The
-  request-time BFV ciphertext verifier and decryption verifier remain mandatory. Its mutable failure
-  controls live only in `MockE3ProgramHarness`. — `Interfold.sol`; `MockE3Program.sol`;
-  `flow-trace/03`
+  bootstrap option. It has no administrative controls and applies no application rules. Its
+  deterministic test receipt is not production data availability, so requests remain paused until
+  a production program is registered and wired. The request-time BFV ciphertext verifier and
+  decryption verifier remain mandatory. Its mutable failure controls live only in
+  `MockE3ProgramHarness`. — `Interfold.sol`; `MockE3Program.sol`; `flow-trace/03`
 
 ### Deadlines
 
@@ -520,9 +521,10 @@ design citation alone does not establish current runtime behavior.
 - **Client PK commitment binding (C-01):** Serialized PK event bytes are an untrusted transport
   hint. Consumers decode the bytes with the request-time threshold BFV parameters. Consumers store
   the key only when its recomputed commitment equals the on-chain (C5-proven) value. Proof-backed
-  committee publication never accepts key bytes. Public-key candidates are bounded, permissionless,
-  and repeatable. An invalid candidate cannot block a later valid candidate. — INDEX concerns #33,
-  Z-31
+  committee publication never accepts key bytes. Public-key candidates are bounded and gated to
+  request-time committee members. Retained expelled members can still repair transport, but their
+  bytes receive no extra trust. Consumers accept at most one candidate per member, so an invalid
+  candidate cannot block a valid candidate from another member. — INDEX concerns #33, Z-31
 - **No proof-disabled bypass (C-02):** both final verifier calls are mandatory in production;
   `skip_proof_aggregation` works only under the `test-only-skip-proof-aggregation` Cargo feature;
   production verifiers reject placeholder C5/C7 proofs. — INDEX concern #32
@@ -586,7 +588,9 @@ design citation alone does not establish current runtime behavior.
 - Before actor hydration, startup checks each persisted request context against finalized Ethereum
   lifecycle state. A complete E3 or a non-slashing failed E3 must not resume local protocol work.
   A failed E3 that requires accusation or slashing work must retain its context. An unavailable or
-  unknown canonical result must fail startup. — INDEX concern #48
+  unknown canonical result must fail startup. If the E3 exists at chain head but not yet at the
+  finalized block, recovery keeps the context and waits; finality lag is not an unknown E3. — INDEX
+  concern #48
 - EventStore replay preserves durable sequence inside each aggregate. It uses HLC order only to
   choose between the next events of different aggregates. A late event can have an older remote HLC
   and must not move ahead of an earlier local sequence from the same aggregate. — INDEX concern #43

@@ -623,7 +623,8 @@ A ready committee must finalize at or before its absolute DKG deadline.
     The deployment can create `MockE3Program` as the initial program. This stateless program accepts
     the active BFV scheme and applies no application rules. It has no owner, controller, or mutable
     configuration. The request-time ciphertext verifier and decryption verifier still verify the
-    protocol proofs.
+    protocol proofs. Its deterministic data-availability receipt is only for tests. Requests remain
+    paused until a production E3 program is registered and wired.
 
 ---
 

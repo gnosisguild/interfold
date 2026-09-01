@@ -748,7 +748,7 @@ phase.
         │  │                                                     │
         │  │  publishCommitteePublicKey(e3Id, hash, i, n, len, chunk) { │
         │  │    1. require the proven commitment                │
-        │  │    2. require caller is a selected committee member│
+        │  │    2. require caller is a request-time committee member │
         │  │    3. require len <= 512 KiB and canonical 90 KiB chunks │
         │  │    4. Emit CommitteePublicKeyChunkPublished        │
         │  │  }                                                  │
@@ -767,8 +767,9 @@ attestation from another registry or verifier therefore fails even when both reg
 E3 ID and committee.
 
 The serialized key is transported in Ethereum event chunks; it is not on-chain authority. Only a
-selected committee member can emit chunks, and consumers accept the first candidate hash from each
-member. The ciphernode coordinator and `e3-indexer` group the canonical chunks by E3, publisher, and
+request-time committee member can emit chunks. This includes a retained expelled member, whose
+bytes receive no extra trust but can still repair availability. Consumers accept the first
+candidate hash from each member. The ciphernode coordinator and `e3-indexer` group the canonical chunks by E3, publisher, and
 candidate hash. They require a complete sequence, check `keccak256(serializedKey) == candidateHash`,
 decode the BFV key, recompute the circuit's public-key commitment with the request-time parameter
 set, and require equality with the proven on-chain `pkCommitment`. Only then do they produce the

@@ -97,6 +97,8 @@ pub struct E3Router {
     replay_cursors: HashMap<AggregateId, u64>,
     recovery_store: Repository<RequestRouterCheckpoint>,
     recovered_selections: Vec<CiphernodeSelected>,
+    /// True after startup replay ends and actors may produce new local effects.
+    effects_enabled: bool,
 }
 
 pub struct E3RouterParams {
@@ -134,6 +136,7 @@ impl E3Router {
             replay_cursors: params.replay_cursors,
             recovery_store: params.recovery_store,
             recovered_selections: params.recovered_selections,
+            effects_enabled: false,
         }
     }
 }

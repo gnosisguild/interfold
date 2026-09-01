@@ -25,7 +25,7 @@ use e3_fhe_params::decode_bfv_params_arc;
 use e3_sdk::indexer::INDEXER_CURSOR_KEY;
 use e3_sdk::{
     evm_helpers::{
-        contracts::{InterfoldRead, ReadWrite},
+        contracts::{E3Stage, InterfoldContractFactory, InterfoldRead, ReadWrite},
         events::{
             CiphertextOutputPublished, CiphertextOutputReferencePublished,
             CommitteePublicKeyChunkPublished, CommitteePublished, E3Requested,
@@ -40,13 +40,20 @@ use eyre::Context;
 use log::{error, info, warn};
 use num_bigint::BigUint;
 use std::time::Duration;
-use std::{error::Error, sync::Arc};
+use std::{collections::HashMap, error::Error, sync::Arc};
 use tokio::time::sleep;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 fn is_configured_e3_program(event_program: Address, configured_program: Address) -> bool {
     event_program == configured_program
+}
+
+fn stage_ends_input_retrieval(stage: &E3Stage) -> bool {
+    matches!(
+        stage,
+        E3Stage::CiphertextReady | E3Stage::Complete | E3Stage::Failed
+    )
 }
 
 pub async fn register_e3_requested(
@@ -1181,37 +1188,76 @@ async fn recover_round_deadlines<S: DataStore>(store: SharedStore<S>) {
         }
     };
 
+    let mut pending = Vec::new();
     for e3_id in ids {
-        let round_store = store.clone();
-        tokio::spawn(async move {
-            let repo = CrispE3Repository::new(round_store.clone(), &e3_id);
-            let Ok(status) = repo.get_status().await else {
-                return;
-            };
-            if status != "Requested" && status != "Active" && status != "Expired" {
-                return;
+        let repo = CrispE3Repository::new(store.clone(), &e3_id);
+        let Ok(status) = repo.get_status().await else {
+            continue;
+        };
+        if status != "Requested" && status != "Active" && status != "Expired" {
+            continue;
+        }
+        let Ok(e3) = repo.get_e3().await else {
+            continue;
+        };
+        pending.push((e3_id, e3.input_window[1]));
+    }
+    if pending.is_empty() {
+        return;
+    }
+
+    // This is a fallback for restored block callbacks, not one perpetual task per historical
+    // round. One provider and one bounded loop cover all unfinished rounds, then the task exits.
+    let provider = match ProviderBuilder::new().connect(&CONFIG.http_rpc_url).await {
+        Ok(provider) => provider,
+        Err(error) => {
+            warn!("Could not connect the CRISP deadline recovery watchdog: {error}");
+            return;
+        }
+    };
+    while !pending.is_empty() {
+        let head = tokio::time::timeout(
+            Duration::from_secs(15),
+            provider.get_block_by_number(alloy::eips::BlockNumberOrTag::Latest),
+        )
+        .await;
+        let now = match head {
+            Ok(Ok(Some(block))) => block.header.timestamp,
+            Ok(Ok(None)) => {
+                sleep(Duration::from_secs(30)).await;
+                continue;
             }
-            let Ok(e3) = repo.get_e3().await else {
-                return;
-            };
-            loop {
-                match get_current_timestamp_rpc().await {
-                    Ok(now) if now >= e3.input_window[1] => {
-                        if let Err(error) =
-                            handle_e3_input_deadline_expiration(e3_id.clone(), round_store.clone())
-                                .await
-                        {
-                            warn!(
-                                "[e3_id={}] Recovered deadline handler could not start computation: {}",
-                                e3_id, error
-                            );
-                        }
-                        break;
-                    }
-                    Ok(_) | Err(_) => sleep(Duration::from_secs(30)).await,
-                }
+            Ok(Err(error)) => {
+                warn!("CRISP deadline recovery could not read the latest block: {error}");
+                sleep(Duration::from_secs(30)).await;
+                continue;
             }
-        });
+            Err(_) => {
+                warn!("CRISP deadline recovery timed out while reading the latest block");
+                sleep(Duration::from_secs(30)).await;
+                continue;
+            }
+        };
+
+        let mut index = 0;
+        while index < pending.len() {
+            if now < pending[index].1 {
+                index += 1;
+                continue;
+            }
+            let (e3_id, _) = pending.swap_remove(index);
+            if let Err(error) =
+                handle_e3_input_deadline_expiration(e3_id.clone(), store.clone()).await
+            {
+                warn!(
+                    "[e3_id={}] Recovered deadline handler could not start computation: {}",
+                    e3_id, error
+                );
+            }
+        }
+        if !pending.is_empty() {
+            sleep(Duration::from_secs(30)).await;
+        }
     }
 }
 
@@ -1219,8 +1265,55 @@ async fn recover_available_inputs<S: DataStore>(
     store: SharedStore<S>,
     availability: Arc<AvailabilityService>,
 ) {
+    let interfold = match InterfoldContractFactory::create_read(
+        &CONFIG.http_rpc_url,
+        &CONFIG.interfold_address,
+    )
+    .await
+    {
+        Ok(interfold) => interfold,
+        Err(error) => {
+            warn!("Could not start the available-input recovery reader: {error}");
+            return;
+        }
+    };
     loop {
+        let mut terminal_e3s = HashMap::<String, bool>::new();
         for reference in availability.pending_input_references() {
+            let round = CrispE3Repository::new(store.clone(), &reference.e3_id);
+            let status = round.get_status().await.ok();
+            let locally_terminal = matches!(
+                status.as_deref(),
+                Some("CiphertextPublished" | "Finished")
+            );
+            let chain_terminal = if locally_terminal {
+                false
+            } else if let Some(terminal) = terminal_e3s.get(&reference.e3_id) {
+                *terminal
+            } else {
+                let terminal = match e3_id_to_u256(&reference.e3_id) {
+                    Ok(e3_id) => tokio::time::timeout(
+                        Duration::from_secs(15),
+                        interfold.get_e3_stage(e3_id),
+                    )
+                    .await
+                    .is_ok_and(|result| {
+                        result.as_ref().is_ok_and(stage_ends_input_retrieval)
+                    }),
+                    Err(_) => false,
+                };
+                terminal_e3s.insert(reference.e3_id.clone(), terminal);
+                terminal
+            };
+            if locally_terminal || chain_terminal {
+                if let Err(error) = availability.complete_input_reference(&reference) {
+                    warn!(
+                        "[e3_id={}] Could not remove an obsolete input reference: {}",
+                        reference.e3_id, error
+                    );
+                }
+                continue;
+            }
             match store_available_input(store.clone(), Arc::clone(&availability), reference.clone())
                 .await
             {
@@ -1491,7 +1584,9 @@ pub async fn start_indexer(
 
 #[cfg(test)]
 mod custom_params_decoding_tests {
-    use super::{deadline_attempt_times, is_configured_e3_program};
+    use super::{
+        deadline_attempt_times, is_configured_e3_program, stage_ends_input_retrieval, E3Stage,
+    };
     use crate::server::models::CensusMode;
     use alloy::dyn_abi::SolType;
     use alloy::primitives::{Address, U256};
@@ -1593,5 +1688,13 @@ mod custom_params_decoding_tests {
     fn restart_spreads_overdue_deadline_attempts_from_now() {
         assert_eq!(deadline_attempt_times(100, 200), [200, 260, 380, 620]);
         assert_eq!(deadline_attempt_times(300, 200), [300, 360, 480, 720]);
+    }
+
+    #[test]
+    fn terminal_chain_stages_release_input_retrievals() {
+        assert!(stage_ends_input_retrieval(&E3Stage::CiphertextReady));
+        assert!(stage_ends_input_retrieval(&E3Stage::Complete));
+        assert!(stage_ends_input_retrieval(&E3Stage::Failed));
+        assert!(!stage_ends_input_retrieval(&E3Stage::KeyPublished));
     }
 }

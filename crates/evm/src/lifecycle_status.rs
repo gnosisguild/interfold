@@ -21,6 +21,27 @@ pub struct CanonicalE3Lifecycle {
     pub failure_reason: Option<FailureReason>,
 }
 
+/// Result of comparing a persisted E3 with finalized Ethereum state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FinalizedE3Lifecycle {
+    /// The E3 exists at chain head, but its request block is not finalized yet.
+    PendingFinality,
+    /// The finalized block contains the E3 and is safe to use for irreversible recovery changes.
+    Canonical(CanonicalE3Lifecycle),
+}
+
+fn classify_finalized_stage(finalized: E3Stage, head: E3Stage) -> Result<Option<E3Stage>> {
+    if finalized != E3Stage::None {
+        return Ok(Some(finalized));
+    }
+    if head != E3Stage::None {
+        return Ok(None);
+    }
+    bail!(
+        "persisted request context references an E3 that is absent at finalized state and chain head"
+    )
+}
+
 fn decode_stage(value: u8) -> Result<E3Stage> {
     Ok(match value {
         0 => E3Stage::None,
@@ -60,7 +81,7 @@ pub async fn fetch_finalized_e3_lifecycle<P>(
     provider: &EthProvider<P>,
     interfold_address: Address,
     e3_id: &E3id,
-) -> Result<CanonicalE3Lifecycle>
+) -> Result<FinalizedE3Lifecycle>
 where
     P: Provider + Clone,
 {
@@ -70,7 +91,7 @@ where
         .with_context(|| format!("invalid E3 ID {e3_id}"))?;
     let block = BlockId::Number(BlockNumberOrTag::Finalized);
     let contract = IInterfold::new(interfold_address, provider.provider());
-    let stage = decode_stage(
+    let finalized_stage = decode_stage(
         contract
             .getE3Stage(raw_e3_id)
             .block(block)
@@ -78,9 +99,23 @@ where
             .await
             .with_context(|| format!("failed to read finalized stage for E3 {e3_id}"))?,
     )?;
-    if stage == E3Stage::None {
-        bail!("persisted request context references unknown on-chain E3 {e3_id}");
-    }
+    let head_stage = if finalized_stage == E3Stage::None {
+        decode_stage(
+            contract
+                .getE3Stage(raw_e3_id)
+                .call()
+                .await
+                .with_context(|| format!("failed to read head stage for E3 {e3_id}"))?,
+        )?
+    } else {
+        finalized_stage.clone()
+    };
+    let Some(stage) = classify_finalized_stage(finalized_stage, head_stage).with_context(|| {
+        format!("persisted request context references unknown on-chain E3 {e3_id}")
+    })?
+    else {
+        return Ok(FinalizedE3Lifecycle::PendingFinality);
+    };
 
     let failure_reason = if stage == E3Stage::Failed {
         Some(decode_failure_reason(
@@ -97,10 +132,10 @@ where
         None
     };
 
-    Ok(CanonicalE3Lifecycle {
+    Ok(FinalizedE3Lifecycle::Canonical(CanonicalE3Lifecycle {
         stage,
         failure_reason,
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -116,5 +151,18 @@ mod tests {
         );
         assert!(decode_stage(7).is_err());
         assert!(decode_failure_reason(0).is_err());
+    }
+
+    #[test]
+    fn head_only_e3_waits_for_finality() {
+        assert_eq!(
+            classify_finalized_stage(E3Stage::None, E3Stage::Requested).unwrap(),
+            None
+        );
+        assert_eq!(
+            classify_finalized_stage(E3Stage::Requested, E3Stage::Requested).unwrap(),
+            Some(E3Stage::Requested)
+        );
+        assert!(classify_finalized_stage(E3Stage::None, E3Stage::None).is_err());
     }
 }

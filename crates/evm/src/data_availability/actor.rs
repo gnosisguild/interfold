@@ -8,14 +8,16 @@ use actix::{
 use alloy::primitives::keccak256;
 use e3_bfv_client::validate_pk_commitment;
 use e3_config::chain_config::{DataAvailabilityConfig, DataAvailabilityMode};
+use e3_data::Repository;
 use e3_data_availability::{AvailReader, DataAvailabilityReader, DataReference, HttpObjectReader};
 use e3_events::{
     prelude::*, BusHandle, CiphertextOutputPublished, CiphertextOutputReferencePublished,
-    CommitteePublicKeyChunkPublished, CommitteePublished, E3id, EventContext, EventPublisher,
-    EventType, InterfoldEvent, InterfoldEventData, Sequenced,
+    CommitteePublicKeyChunkPublished, CommitteePublished, E3id, EType, EventContext,
+    EventPublisher, EventType, InterfoldEvent, InterfoldEventData, Sequenced,
 };
 use e3_fhe_params::{BfvParamSet, BfvPreset};
 use e3_utils::{ArcBytes, MAILBOX_LIMIT};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -26,6 +28,7 @@ use tracing::{info, warn};
 const OUTPUT_RETRY_DELAY: Duration = Duration::from_secs(30);
 const MAX_PUBLIC_KEY_BYTES: usize = 512 * 1024;
 const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
+pub const DATA_AVAILABILITY_RECOVERY_SCHEMA_VERSION: u32 = 1;
 
 type CandidateKey = (E3id, String, [u8; 32]);
 
@@ -46,17 +49,46 @@ fn validate_committee_public_key(
     )
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct OutputReference {
     event: CiphertextOutputReferencePublished,
     cause: EventContext<Sequenced>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct KeyAssembly {
     nodes: Vec<String>,
     pk_commitment: [u8; 32],
     total_length: u32,
     chunks: Vec<Option<ArcBytes>>,
+}
+
+/// Durable transport projection used when the EVM replay begins after a snapshot boundary.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DataAvailabilityRecoveryState {
+    pub schema_version: u32,
+    presets: HashMap<E3id, BfvPreset>,
+    assemblies: HashMap<CandidateKey, KeyAssembly>,
+    selected_candidates: HashMap<(E3id, String), [u8; 32]>,
+    invalid_candidates: HashSet<CandidateKey>,
+    published_keys: HashSet<E3id>,
+    pending_outputs: HashMap<E3id, OutputReference>,
+    resolved_outputs: HashSet<E3id>,
+}
+
+impl Default for DataAvailabilityRecoveryState {
+    fn default() -> Self {
+        Self {
+            schema_version: DATA_AVAILABILITY_RECOVERY_SCHEMA_VERSION,
+            presets: HashMap::new(),
+            assemblies: HashMap::new(),
+            selected_candidates: HashMap::new(),
+            invalid_candidates: HashSet::new(),
+            published_keys: HashSet::new(),
+            pending_outputs: HashMap::new(),
+            resolved_outputs: HashSet::new(),
+        }
+    }
 }
 
 impl KeyAssembly {
@@ -133,16 +165,19 @@ pub struct DataAvailabilityCoordinator {
     selected_candidates: HashMap<(E3id, String), [u8; 32]>,
     invalid_candidates: HashSet<CandidateKey>,
     published_keys: HashSet<E3id>,
+    publishing_keys: HashSet<E3id>,
     pending_outputs: HashMap<E3id, OutputReference>,
     resolved_outputs: HashSet<E3id>,
     retrieving_outputs: HashSet<E3id>,
+    recovery: Repository<DataAvailabilityRecoveryState>,
 }
 
 impl DataAvailabilityCoordinator {
-    pub fn attach(
+    pub async fn attach(
         bus: &BusHandle,
         chain_id: u64,
         config: Option<&DataAvailabilityConfig>,
+        recovery: Repository<DataAvailabilityRecoveryState>,
     ) -> anyhow::Result<()> {
         let reader: Option<Arc<dyn DataAvailabilityReader>> = match config {
             Some(config) => Some(match config.mode {
@@ -151,19 +186,28 @@ impl DataAvailabilityCoordinator {
             }),
             None => None,
         };
+        let recovered = recovery.read().await?.unwrap_or_default();
+        anyhow::ensure!(
+            recovered.schema_version == DATA_AVAILABILITY_RECOVERY_SCHEMA_VERSION,
+            "unsupported data-availability recovery schema {} for chain {}",
+            recovered.schema_version,
+            chain_id
+        );
         let addr = Self {
             chain_id,
             bus: bus.clone(),
             reader,
             effects_enabled: false,
-            presets: HashMap::new(),
-            assemblies: HashMap::new(),
-            selected_candidates: HashMap::new(),
-            invalid_candidates: HashSet::new(),
-            published_keys: HashSet::new(),
-            pending_outputs: HashMap::new(),
-            resolved_outputs: HashSet::new(),
+            presets: recovered.presets,
+            assemblies: recovered.assemblies,
+            selected_candidates: recovered.selected_candidates,
+            invalid_candidates: recovered.invalid_candidates,
+            published_keys: recovered.published_keys,
+            publishing_keys: HashSet::new(),
+            pending_outputs: recovered.pending_outputs,
+            resolved_outputs: recovered.resolved_outputs,
             retrieving_outputs: HashSet::new(),
+            recovery,
         }
         .start();
         bus.subscribe_all(
@@ -183,13 +227,34 @@ impl DataAvailabilityCoordinator {
         Ok(())
     }
 
+    fn recovery_state(&self) -> DataAvailabilityRecoveryState {
+        DataAvailabilityRecoveryState {
+            schema_version: DATA_AVAILABILITY_RECOVERY_SCHEMA_VERSION,
+            presets: self.presets.clone(),
+            assemblies: self.assemblies.clone(),
+            selected_candidates: self.selected_candidates.clone(),
+            invalid_candidates: self.invalid_candidates.clone(),
+            published_keys: self.published_keys.clone(),
+            pending_outputs: self.pending_outputs.clone(),
+            resolved_outputs: self.resolved_outputs.clone(),
+        }
+    }
+
+    fn persist(&self, cause: &EventContext<Sequenced>) -> anyhow::Result<()> {
+        self.recovery
+            .write_with_context(&self.recovery_state(), cause)
+    }
+
     fn try_publish_keys(&mut self) {
         if !self.effects_enabled {
             return;
         }
         let keys: Vec<CandidateKey> = self.assemblies.keys().cloned().collect();
         for key in keys {
-            if self.invalid_candidates.contains(&key) || self.published_keys.contains(&key.0) {
+            if self.invalid_candidates.contains(&key)
+                || self.published_keys.contains(&key.0)
+                || self.publishing_keys.contains(&key.0)
+            {
                 continue;
             }
             let Some(preset) = self.presets.get(&key.0).copied() else {
@@ -220,10 +285,10 @@ impl DataAvailabilityCoordinator {
                 public_key: ArcBytes::from_bytes(&bytes),
                 proof: ArcBytes::from_bytes(&[]),
             };
-            self.published_keys.insert(key.0.clone());
+            self.publishing_keys.insert(key.0.clone());
             if let Err(error) = self.bus.publish_without_context(event) {
                 warn!(e3_id = %key.0, %error, "Could not publish the assembled committee public key");
-                self.published_keys.remove(&key.0);
+                self.publishing_keys.remove(&key.0);
             } else {
                 info!(e3_id = %key.0, bytes = bytes.len(), "Verified and assembled the chunked committee public key");
             }
@@ -247,6 +312,7 @@ impl DataAvailabilityCoordinator {
         self.pending_outputs.remove(e3_id);
         self.retrieving_outputs.remove(e3_id);
         self.published_keys.remove(e3_id);
+        self.publishing_keys.remove(e3_id);
         self.resolved_outputs.remove(e3_id);
         self.assemblies.retain(|key, _| &key.0 != e3_id);
         self.selected_candidates.retain(|key, _| &key.0 != e3_id);
@@ -273,6 +339,17 @@ impl Handler<InterfoldEvent> for DataAvailabilityCoordinator {
         {
             return;
         }
+        let persists_recovery = matches!(
+            &event,
+            InterfoldEventData::E3Requested(_)
+                | InterfoldEventData::CommitteePublicKeyChunkPublished(_)
+                | InterfoldEventData::CommitteePublished(_)
+                | InterfoldEventData::CiphertextOutputReferencePublished(_)
+                | InterfoldEventData::CiphertextOutputPublished(_)
+                | InterfoldEventData::EffectsEnabled(_)
+                | InterfoldEventData::E3RequestComplete(_)
+                | InterfoldEventData::E3Failed(_)
+        );
         match event {
             InterfoldEventData::E3Requested(event) => {
                 self.presets.insert(event.e3_id, event.params_preset);
@@ -313,12 +390,22 @@ impl Handler<InterfoldEvent> for DataAvailabilityCoordinator {
             // A locally derived publication is durable. Replaying it prevents the coordinator
             // from appending the same derived event on every restart.
             InterfoldEventData::CommitteePublished(event) => {
-                self.published_keys.insert(event.e3_id);
+                self.publishing_keys.remove(&event.e3_id);
+                self.published_keys.insert(event.e3_id.clone());
+                self.assemblies.retain(|key, _| key.0 != event.e3_id);
+                self.selected_candidates
+                    .retain(|key, _| key.0 != event.e3_id);
+                self.invalid_candidates.retain(|key| key.0 != event.e3_id);
             }
             InterfoldEventData::CiphertextOutputReferencePublished(event) => {
                 let e3_id = event.e3_id.clone();
-                self.pending_outputs
-                    .insert(e3_id.clone(), OutputReference { event, cause });
+                self.pending_outputs.insert(
+                    e3_id.clone(),
+                    OutputReference {
+                        event,
+                        cause: cause.clone(),
+                    },
+                );
                 if self.reader.is_none() && self.effects_enabled {
                     warn!(%e3_id, "Cannot retrieve a ciphertext output because data availability is not configured");
                 }
@@ -340,6 +427,11 @@ impl Handler<InterfoldEvent> for DataAvailabilityCoordinator {
             InterfoldEventData::E3Failed(event) => self.cleanup(&event.e3_id),
             InterfoldEventData::Shutdown(_) => ctx.stop(),
             _ => {}
+        }
+        if persists_recovery {
+            if let Err(error) = self.persist(&cause) {
+                self.bus.with_ec(&cause).err(EType::Evm, error);
+            }
         }
     }
 }
@@ -373,11 +465,8 @@ impl Handler<RetrieveOutput> for DataAvailabilityCoordinator {
                             ciphertext_output: vec![ArcBytes::from_bytes(&bytes)],
                             ciphertext_commitment: pending.event.ciphertext_commitment,
                         };
-                        actor.resolved_outputs.insert(e3_id.clone());
-                        actor.pending_outputs.remove(&e3_id);
                         actor.retrieving_outputs.remove(&e3_id);
                         if let Err(error) = actor.bus.publish(event, pending.cause) {
-                            actor.resolved_outputs.remove(&e3_id);
                             warn!(%e3_id, %error, "Could not publish the retrieved ciphertext output");
                             ctx.run_later(OUTPUT_RETRY_DELAY, move |actor, ctx| {
                                 actor.start_output(&e3_id, ctx);
@@ -450,6 +539,31 @@ mod tests {
         let mut conflicting = first;
         conflicting.chunk = ArcBytes::from_bytes(&vec![4; PUBLIC_KEY_CHUNK_BYTES]);
         assert!(!assembly.insert(&conflicting));
+    }
+
+    #[test]
+    fn partial_assembly_survives_the_repository_encoding() {
+        let bytes = vec![3; PUBLIC_KEY_CHUNK_BYTES + 1];
+        let first = chunk_event(&bytes, 0);
+        let key = (
+            first.e3_id.clone(),
+            first.publisher.clone(),
+            first.candidate_hash,
+        );
+        let mut assembly = KeyAssembly::new(&first);
+        assert!(assembly.insert(&first));
+        let mut state = DataAvailabilityRecoveryState::default();
+        state.assemblies.insert(key.clone(), assembly);
+        state
+            .selected_candidates
+            .insert((first.e3_id, first.publisher), first.candidate_hash);
+
+        let encoded = bincode::serialize(&state).expect("encode recovery state");
+        let recovered: DataAvailabilityRecoveryState =
+            bincode::deserialize(&encoded).expect("decode recovery state");
+
+        assert!(recovered.assemblies.contains_key(&key));
+        assert!(recovered.assemblies[&key].bytes().is_none());
     }
 
     #[test]

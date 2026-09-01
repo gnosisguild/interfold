@@ -55,6 +55,12 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
     throw new Error("DEFER_PROTOCOL_WIRING must be 'true', 'false', or unset")
   }
   const deferProtocolWiring = rawDeferProtocolWiring === 'true'
+  const mainnetDeferralAcknowledged = process.env.ALLOW_MAINNET_DEFERRED_WIRING?.trim().toLowerCase() === 'true'
+  if (chain === 'mainnet' && deferProtocolWiring && !mainnetDeferralAcknowledged) {
+    throw new Error(
+      'Mainnet protocol wiring can be deferred only with ALLOW_MAINNET_DEFERRED_WIRING=true. This acknowledgment means the deployment will exit with CRISP unusable until the DAO wiring batch is executed and validated.',
+    )
+  }
   const configuredAvailabilitySigner = process.env.INPUT_AVAILABILITY_SIGNER
   const inputAvailabilitySigner = configuredAvailabilitySigner
     ? ethers.getAddress(configuredAvailabilitySigner)

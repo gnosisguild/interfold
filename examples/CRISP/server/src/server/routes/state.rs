@@ -191,7 +191,8 @@ async fn handle_program_server_result(
                 Ok(job) => HttpResponse::Accepted().json(job),
                 Err(error) => {
                     error!("Failed to stage aggregate ciphertext: {error}");
-                    HttpResponse::InternalServerError().body(error.to_string())
+                    HttpResponse::ServiceUnavailable()
+                        .body("Aggregate ciphertext publication is temporarily unavailable")
                 }
             }
         }

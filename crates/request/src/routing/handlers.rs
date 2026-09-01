@@ -69,6 +69,7 @@ impl Handler<InterfoldEvent> for E3Router {
 
     fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
         trap(EType::Event, &self.bus.with_ec(msg.get_ctx()), || {
+            let enables_effects = matches!(msg.get_data(), InterfoldEventData::EffectsEnabled(_));
             if matches!(msg.get_data(), InterfoldEventData::SyncEffect(SyncEffect)) {
                 let event_context = msg.get_ctx().clone();
                 let result = self.reconcile_recovered_selections();
@@ -86,6 +87,7 @@ impl Handler<InterfoldEvent> for E3Router {
                 msg.get_e3_id()
                     .is_some_and(|e3_id| self.contexts.contains_key(&e3_id)),
                 checkpoint_covers_event,
+                !self.effects_enabled,
             ) {
                 RoutingDecision::Broadcast => {
                     for context in self.contexts.values() {
@@ -157,6 +159,9 @@ impl Handler<InterfoldEvent> for E3Router {
             };
 
             let checkpoint_result = self.checkpoint_with_context(&event_context);
+            if enables_effects {
+                self.effects_enabled = true;
+            }
             result.and(checkpoint_result)
         });
     }

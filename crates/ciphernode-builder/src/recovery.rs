@@ -18,8 +18,8 @@ use e3_events::{
     AggregateId, CiphernodeSelected, Committee, E3Stage, E3id, RequestRouterCheckpoint,
 };
 use e3_evm::{
-    fetch_finalized_e3_lifecycle, CanonicalE3Lifecycle, SlashingWriterRepositoryFactory,
-    SLASHING_WRITER_RECOVERY_SCHEMA_VERSION,
+    fetch_finalized_e3_lifecycle, CanonicalE3Lifecycle, FinalizedE3Lifecycle,
+    SlashingWriterRepositoryFactory, SLASHING_WRITER_RECOVERY_SCHEMA_VERSION,
 };
 use e3_request::{E3LifecycleRepositoryFactory, RouterRepositoryFactory};
 use e3_sortition::{
@@ -97,8 +97,22 @@ pub(crate) async fn reconcile_finalized_request_contexts(
                 format!("timed out reading finalized lifecycle state for E3 {e3_id}")
             })??;
             checked.insert(e3_id.clone());
-            changed |=
-                apply_canonical_terminal_state(&mut checkpoint, &mut lifecycle, e3_id, &canonical);
+            match canonical {
+                FinalizedE3Lifecycle::PendingFinality => {
+                    info!(
+                        %e3_id,
+                        "Kept a persisted request context whose request block is not finalized yet"
+                    );
+                }
+                FinalizedE3Lifecycle::Canonical(canonical) => {
+                    changed |= apply_canonical_terminal_state(
+                        &mut checkpoint,
+                        &mut lifecycle,
+                        e3_id,
+                        &canonical,
+                    );
+                }
+            }
         }
     }
 

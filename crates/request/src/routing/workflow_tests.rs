@@ -92,7 +92,20 @@ fn checkpoint_covered_history_for_completed_request_is_ignored() {
     let msg = with_e3_id("checkpoint-covered-event", id);
 
     assert_eq!(
-        RequestRouter::route_with_recovery_context(&msg, &completed, false, true),
+        RequestRouter::route_with_recovery_context(&msg, &completed, false, true, false),
+        RoutingDecision::Ignore
+    );
+}
+
+#[test]
+fn local_history_after_finalized_reconciliation_is_ignored_during_replay() {
+    let id = e3id();
+    let mut completed = HashSet::new();
+    completed.insert(id.clone());
+    let msg = with_e3_id("uncheckpointed-local-history", id).with_source(EventSource::Local);
+
+    assert_eq!(
+        RequestRouter::route_with_recovery_context(&msg, &completed, false, false, true),
         RoutingDecision::Ignore
     );
 }

@@ -40,6 +40,7 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let pathdb = pathdb.to_str().ok_or_eyre("Path could not be determined")?;
     let sled_db = SledDB::new(pathdb)?;
     let availability = Arc::new(AvailabilityService::new(&sled_db.db, &CONFIG)?);
+    availability.validate_onchain_configuration().await?;
     tokio::spawn(availability.clone().run());
     let db = SharedStore::new(Arc::new(RwLock::new(sled_db)));
 

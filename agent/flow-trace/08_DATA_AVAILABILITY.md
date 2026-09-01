@@ -95,9 +95,12 @@ in which a voter can create a new proof after a worst-case committee setup:
 1h VRF + 10m sortition + 6h DKG + 1h voting + 3h finalization = 40,200 seconds
 ```
 
-`E3_DURATION` must therefore be at least 40,200 seconds in Avail mode. The recommended value is
-43,200 seconds (12 hours), which leaves 1 hour 50 minutes for new commitments after the worst-case
-key publication.
+With those production defaults, `E3_DURATION` must be at least 40,200 seconds. The recommended
+value is 43,200 seconds (12 hours), which leaves 1 hour 50 minutes for new commitments after the
+worst-case key publication. The server does not hard-code that total. At startup, it reads the
+registry's randomness and sortition windows, Interfold's DKG window, and CRISP's voting and
+finalization windows. It refuses to start when `E3_DURATION` is shorter than their current sum.
+Test deployments with shorter on-chain windows can therefore use a correspondingly shorter round.
 
 The three-hour tail is an operating target, not a promise from VectorX. Avail documents a 20-second
 block time and says VectorX bridges one range every 360 blocks. One complete range is therefore
@@ -171,8 +174,17 @@ start, so calling the contract without the CRISP server cannot bypass the rule.
 
 ## Restart and failure behavior
 
+- Each ciphernode stores partial public-key assemblies, selected candidates, and unresolved
+  ciphertext-output references in a chain-scoped recovery projection. A restart after the event
+  snapshot boundary resumes the missing chunks or retrieval instead of waiting for old logs that
+  will not replay.
 - Every staged object and job state is in the server's persistent Sled database before the server
   signs an input.
+- The browser keeps the exact encoded ballot with its durable job pointer. If the server loses its
+  job database, the browser re-stages the same commitment instead of creating a second ciphertext
+  and leaving the first on-chain commitment unresolved.
+- The server checks the one-megabyte object limit before it accepts an input commitment or creates
+  an output job. An oversized object cannot reserve a leaf that Avail will always reject.
 - The job worker retries every 30 seconds. Each network or chain step has a 120-second bound, so one
   stuck RPC call cannot block all jobs.
 - On restart, the worker resumes proof commitments, Avail submissions, VectorX polling, Ethereum
@@ -196,6 +208,13 @@ start, so calling the contract without the CRISP server cannot bypass the rule.
   an Avail proof bypass.
 - If VectorX never produces a valid proof, the input remains pending. CRISP refuses computation and
   Interfold eventually fails the E3 at the compute deadline.
+- Input retrieval retries while the round can still compute. References are removed when the
+  aggregate ciphertext is published, the round finishes, or Ethereum marks the E3 failed. A retry
+  limit during an active round would turn a temporary Avail outage into permanent data loss.
+
+The public HTTP boundary does not expose RPC or database error text. Contract reverts caused by a
+ballot return a stable client error. Provider and storage failures return a retryable service error.
+Failed admission returns its global relay reservation.
 
 ## Remaining trust and operations
 

@@ -7,20 +7,17 @@
 import { bytesToHex, keccak256 } from 'viem'
 import { describe, expect, it } from 'vitest'
 
-import {
-  CommitteePublicKeyAssembler,
-  MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES,
-} from '../src/committee-public-key'
+import { CommitteePublicKeyAssembler, MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES } from '../src/committee-public-key'
 import type { CommitteePublicKeyChunkPublishedData } from '../src/events/types'
 
 const publisher = '0x0000000000000000000000000000000000000001'
 const nodes = [publisher, '0x0000000000000000000000000000000000000002']
 const pkCommitment = `0x${'11'.repeat(32)}`
 
-function eventsFor(bytes: Uint8Array, candidateHash = keccak256(bytes)): CommitteePublicKeyChunkPublishedData[] {
+function eventsFor(bytes: Uint8Array, candidateHash = keccak256(bytes), e3Id = 7n): CommitteePublicKeyChunkPublishedData[] {
   const chunkCount = Math.ceil(bytes.length / MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES)
   return Array.from({ length: chunkCount }, (_, chunkIndex) => ({
-    e3Id: 7n,
+    e3Id,
     publisher,
     candidateHash,
     nodes,
@@ -29,10 +26,7 @@ function eventsFor(bytes: Uint8Array, candidateHash = keccak256(bytes)): Committ
     chunkCount,
     totalLength: bytes.length,
     chunk: bytesToHex(
-      bytes.slice(
-        chunkIndex * MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES,
-        (chunkIndex + 1) * MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES,
-      ),
+      bytes.slice(chunkIndex * MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES, (chunkIndex + 1) * MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES),
     ),
   }))
 }
@@ -73,5 +67,18 @@ describe('CommitteePublicKeyAssembler', () => {
     const [event] = eventsFor(bytes, `0x${'22'.repeat(32)}`)
 
     expect(new CommitteePublicKeyAssembler().add(event)).toBeUndefined()
+  })
+
+  it('evicts old partial and completed E3 state at the configured bound', () => {
+    const large = new Uint8Array(MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES + 1).fill(3)
+    const [oldFirst, oldSecond] = eventsFor(large, keccak256(large), 7n)
+    const currentBytes = new Uint8Array([4])
+    const [current] = eventsFor(currentBytes, keccak256(currentBytes), 8n)
+    const assembler = new CommitteePublicKeyAssembler(1)
+
+    expect(assembler.add(oldFirst)).toBeUndefined()
+    expect(assembler.add(current)?.e3Id).toBe(8n)
+    expect(assembler.add(oldSecond)).toBeUndefined()
+    expect(assembler.add(current)?.e3Id).toBe(8n)
   })
 })

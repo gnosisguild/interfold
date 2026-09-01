@@ -43,7 +43,10 @@ pub use ciphernode_registry_sol::{
     fetch_randomness_providers, CiphernodeRegistrySol, CiphernodeRegistrySolReader,
     CiphernodeRegistrySolWriter,
 };
-pub use data_availability::DataAvailabilityCoordinator;
+pub use data_availability::{
+    DataAvailabilityCoordinator, DataAvailabilityRecoveryState,
+    DATA_AVAILABILITY_RECOVERY_SCHEMA_VERSION,
+};
 pub use evm_chain_gateway::*;
 pub use evm_hub::*;
 pub use evm_parser::*;

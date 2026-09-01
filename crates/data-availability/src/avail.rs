@@ -89,7 +89,7 @@ impl AvailPublisher {
 #[async_trait]
 impl DataAvailabilityPublisher for AvailPublisher {
     async fn publish(&self, bytes: &[u8]) -> Result<PendingPublication> {
-        validate_size(bytes)?;
+        validate_object_bytes(bytes)?;
         // Keep the lock through finality. A second nonce lookup before the first transaction is
         // finalized can return the same nonce on RPCs that ignore their pending pool.
         let _submission = self.submission_lock.lock().await;

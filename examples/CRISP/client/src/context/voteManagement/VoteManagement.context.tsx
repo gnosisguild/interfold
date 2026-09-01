@@ -28,6 +28,8 @@ const getVoteCacheKey = (chainId: number, roundId: string, address: string): str
 }
 
 const nowInSeconds = (): number => Math.floor(Date.now() / 1000)
+const ROUND_POLL_INITIAL_MS = 10_000
+const ROUND_POLL_MAX_MS = 60_000
 
 const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
   /**
@@ -122,12 +124,16 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
   const initialLoad = async () => {
     const currentRound = await getCurrentRound()
     if (!currentRound) return
-    setCurrentRoundId(currentRound.id)
 
     // If the current round has ended without a published tally, the page would
     // otherwise sit forever in "Over · Tallying…". Fall back to the latest past
     // round that does have a tally so the user sees something useful.
     const fetched = await getRoundStateLiteRequest(currentRound.id)
+    const confirmedRound = await getCurrentRound()
+    if (!confirmedRound || confirmedRound.id !== currentRound.id) {
+      return
+    }
+    setCurrentRoundId(currentRound.id)
     if (!fetched) {
       setPendingCurrentRoundId(currentRound.id)
       return
@@ -186,8 +192,17 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
 
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
+    let delay = ROUND_POLL_INITIAL_MS
 
-    const poll = async () => {
+    function schedule(wait = delay) {
+      if (cancelled || document.hidden) return
+      timer = setTimeout(() => {
+        timer = null
+        void poll()
+      }, wait)
+    }
+
+    async function poll() {
       if (cancelled) return
 
       const currentRound = await getCurrentRoundRef.current()
@@ -196,6 +211,15 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
       if (currentRound) {
         const fetched = await getRoundStateLiteRequestRef.current(currentRound.id)
         if (cancelled) return
+
+        // The current-round pointer can change while its state is in flight. Confirm it again
+        // before committing either value, or this effect stops polling on a stale round.
+        const confirmedRound = await getCurrentRoundRef.current()
+        if (cancelled) return
+        if (!confirmedRound || confirmedRound.id !== currentRound.id) {
+          schedule(1_000)
+          return
+        }
 
         // Fetch the state before storing the round ID. Storing the ID reruns this
         // effect and cancels the current request. If we store it first, a round
@@ -213,40 +237,90 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
         return
       }
 
-      timer = setTimeout(poll, 10_000)
+      delay = Math.min(delay * 2, ROUND_POLL_MAX_MS)
+      schedule()
     }
 
-    timer = setTimeout(poll, 10_000)
+    function resumeWhenVisible() {
+      if (!document.hidden && !cancelled && !timer) {
+        delay = ROUND_POLL_INITIAL_MS
+        void poll()
+      }
+    }
+    document.addEventListener('visibilitychange', resumeWhenVisible)
+    schedule()
     return () => {
       cancelled = true
       if (timer) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', resumeWhenVisible)
     }
   }, [currentRoundId, applyRoundState])
 
   useEffect(() => {
     if (!pendingCurrentRoundId) return
+    const pendingRoundId = pendingCurrentRoundId
 
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
+    let delay = ROUND_POLL_INITIAL_MS
 
-    const poll = async () => {
+    function schedule() {
+      if (cancelled || document.hidden) return
+      timer = setTimeout(() => {
+        timer = null
+        void poll()
+      }, delay)
+    }
+
+    async function poll() {
       if (cancelled) return
 
-      const fetched = await getRoundStateLiteRequestRef.current(pendingCurrentRoundId)
+      const currentRound = await getCurrentRoundRef.current()
+      if (cancelled) return
+      if (currentRound && currentRound.id !== pendingRoundId) {
+        // A newer round replaced the one whose key we were waiting for. Reset discovery instead
+        // of keeping the page attached to an old round that may never become readable.
+        setPendingCurrentRoundId(null)
+        setCurrentRoundId(null)
+        return
+      }
+
+      const fetched = await getRoundStateLiteRequestRef.current(pendingRoundId)
       if (cancelled) return
       if (fetched) {
+        const confirmedRound = await getCurrentRoundRef.current()
+        if (cancelled) return
+        if (!confirmedRound) {
+          delay = Math.min(delay * 2, ROUND_POLL_MAX_MS)
+          schedule()
+          return
+        }
+        if (confirmedRound.id !== pendingRoundId) {
+          setPendingCurrentRoundId(null)
+          setCurrentRoundId(null)
+          return
+        }
         applyRoundState(fetched)
         setPendingCurrentRoundId(null)
         return
       }
 
-      timer = setTimeout(poll, 10_000)
+      delay = Math.min(delay * 2, ROUND_POLL_MAX_MS)
+      schedule()
     }
 
-    timer = setTimeout(poll, 10_000)
+    function resumeWhenVisible() {
+      if (!document.hidden && !cancelled && !timer) {
+        delay = ROUND_POLL_INITIAL_MS
+        void poll()
+      }
+    }
+    document.addEventListener('visibilitychange', resumeWhenVisible)
+    schedule()
     return () => {
       cancelled = true
       if (timer) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', resumeWhenVisible)
     }
   }, [pendingCurrentRoundId, applyRoundState])
 

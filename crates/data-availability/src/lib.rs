@@ -65,7 +65,7 @@ pub trait DataAvailabilityPublisher: Send + Sync {
 
 /// Re-hash retrieved bytes against their Ethereum-verified reference.
 pub fn verify_retrieved_bytes(reference: DataReference, bytes: Vec<u8>) -> Result<Vec<u8>> {
-    validate_size(&bytes)?;
+    validate_object_bytes(&bytes)?;
     let actual = keccak256(&bytes);
     if actual.0 != reference.content_hash {
         bail!(
@@ -76,7 +76,8 @@ pub fn verify_retrieved_bytes(reference: DataReference, bytes: Vec<u8>) -> Resul
     Ok(bytes)
 }
 
-fn validate_size(bytes: &[u8]) -> Result<()> {
+/// Validate an object before any durable commitment or network publication.
+pub fn validate_object_bytes(bytes: &[u8]) -> Result<()> {
     if bytes.is_empty() {
         bail!("data-availability object is empty");
     }

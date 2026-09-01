@@ -33,9 +33,9 @@ use e3_events::{
 use e3_evm::{
     ensure_node_release, fetch_accusation_vote_validity, fetch_randomness_providers,
     BondingRegistrySolReader, CiphernodeRegistrySol, CiphernodeRegistrySolReader,
-    DataAvailabilityCoordinator, EvmChainGatewayHandle, InterfoldSolReader, InterfoldSolWriter,
-    ProviderConfig, RandomnessProviderSolReader, SlashingManagerSolReader,
-    SlashingManagerSolWriter, SlashingWriterRepositoryFactory,
+    DataAvailabilityCoordinator, DataAvailabilityRepositoryFactory, EvmChainGatewayHandle,
+    InterfoldSolReader, InterfoldSolWriter, ProviderConfig, RandomnessProviderSolReader,
+    SlashingManagerSolReader, SlashingManagerSolWriter, SlashingWriterRepositoryFactory,
 };
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::ext::ThresholdKeyshareExtension;
@@ -1249,7 +1249,13 @@ async fn setup_evm_system(
                 chain.name
             );
         }
-        DataAvailabilityCoordinator::attach(bus, chain_id, chain.data_availability.as_ref())?;
+        DataAvailabilityCoordinator::attach(
+            bus,
+            chain_id,
+            chain.data_availability.as_ref(),
+            repositories.data_availability_recovery(chain_id),
+        )
+        .await?;
         if contract_components.ciphernode_registry {
             validate_vrf_chain_id(chain_id)?;
         }

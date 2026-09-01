@@ -4,7 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use super::{models::E3, DataStore, SharedStore};
+use super::{
+    models::{CiphertextOutputReference, E3},
+    DataStore, SharedStore,
+};
 use eyre::Result;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -117,6 +120,25 @@ impl<S: DataStore> E3Repository<S> {
         Ok(())
     }
 
+    pub async fn set_ciphertext_output_reference(
+        &mut self,
+        reference: CiphertextOutputReference,
+        commitment: Vec<u8>,
+    ) -> Result<()> {
+        let key = self.e3_key();
+        self.store
+            .modify(&key, |e3_obj: Option<E3>| {
+                e3_obj.map(|mut e| {
+                    e.ciphertext_output_reference = Some(reference.clone());
+                    e.ciphertext_commitment = commitment.clone();
+                    e
+                })
+            })
+            .await
+            .map_err(|_| eyre::eyre!("Could not set ciphertext output reference for '{key}'"))?;
+        Ok(())
+    }
+
     fn e3_key(&self) -> String {
         let e3_id = &self.e3_id;
         format!("_e3:{e3_id}")
@@ -136,6 +158,7 @@ mod tests {
             chain_id: 1,
             ciphertext_inputs: vec![(vec![3], 0)],
             ciphertext_output,
+            ciphertext_output_reference: None,
             ciphertext_commitment: vec![4],
             committee_public_key: vec![public_key],
             committee_public_key_hash: vec![public_key; 32],
@@ -166,5 +189,25 @@ mod tests {
         assert_eq!(stored.committee_public_key, vec![1]);
         assert_eq!(stored.ciphertext_output, vec![2]);
         assert_eq!(stored.plaintext_output, vec![9]);
+    }
+
+    #[tokio::test]
+    async fn output_reference_and_commitment_are_stored_together() {
+        let store = SharedStore::new(Arc::new(RwLock::new(InMemoryStore::new())));
+        let mut repo = E3Repository::new(store, "12");
+        repo.set_e3(e3(1, vec![])).await.unwrap();
+
+        let reference = crate::models::CiphertextOutputReference {
+            content_hash: vec![7; 32],
+            availability_block: 42,
+            availability_leaf_index: 9,
+        };
+        repo.set_ciphertext_output_reference(reference.clone(), vec![8; 32])
+            .await
+            .unwrap();
+
+        let stored = repo.get_e3().await.unwrap();
+        assert_eq!(stored.ciphertext_output_reference, Some(reference));
+        assert_eq!(stored.ciphertext_commitment, vec![8; 32]);
     }
 }

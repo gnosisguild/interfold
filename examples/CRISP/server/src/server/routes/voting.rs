@@ -6,7 +6,7 @@
 
 use crate::server::{
     app_data::AppData,
-    data_availability::AvailabilityService,
+    data_availability::{input_rejection_message, AvailabilityService},
     models::{
         canonical_e3_id, e3_id_to_u256, VoteRequest, VoteResponse, VoteResponseStatus,
         VoteStatusRequest, VoteStatusResponse,
@@ -39,12 +39,19 @@ async fn get_available_object(
     content_hash: web::Path<String>,
     availability: web::Data<AvailabilityService>,
 ) -> impl Responder {
+    let normalized = content_hash.strip_prefix("0x").unwrap_or(&content_hash);
+    if normalized.len() != 64 || !normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return HttpResponse::BadRequest().body("Invalid content hash");
+    }
     match availability.object(&content_hash) {
         Ok(Some(bytes)) => HttpResponse::Ok()
             .content_type("application/octet-stream")
             .body(bytes),
         Ok(None) => HttpResponse::NotFound().finish(),
-        Err(error) => HttpResponse::BadRequest().body(error.to_string()),
+        Err(error) => {
+            error!("Failed to read an availability object: {error}");
+            HttpResponse::InternalServerError().body("Availability storage is unavailable")
+        }
     }
 }
 
@@ -129,9 +136,8 @@ async fn broadcast_encrypted_vote(
     // one caller spending the relay's gas. A forgeable key is no key at all — see `caller_id`.
     let caller = super::chain::identify(&request, CONFIG.trust_proxy_headers);
 
-    // Caller admission only. The global transaction quota is reserved after parsing and
-    // simulation, right before the relay pays — reserving it here would let invalid requests
-    // sprayed across addresses drain it and deny honest voters.
+    // Caller admission only. A later global reservation is returned if validation or
+    // infrastructure fails before a durable availability job is admitted.
     if limiter.check_caller(&caller).is_err() {
         warn!("Rate limit (caller) refused a broadcast from {caller}");
 
@@ -173,7 +179,7 @@ async fn broadcast_encrypted_vote(
         }
     };
 
-    // Reserve a global slot before the service can pay an Avail fee or relay an Ethereum call.
+    // Reserve a global slot before the service can admit work that may spend relay funds.
     if limiter.try_reserve_global().is_err() {
         warn!("Rate limit (global) refused a broadcast from {caller}");
 
@@ -193,16 +199,24 @@ async fn broadcast_encrypted_vote(
         Ok(job) if job.status == "success" => HttpResponse::Ok().json(job),
         Ok(job) => HttpResponse::Accepted().json(job),
         Err(error) => {
-            warn!(
-                "[e3_id={}] Availability publication refused: {}",
-                e3_key, error
-            );
-            HttpResponse::BadRequest().json(VoteResponse {
+            limiter.release_global_reservation();
+            if let Some(message) = input_rejection_message(&error) {
+                warn!("[e3_id={}] Vote rejected: {}", e3_key, error);
+                return HttpResponse::BadRequest().json(VoteResponse {
+                    status: VoteResponseStatus::FailedBroadcast,
+                    tx_hash: None,
+                    job_id: None,
+                    encoded_proof: None,
+                    message: Some(message.to_string()),
+                });
+            }
+            error!("[e3_id={}] Availability service failed: {}", e3_key, error);
+            HttpResponse::ServiceUnavailable().json(VoteResponse {
                 status: VoteResponseStatus::FailedBroadcast,
                 tx_hash: None,
                 job_id: None,
                 encoded_proof: None,
-                message: Some(error.to_string()),
+                message: Some("The availability service is temporarily unavailable".to_string()),
             })
         }
     }
@@ -215,6 +229,9 @@ async fn get_availability_status(
     match availability.refreshed_view(&job_id).await {
         Ok(Some(job)) => HttpResponse::Ok().json(job),
         Ok(None) => HttpResponse::NotFound().finish(),
-        Err(error) => HttpResponse::InternalServerError().body(error.to_string()),
+        Err(error) => {
+            error!("Failed to read availability job {}: {error}", job_id.as_str());
+            HttpResponse::ServiceUnavailable().body("Availability status is temporarily unavailable")
+        }
     }
 }

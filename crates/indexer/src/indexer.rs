@@ -4,7 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use super::{models::E3, DataStore};
+use super::{
+    models::{CiphertextOutputReference, E3},
+    DataStore,
+};
 use crate::callback_queue::CallbackQueue;
 use crate::E3Repository;
 use alloy::consensus::BlockHeader;
@@ -22,8 +25,8 @@ use e3_evm_helpers::{
     },
     event_listener::{EventListener, LiveProgress, NOT_PROCESSING},
     events::{
-        CiphertextOutputPublished, CommitteePublicKeyChunkPublished, CommitteePublished,
-        PlaintextOutputPublished,
+        CiphertextOutputPublished, CiphertextOutputReferencePublished,
+        CommitteePublicKeyChunkPublished, CommitteePublished, PlaintextOutputPublished,
     },
 };
 use e3_fhe_params::{decode_bfv_params, encode_bfv_params, BfvParamSet, BfvPreset};
@@ -488,6 +491,7 @@ async fn store_committee_public_key<S: DataStore, R: ProviderType>(
         chain_id: ctx.chain_id(),
         ciphertext_inputs: vec![],
         ciphertext_output: vec![],
+        ciphertext_output_reference: None,
         ciphertext_commitment: vec![],
         committee_public_key: event.publicKey.to_vec(),
         committee_public_key_hash: event.pkCommitment.to_vec(),
@@ -744,6 +748,29 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
         Ok(())
     }
 
+    async fn register_ciphertext_output_reference_published(&mut self) -> Result<()> {
+        self.add_event_handler(
+            move |event: CiphertextOutputReferencePublished, ctx| async move {
+                info!(
+                    "CiphertextOutputReferencePublished: e3_id={}, block={}, leaf_index={}",
+                    event.e3Id, event.availabilityBlock, event.availabilityLeafIndex
+                );
+                let mut repo = E3Repository::new(ctx.store(), event.e3Id.to_string());
+                repo.set_ciphertext_output_reference(
+                    CiphertextOutputReference {
+                        content_hash: event.contentHash.to_vec(),
+                        availability_block: event.availabilityBlock,
+                        availability_leaf_index: event.availabilityLeafIndex,
+                    },
+                    event.ciphertextCommitment.to_vec(),
+                )
+                .await
+            },
+        )
+        .await;
+        Ok(())
+    }
+
     async fn register_plaintext_output_published(&mut self) -> Result<()> {
         self.add_event_handler(move |e: PlaintextOutputPublished, ctx| async move {
             let store = ctx.store();
@@ -835,6 +862,8 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
         self.register_committee_published().await?;
         self.register_committee_public_key_chunks().await?;
         self.register_ciphertext_output_published().await?;
+        self.register_ciphertext_output_reference_published()
+            .await?;
         self.register_plaintext_output_published().await?;
         self.register_blocktime_callback_handler().await?;
         info!("Listeners have been setup!");
