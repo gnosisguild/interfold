@@ -706,6 +706,7 @@ impl CiphernodeBuilder {
                 &dkg_fold_contexts_by_e3,
                 &accusation_vote_validity_by_chain,
                 &selector_state,
+                &lifecycle_stages,
             )
             .await?;
 
@@ -930,6 +931,7 @@ impl CiphernodeBuilder {
         dkg_fold_contexts_by_e3: &HashMap<e3_events::E3id, DkgFoldAttestationContext>,
         accusation_vote_validity_by_chain: &HashMap<u64, u64>,
         selector_state: &CiphernodeSelectorState,
+        lifecycle_stages: &HashMap<E3id, E3Stage>,
     ) -> Result<e3_request::E3RouterBuilder> {
         let recovered_selections = recovered_ciphernode_selections(selector_state, addr)?;
         let mut e3_builder =
@@ -957,7 +959,7 @@ impl CiphernodeBuilder {
 
         // ── Threshold keyshare + ZK actors ──
         if let Some(KeyshareKind::Threshold) = self.keyshare {
-            let _ = self.ensure_multithread(bus);
+            let _ = self.ensure_multithread(bus, lifecycle_stages);
             let backend = self
                 .zk_backend
                 .as_ref()
@@ -1003,7 +1005,7 @@ impl CiphernodeBuilder {
             e3_builder = e3_builder.with(FheExtension::create(bus, &self.rng));
 
             info!("Setting up PublicKeyAggregationExtension");
-            let _ = self.ensure_multithread(bus);
+            let _ = self.ensure_multithread(bus, lifecycle_stages);
             e3_builder = e3_builder.with(PublicKeyAggregatorExtension::create(bus));
 
             if self.keyshare.is_none() {
@@ -1027,7 +1029,7 @@ impl CiphernodeBuilder {
         // ── Threshold plaintext aggregation ──
         if self.threshold_plaintext_agg {
             info!("Setting up ThresholdPlaintextAggregatorExtension");
-            let _ = self.ensure_multithread(bus);
+            let _ = self.ensure_multithread(bus, lifecycle_stages);
             e3_builder = e3_builder.with(ThresholdPlaintextAggregatorExtension::create(
                 bus,
                 sortition,
@@ -1120,7 +1122,11 @@ impl CiphernodeBuilder {
         NetworkPolicy::new(profile, deployments)
     }
 
-    fn ensure_multithread(&mut self, bus: &BusHandle) -> Addr<Multithread> {
+    fn ensure_multithread(
+        &mut self,
+        bus: &BusHandle,
+        lifecycle_stages: &HashMap<E3id, E3Stage>,
+    ) -> Addr<Multithread> {
         if let Some(cached) = self.multithread_cache.clone() {
             return cached;
         }
@@ -1143,6 +1149,7 @@ impl CiphernodeBuilder {
                 task_pool,
                 self.multithread_report.clone(),
                 backend,
+                lifecycle_stages.clone(),
             )
         } else {
             Multithread::attach(
@@ -1151,6 +1158,7 @@ impl CiphernodeBuilder {
                 self.cipher.clone(),
                 task_pool,
                 self.multithread_report.clone(),
+                lifecycle_stages.clone(),
             )
         };
 

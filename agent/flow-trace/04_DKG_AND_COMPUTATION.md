@@ -1342,8 +1342,10 @@ present in the running ABI catalog is exposed as `UnknownEvmLog` with raw topics
 
 During restart, `ComputeEffectGate` observes replay before compute workers are effects-enabled. It
 buffers and deduplicates `ComputeRequest`s, prefers the newest regenerated request, cancels terminal
-E3 work, and releases pending jobs only after `EffectsEnabled`. The gate changes effect timing, not
-durable event order or audit state.
+E3 work, and releases pending jobs only after `EffectsEnabled`. The gate starts with the durable E3
+lifecycle snapshot. If an E3 has already reached `KeyPublished`, it discards replayed DKG and DKG
+proof jobs because the chain has made that work obsolete; decryption jobs remain eligible. The gate
+changes effect timing, not durable event order or audit state.
 
 `CiphernodeSelector` also observes replay before it enables failover effects. Its versioned
 repository stores a readiness-gated phase, assigned party, absolute deadline, and locally
