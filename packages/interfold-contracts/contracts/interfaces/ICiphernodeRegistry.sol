@@ -541,9 +541,9 @@ interface ICiphernodeRegistry {
     ) external;
 
     /// @notice Publishes one deterministic chunk of a large serialized public-key candidate.
-    /// @dev Repeatable by selected committee members. The registry does not assemble or store the
-    ///      key. Consumers accept at most one candidate per member and verify it against the proven
-    ///      DKG commitment.
+    /// @dev Selected committee members can publish while the E3 is in `KeyPublished`. The registry
+    ///      does not assemble or store the key. Consumers accept at most one candidate per member
+    ///      and verify it against the proven DKG commitment.
     /// @param e3Id ID of the E3 whose committee proof has been published.
     /// @param candidateHash Keccak-256 of the complete serialized public key.
     /// @param chunkIndex Zero-based index of this chunk.

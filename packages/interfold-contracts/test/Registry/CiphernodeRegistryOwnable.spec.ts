@@ -1061,6 +1061,52 @@ describe("CiphernodeRegistryOwnable", function () {
         );
     });
 
+    it("rejects public-key chunks after the E3 is terminal", async function () {
+      const {
+        registry,
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+        operator1,
+        operator2,
+        operator3,
+      } = await loadFixture(setup);
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
+      await finalizeCommitteeAfterWindow(registry, firstE3Id);
+      await registry.publishCommittee(
+        firstE3Id,
+        dataHash,
+        encodeMockDkgProof(dataHash),
+        "0x01",
+      );
+
+      const deadlines = await interfold.getDeadlines(firstE3Id);
+      await networkHelpers.time.setNextBlockTimestamp(
+        deadlines.computeDeadline + 1n,
+      );
+      await interfold.markE3Failed(firstE3Id);
+
+      const candidate = "0xdead";
+      await expect(
+        registry
+          .connect(operator1)
+          .getFunction(
+            "publishCommitteePublicKey(uint256,bytes32,uint16,uint16,uint32,bytes)",
+          )(firstE3Id, ethers.keccak256(candidate), 0, 1, 2, candidate),
+      )
+        .to.be.revertedWithCustomError(interfold, "InvalidStage")
+        .withArgs(firstE3Id, 3, 6);
+    });
+
     it("accepts a complete multi-transaction public-key candidate under the RPC size limit", async function () {
       const {
         registry,

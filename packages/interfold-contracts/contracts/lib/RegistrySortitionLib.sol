@@ -36,6 +36,7 @@ library RegistrySortitionLib {
         uint32 totalLength,
         bytes calldata chunk
     ) external {
+        _requirePublicKeyPublicationOpen(e3Id);
         ICiphernodeRegistry.Committee storage committee = committees[e3Id];
         bytes32 pkCommitment = publicKeyHashes[e3Id];
         if (pkCommitment == bytes32(0))
@@ -79,6 +80,20 @@ library RegistrySortitionLib {
             totalLength,
             chunk
         );
+    }
+
+    function _requirePublicKeyPublicationOpen(uint256 e3Id) private view {
+        // Interfold embeds its proxy address in the high 160 bits of every E3 ID. Use that frozen
+        // controller instead of the Registry's current dependency generation.
+        IInterfold interfold = IInterfold(address(uint160(e3Id >> 96)));
+        IInterfold.E3Stage stage = interfold.getE3Stage(e3Id);
+        if (stage != IInterfold.E3Stage.KeyPublished) {
+            revert IInterfold.InvalidStage(
+                e3Id,
+                IInterfold.E3Stage.KeyPublished,
+                stage
+            );
+        }
     }
 
     struct RandomnessRequest {

@@ -96,7 +96,7 @@ program:
   #     onchain: true # true = onchain requests, false = offchain
   #     Optional — custom auction parameters (defaults shown):
   #     min_price_eth: 0.00005
-  #     max_price_eth: 0.012
+  #     max_price_eth: 0.004
   #     timeout_secs: 28800
   #     lock_timeout_secs: 14400
   #     ramp_up_secs: 7200

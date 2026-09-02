@@ -114,6 +114,27 @@ on Avail instead of Ethereum. After VectorX anchors the relevant Avail range on 
 `finalizeInput()` verifies the inclusion proof for that exact hash and marks the vote available.
 Computation cannot start while a committed vote is waiting for finalization.
 
+### Proposal timing
+
+A CRISP proposal does not accept encrypted votes immediately. Chainlink VRF selects the committee,
+the ticket window closes, and the committee completes DKG first. Voting opens when the committee
+public key is ready.
+
+The mainnet launch permits one hour for VRF, 10 minutes for tickets, and six hours for DKG. CRISP
+reserves the final three hours of the input window for Avail finalization. It also requires at least
+one hour for new vote commitments after the worst-case key setup. The protocol minimum input window
+is therefore 11 hours 10 minutes.
+
+The Interfold DAO launch configuration uses a five-day proposal input window. Even if every
+committee phase uses its complete timeout, this leaves 4 days, 13 hours, and 50 minutes for new vote
+commitments. Voting can open earlier when the committee key is ready sooner.
+
+The proposal form reads the plugin minimum, protocol maximum, committee timeouts, and CRISP timing
+rules from the live contracts. It shows the guaranteed voting time and rejects a duration outside
+the allowed range. The plugin starts the selected duration in the block that creates the proposal,
+so time spent waiting for the wallet transaction does not shorten the window. Governance can change
+these settings, so an application must not keep a separate hard-coded minimum.
+
 The round's census decides which Noir verifier `publishInput()` uses: `CRISPVerifier.sol` for a
 census posted as a Merkle root, and `CRISPOnchainVerifier.sol` for one read from token balances on
 chain. Both declare a contract named `HonkVerifier`, so they are distinguished by file. Votes are

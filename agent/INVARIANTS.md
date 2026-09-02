@@ -525,8 +525,9 @@ design citation alone does not establish current runtime behavior.
   hint. Consumers decode the bytes with the request-time threshold BFV parameters. Consumers store
   the key only when its recomputed commitment equals the on-chain (C5-proven) value. Proof-backed
   committee publication never accepts key bytes. Public-key candidates are bounded and gated to
-  request-time committee members. Retained expelled members can still repair transport, but their
-  bytes receive no extra trust. Consumers accept at most one candidate per member, so an invalid
+  request-time committee members while the E3 remains in `KeyPublished`. Retained expelled members
+  can still repair transport, but their bytes receive no extra trust. Terminal E3s cannot create new
+  durable assemblies after cleanup. Consumers accept at most one candidate per member, so an invalid
   candidate cannot block a valid candidate from another member. — INDEX concerns #33, Z-31
 - **No proof-disabled bypass (C-02):** both final verifier calls are mandatory in production;
   `skip_proof_aggregation` works only under the `test-only-skip-proof-aggregation` Cargo feature;

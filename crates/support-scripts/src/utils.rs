@@ -11,6 +11,15 @@ use tokio::fs;
 use tokio::signal;
 
 pub async fn run_bash_script(cwd: &PathBuf, script: &Path, args: &[&str]) -> Result<()> {
+    run_bash_script_with_env(cwd, script, args, &[]).await
+}
+
+pub async fn run_bash_script_with_env(
+    cwd: &PathBuf,
+    script: &Path,
+    args: &[&str],
+    environment: &[(String, String)],
+) -> Result<()> {
     let mut cmd_args = vec!["bash".to_string(), script.to_string_lossy().to_string()];
     cmd_args.extend(args.iter().map(|s| s.to_string()));
 
@@ -18,7 +27,10 @@ pub async fn run_bash_script(cwd: &PathBuf, script: &Path, args: &[&str]) -> Res
     // `duct` includes every command argument in its checked-process error. Some support-script
     // arguments contain credentials, so inspect the exit status ourselves and keep arguments out
     // of every error path.
-    let expression = cmd("bash", &cmd_args[1..]).dir(cwd).unchecked();
+    let mut expression = cmd("bash", &cmd_args[1..]).dir(cwd).unchecked();
+    for (name, value) in environment {
+        expression = expression.env(name, value);
+    }
 
     let handle = expression
         .start()
@@ -68,6 +80,35 @@ mod tests {
 
         assert!(message.contains("failed with exit code: Some(17)"));
         assert!(!message.contains(secret));
+        fs::remove_dir_all(directory).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn passes_configuration_through_the_child_environment() -> Result<()> {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "interfold-support-script-test-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).await?;
+        let script = directory.join("check-env.sh");
+        fs::write(
+            &script,
+            "test \"$PRIVATE_KEY\" = \"credential-from-environment\"\n",
+        )
+        .await?;
+
+        run_bash_script_with_env(
+            &directory,
+            &script,
+            &[],
+            &[(
+                "PRIVATE_KEY".to_owned(),
+                "credential-from-environment".to_owned(),
+            )],
+        )
+        .await?;
         fs::remove_dir_all(directory).await?;
         Ok(())
     }

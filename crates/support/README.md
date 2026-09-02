@@ -106,7 +106,7 @@ program:
       onchain: true
       # Optional auction parameters with their built-in defaults:
       # min_price_eth: 0.00005
-      # max_price_eth: 0.012
+      # max_price_eth: 0.004
       # timeout_secs: 28800
       # lock_timeout_secs: 14400
       # ramp_up_secs: 7200
@@ -159,10 +159,10 @@ The order matters:
    touch that production trust anchor.
 5. Redeploy `Risc0BfvCiphertextVerifier`, and every E3 program that stores its own image ID.
 
-Skipping step 4 leaves a deployed verifier that accepts a guest no longer matching this tree. The
-provenance manifest records the committed image ID and can compare it with a deployed verifier, but
-it does not rebuild the guest, so this build order remains mandatory. enforces. The reviewer-facing
-procedure is `docs/pages/verifying-the-compute-provider.mdx`.
+Skipping step 4 leaves a deployed verifier that accepts a guest that does not match this tree. The
+provenance manifest records the committed image ID and compares it with a deployed verifier. It does
+not rebuild the guest. Therefore, this build order is mandatory. See
+`docs/pages/verifying-the-compute-provider.mdx` for the complete verification procedure.
 
 ### Step 3: Upload Program to IPFS (Pinata)
 
@@ -286,7 +286,7 @@ rewards distributed.
 | Parameter    | Env Var                         | Default   | Description                   |
 | ------------ | ------------------------------- | --------- | ----------------------------- |
 | Min price    | `BOUNDLESS_MIN_PRICE_ETH`       | `0.00005` | Starting price in ETH         |
-| Max price    | `BOUNDLESS_MAX_PRICE_ETH`       | `0.012`   | Maximum price in ETH          |
+| Max price    | `BOUNDLESS_MAX_PRICE_ETH`       | `0.004`   | Maximum auction price in ETH  |
 | Timeout      | `BOUNDLESS_TIMEOUT_SECS`        | `28800`   | Total request lifetime (sec)  |
 | Lock timeout | `BOUNDLESS_LOCK_TIMEOUT_SECS`   | `14400`   | Primary prover deadline (sec) |
 | Ramp-up      | `BOUNDLESS_RAMP_UP_SECS`        | `7200`    | Price ramp-up period (sec)    |
@@ -294,9 +294,13 @@ rewards distributed.
 
 Set the matching fields under `program.risc0.boundless` to change these values. The CLI sends each
 configured field through the support launcher to the container. Leave a field unset to use its
-default. These conservative defaults are calibrated for the secure CRISP guest, which executes about
-29 billion cycles for the current minimum-committee rehearsal input. Set explicit values for a
-materially smaller or larger guest.
+default. The secure CRISP rehearsal used about 29 billion cycles. On September 3, 2026, a six-month
+sample contained 421 fulfilled Boundless orders between 20 and 40 billion cycles. Their median
+accepted price was about `0.00136 ETH`, and 95% were accepted by about `0.00379 ETH`. `0.002 ETH`
+covered about 82% of the sample, while `0.004 ETH` covered about 96%. All comparable orders in the
+sample used `100 ZKC` collateral. The `0.004 ETH` default is an auction ceiling, not the expected
+charge. The requester pays the accepted lock price. This sample does not guarantee future
+acceptance. Review the ceiling before using a materially larger guest or input set.
 
 ---
 

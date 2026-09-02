@@ -95,12 +95,14 @@ in which a voter can create a new proof after a worst-case committee setup:
 1h VRF + 10m sortition + 6h DKG + 1h voting + 3h finalization = 40,200 seconds
 ```
 
-With those production defaults, `E3_DURATION` must be at least 40,200 seconds. The recommended value
-is 43,200 seconds (12 hours), which leaves 1 hour 50 minutes for new commitments after the
-worst-case key publication. The server does not hard-code that total. At startup, it reads the
-registry's randomness and sortition windows, Interfold's DKG window, and CRISP's voting and
-finalization windows. It refuses to start when `E3_DURATION` is shorter than their current sum. Test
-deployments with shorter on-chain windows can therefore use a correspondingly shorter round.
+With those production defaults, `E3_DURATION` must be at least 40,200 seconds. A short rehearsal can
+use 43,200 seconds (12 hours), which leaves 1 hour 50 minutes for new commitments after the
+worst-case key publication. The Interfold DAO launch configuration uses five days. That leaves 4
+days 13 hours 50 minutes for new commitments under the same worst case. The server does not
+hard-code these totals. At startup, it reads the registry's randomness and sortition windows,
+Interfold's DKG window, and CRISP's voting and finalization windows. It refuses to start when
+`E3_DURATION` is shorter than their current sum. Test deployments with shorter on-chain windows can
+therefore use a correspondingly shorter round.
 
 The three-hour tail is an operating target, not a promise from VectorX. Avail documents a 20-second
 block time and says VectorX bridges one range every 360 blocks. One complete range is therefore

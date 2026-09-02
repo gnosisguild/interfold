@@ -767,16 +767,17 @@ attestation from another registry or verifier therefore fails even when both reg
 E3 ID and committee.
 
 The serialized key is transported in Ethereum event chunks; it is not on-chain authority. Only a
-request-time committee member can emit chunks. This includes a retained expelled member, whose bytes
-receive no extra trust but can still repair availability. Consumers accept the first candidate hash
-from each member. The ciphernode coordinator and `e3-indexer` group the canonical chunks by E3,
-publisher, and candidate hash. They require a complete sequence, check
-`keccak256(serializedKey) == candidateHash`, decode the BFV key, recompute the circuit's public-key
-commitment with the request-time parameter set, and require equality with the proven on-chain
-`pkCommitment`. Only then do they produce the existing `CommitteePublished` runtime event or store
-the key for encryption. Invalid candidates do not consume another committee member's candidate.
-Production also verifies the C5-backed final DKG proof on-chain; the explicit test/CI skip mode
-works only with mock verifiers.
+request-time committee member can emit chunks while the E3 remains in `KeyPublished`. This includes
+a retained expelled member, whose bytes receive no extra trust but can still repair availability.
+Terminal E3s reject new chunks, so late publishers cannot recreate assemblies after cleanup.
+Consumers accept the first candidate hash from each member. The ciphernode coordinator and
+`e3-indexer` group the canonical chunks by E3, publisher, and candidate hash. They require a
+complete sequence, check `keccak256(serializedKey) == candidateHash`, decode the BFV key, recompute
+the circuit's public-key commitment with the request-time parameter set, and require equality with
+the proven on-chain `pkCommitment`. Only then do they produce the existing `CommitteePublished`
+runtime event or store the key for encryption. Invalid candidates do not consume another committee
+member's candidate. Production also verifies the C5-backed final DKG proof on-chain; the explicit
+test/CI skip mode works only with mock verifiers.
 
 > **C-08 (BfvPkVerifier domain binding) — implemented** The wrapper exposes a
 > `verify(e3Id, committeeRoot, sortedNodes, pkCommitment, committeeHash, proof)` signature.

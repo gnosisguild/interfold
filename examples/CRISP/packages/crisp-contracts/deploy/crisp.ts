@@ -50,6 +50,9 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
     throw new Error("USE_MOCKS must be 'true', 'false', or unset")
   }
   const useMocks = rawUseMocks === 'true'
+  if (chain === 'mainnet' && useMocks) {
+    throw new Error('USE_MOCKS cannot be enabled for a mainnet CRISP deployment')
+  }
   const rawDeferProtocolWiring = process.env.DEFER_PROTOCOL_WIRING?.trim().toLowerCase()
   if (rawDeferProtocolWiring && rawDeferProtocolWiring !== 'true' && rawDeferProtocolWiring !== 'false') {
     throw new Error("DEFER_PROTOCOL_WIRING must be 'true', 'false', or unset")

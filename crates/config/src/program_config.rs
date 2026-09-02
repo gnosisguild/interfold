@@ -31,7 +31,7 @@ pub struct BoundlessConfig {
     /// Minimum price in ETH (default: 0.00005).
     #[serde(default)]
     pub min_price_eth: Option<f64>,
-    /// Maximum price in ETH (default: 0.012).
+    /// Maximum price in ETH (default: 0.004).
     #[serde(default)]
     pub max_price_eth: Option<f64>,
     /// Total timeout in seconds (default: 28800 = 8 hours).

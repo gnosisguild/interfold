@@ -49,7 +49,7 @@ const sdk = new InterfoldSDK({
     feeToken: '0x...', // Your ERC-20 fee token address
   },
   chain: sepolia,
-  // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production
+  // Match the parameter set selected by the target E3.
   thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
 })
 
@@ -95,7 +95,7 @@ const sdk = InterfoldSDK.create({
   },
   chain: sepolia,
   privateKey: '0x...', // optional — omit for read-only
-  // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production
+  // Match the parameter set selected by the target E3.
   thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
 })
 ```
@@ -490,21 +490,20 @@ interface SDKConfig {
 `thresholdBfvParamsPresetName` selects the BFV parameter set used for encryption. It must match the
 on-chain `paramSet` index registered in the Interfold contract:
 
-| Preset name                | On-chain `paramSet` index | Use case                                                                                               |
-| -------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `'INSECURE_THRESHOLD_512'` | `0`                       | Local development and Sepolia — small polynomial degree (N=512), fast but not cryptographically secure |
-| `'SECURE_THRESHOLD_8192'`  | `1`                       | Production — full security parameters (N=8192, L=3 CRT moduli)                                         |
+| Preset name                | On-chain `paramSet` index | Use case                                                                 |
+| -------------------------- | ------------------------- | ------------------------------------------------------------------------ |
+| `'INSECURE_THRESHOLD_512'` | `0`                       | Fast local or testnet work. This preset is not cryptographically secure. |
+| `'SECURE_THRESHOLD_8192'`  | `1`                       | Production-equivalent work with degree 8192 and three ciphertext moduli. |
 
-| Network                | Preset                     | `paramSet` |
-| ---------------------- | -------------------------- | ---------- |
-| Local development      | `'INSECURE_THRESHOLD_512'` | `0`        |
-| Sepolia testnet        | `'INSECURE_THRESHOLD_512'` | `0`        |
-| Mainnet and production | `'SECURE_THRESHOLD_8192'`  | `1`        |
+| Network           | Supported presets                                        |
+| ----------------- | -------------------------------------------------------- |
+| Local development | `'INSECURE_THRESHOLD_512'` and `'SECURE_THRESHOLD_8192'` |
+| Sepolia testnet   | `'INSECURE_THRESHOLD_512'` and `'SECURE_THRESHOLD_8192'` |
+| Ethereum mainnet  | `'SECURE_THRESHOLD_8192'` only                           |
 
-Use `'INSECURE_THRESHOLD_512'` on Sepolia: the Sepolia ciphernodes run the insecure preset, and the
-circuit artifacts bundled in this package are compiled for it. Use `'SECURE_THRESHOLD_8192'` in
-production, together with your own `secure-8192` circuit artifacts (see
-[Proving](#proving-embedded-circuits-or-your-own)).
+Use the preset that the target E3 selects. This package includes proof artifacts only for
+`'INSECURE_THRESHOLD_512'`. For secure proof generation, use matching application artifacts such as
+the `@crisp-e3/sdk/secure-8192` entry point, or compile your own artifacts.
 
 ### Proving: embedded circuits or your own
 

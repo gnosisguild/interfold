@@ -70,7 +70,10 @@ run_case() {
   local local_image_status="$1"
   local pull_status="$2"
   local image_repository="${3:-}"
-  local start_args=("${@:4}")
+  local start_args=()
+  if (( $# > 3 )); then
+    start_args=("${@:4}")
+  fi
   local directory
 
   directory=$(mktemp -d "$TEST_PARENT/e3-support-test.XXXXXX")
@@ -86,7 +89,11 @@ run_case() {
     else
       unset E3_SUPPORT_IMAGE_REPOSITORY
     fi
-    bash "$START_SCRIPT" --risc0-dev-mode false "${start_args[@]}" 2>&1
+    if (( ${#start_args[@]} > 0 )); then
+      bash "$START_SCRIPT" --risc0-dev-mode false "${start_args[@]}" 2>&1
+    else
+      bash "$START_SCRIPT" --risc0-dev-mode false 2>&1
+    fi
   )
   CASE_STATUS=$?
   set -e
@@ -139,13 +146,24 @@ run_case 0 0 "" \
   --boundless-ramp-up-secs 300 \
   --boundless-lock-collateral-zkc 3.5
 [[ "$CASE_STATUS" -eq 0 ]]
-assert_contains "--ipfs-gateway-url https://dedicated.example"
-assert_contains "--boundless-min-price-eth 0.0001"
-assert_contains "--boundless-max-price-eth 0.004"
-assert_contains "--boundless-timeout-secs 2700"
-assert_contains "--boundless-lock-timeout-secs 1200"
-assert_contains "--boundless-ramp-up-secs 300"
-assert_contains "--boundless-lock-collateral-zkc 3.5"
+assert_contains "--env IPFS_GATEWAY_URL"
+assert_contains "--env BOUNDLESS_MIN_PRICE_ETH"
+assert_contains "--env BOUNDLESS_MAX_PRICE_ETH"
+assert_contains "--env BOUNDLESS_TIMEOUT_SECS"
+assert_contains "--env BOUNDLESS_LOCK_TIMEOUT_SECS"
+assert_contains "--env BOUNDLESS_RAMP_UP_SECS"
+assert_contains "--env BOUNDLESS_LOCK_COLLATERAL_ZKC"
+
+run_case 0 0 "" \
+  --rpc-url https://rpc.example \
+  --private-key credential-that-must-not-appear \
+  --pinata-jwt token-that-must-not-appear
+[[ "$CASE_STATUS" -eq 0 ]]
+assert_contains "--env RPC_URL"
+assert_contains "--env PRIVATE_KEY"
+assert_contains "--env PINATA_JWT"
+assert_not_contains "credential-that-must-not-appear"
+assert_not_contains "token-that-must-not-appear"
 
 UPLOAD_DIRECTORY=$(mktemp -d "$TEST_PARENT/e3-support-test.XXXXXX")
 TEST_DIRECTORIES+=("$UPLOAD_DIRECTORY")

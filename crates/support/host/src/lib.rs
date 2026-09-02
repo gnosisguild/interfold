@@ -157,7 +157,7 @@ fn env_opt_secs(key: &str) -> Result<Option<u64>> {
 }
 
 const DEFAULT_BOUNDLESS_MIN_PRICE_ETH: &str = "0.00005";
-const DEFAULT_BOUNDLESS_MAX_PRICE_ETH: &str = "0.012";
+const DEFAULT_BOUNDLESS_MAX_PRICE_ETH: &str = "0.004";
 const DEFAULT_BOUNDLESS_TIMEOUT_SECS: u64 = 8 * 60 * 60;
 const DEFAULT_BOUNDLESS_LOCK_TIMEOUT_SECS: u64 = 4 * 60 * 60;
 const DEFAULT_BOUNDLESS_RAMP_UP_SECS: u64 = 2 * 60 * 60;
