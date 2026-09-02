@@ -203,10 +203,14 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   smudging-noise bound and asserts it against the generated `PK_GENERATION_E_SM_BOUND` constant. As
   of this change, the formula is `B_sm = 2^(lambda+1) * N * B_C` with `lambda = 45` and `N` the ring
   degree. `PK_GENERATION_E_SM_BOUND` is generated on the Rust side by `SmudgingBoundCalculator` in
-  the pinned `fhe` crate (`gnosisguild/fhe.rs@v0.2.2`), which still implements the older
-  `B_sm = 2^lambda * B_C` formula with no `N` factor. Until the pinned crate is updated to match,
-  `verify_e_sm_bound()` fails against the currently generated constant — the parameter set and
-  generator update are tracked as follow-up work.
+  the pinned `fhe` crate, currently `gnosisguild/fhe.rs@v0.2.2`, which still implements the older
+  `B_sm = 2^lambda * B_C` formula with no `N` factor. `gnosisguild/fhe.rs@v0.3.0` already carries
+  the matching fix (`crates/fhe/src/trbfv/smudging.rs`: `B_sm = 2^(lambda+1) * d * B_C`, and lowers
+  `MIN_SECURE_LAMBDA` from 50 to 35). Until the pin is bumped to v0.3.0 or later and the derived
+  config constants regenerated, `verify_e_sm_bound()` fails against the currently generated
+  constant. Bumping the pin also requires fixing call sites for
+  `SmudgingBoundCalculatorConfig::new`, which changed from infallible to `Result`-returning in
+  v0.3.0. Tracked as follow-up work.
 
 ### Noir / Barretenberg compatibility
 
