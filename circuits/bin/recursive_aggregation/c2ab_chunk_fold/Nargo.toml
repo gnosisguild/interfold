@@ -1,5 +1,5 @@
 [package]
-name = "c2ab_fold"
+name = "c2ab_chunk_fold"
 type = "bin"
 authors = ["Gnosis Guild / Interfold"]
 

@@ -268,9 +268,11 @@ ProofRequestActor receives ThresholdSharePending
 │     ├─ C2a: ComputeRequest::zk(ZkRequest::ShareComputation { kind: SK })
 │     ├─ C2b: ComputeRequest::zk(ZkRequest::ShareComputation { kind: ESM })
 │     ├─ C3a[i]: ComputeRequest::zk(ZkRequest::ShareEncryption { recipient, row })
-│     │   → One per recipient party × modulus row
+│     │   → One per recipient party × threshold-secret modulus row; the paired DKG parameters
+│     │     define the ciphertext CRT limbs
 │     └─ C3b[i]: ComputeRequest::zk(ZkRequest::ShareEncryption { esi_idx, recipient, row })
-│         → One per ESI × recipient party × modulus row
+│         → One per ESI × recipient party × threshold-secret modulus row; the paired DKG
+│           parameters define the ciphertext CRT limbs
 │
 ├─ 3. ZkActor generates proofs via bb binary (in parallel via multithread):
 │     → Each proof takes 1-10 seconds depending on circuit complexity
@@ -306,16 +308,46 @@ ProofRequestActor receives ThresholdSharePending
    → Ensures no incomplete data is gossiped
 ```
 
-**C2 proofs:** For each C2a/C2b request, the prover builds a **recursive** proof for
-`sk_share_computation` / `e_sm_share_computation`. That `Proof` is what `PendingThresholdProofs`
-stores and what gets ECDSA-signed for gossip (`ProofType::C2aSkShareComputation` /
-`C2bESmShareComputation`). The old generic `recursive_aggregation/wrapper/*` circuits and two-proof
-`recursive_aggregation/fold` were removed; aggregation is done by ad-hoc Noir bins under
-`circuits/bin/recursive_aggregation/` (e.g. `c2ab_fold`, `c3ab_fold`, `c6_fold`, `node_fold`,
+**C2 proofs:** For each C2a/C2b request, the prover builds chunk proofs and a type-bound terminal
+proof for `sk_share_computation_chunk` / `esm_share_computation_chunk`. That terminal `Proof` is what
+`PendingThresholdProofs` stores and what gets ECDSA-signed for gossip
+(`ProofType::C2aSkShareComputation` / `C2bESmShareComputation`). The old generic
+`recursive_aggregation/wrapper/*` circuits and two-proof `recursive_aggregation/fold` were removed;
+aggregation is done by ad-hoc Noir bins under
+`circuits/bin/recursive_aggregation/` (e.g. `c2ab_chunk_fold`, `c3ab_fold`, `c6_fold`, `node_fold`,
 `nodes_fold`, `dkg_aggregator`, `decryption_aggregator` — `nodes_fold` chains `H` `node_fold` proofs
 for `dkg_aggregator`; `decryption_aggregator` folds C6 via non-ZK `c6_fold` then checks C7 with ZK).
 The per-circuit `wrapper/` Noir step was removed; aggregator response structs no longer carry a
 `wrapped_proof` field — the inner recursive proof itself is what flows between stages.
+
+The chunked C2 path keeps the same signed proof multiplicity. For each C2a/C2b request, Rust
+generates one type-bound recursive proof per chunk. The default chunk size is 512 coefficients. The
+`--chunk-size` option accepts any nonzero divisor of the preset polynomial degree for generated
+circuit configuration. The production multithread path uses the compiled default chunk size. Rust
+groups the chunk proofs into fixed recursive batches and verifies all batches in a type-bound
+terminal circuit. The terminal circuits reconstruct a root commitment for the secret and for each
+recipient share. The signed response contains only the type-bound terminal `SkC2ChunkFinalize` or
+`ESmC2ChunkFinalize` proof. `C2ChunkBatch` binds the ordered chunk indices and chunk commitments.
+
+The chunk size is one value across the DKG pipeline: it threads from the sample into the C2 (share
+computation), C3 (share encryption), and C4 (share decryption) witness computation and into the
+generated `configs.nr` values (`SHARE_COMPUTATION_CHUNK_SIZE` / `SHARE_COMPUTATION_N_CHUNKS`), so
+the witness always matches the circuit parameters the artifacts were generated against. The
+generated `configs.nr` `N` and `L` values come from the same parameter object that drives the
+witness computation. The compiled circuits and committed `configs.nr` defaults use chunk size 512; a
+non-512 `--chunk-size` produces artifacts that are valid only if the C2/C3/C4 circuits are
+recompiled against the generated `configs.nr` — the default production path keeps chunk size 512.
+
+C1, normal C2, C3, C4 per-share checks, and `NodeFold` now use the same root commitment scheme. C3
+fold steps bind each inner proof's recipient and modulus indices to its accumulator slot, including
+the first genesis step. C3Fold and NodesFold also bind the current accumulator VK and the prior
+step's expected kernel or fold VK hash. C4 binds every decrypted row to the recipient party's
+zero-based C2 commitment domain. C4 aggregate commitments remain on the legacy aggregate scheme at
+the C4-to-C6 boundary until that boundary is migrated. The terminal C2 proofs surface the canonical
+SK/ESM chunk VK hashes through C2AB, NodeFold, and DkgAggregator. Each recursive fold also
+propagates a VK manifest for the child proofs that it verifies. The final DKG proof carries the
+`NodeFold` VK hash and this complete manifest; `BfvPkVerifier` compares them with its
+deployment-time anchors before it accepts the final proof.
 
 **Ciphernode / aggregator integration:** `ZkRequest::FoldProofs` was removed. The multithread actor
 implements `ZkRequest::NodeDkgFold` (full per-node pipeline to a `NodeFold` proof),
@@ -733,9 +765,6 @@ phase.
         │  │       │  │    require(now <= dkgDeadline)       │  │
         │  │       │  │    e3.committeePublicKey = pk         │  │
         │  │       │  │    stage = KeyPublished               │  │
-        │  │       │  │    computeDeadline = max(now,         │  │
-        │  │       │  │      inputWindowEnd) + snapshotted    │  │
-        │  │       │  │      computeWindow                    │  │
         │  │       │  │    Emit E3StageChanged(KeyPublished)  │  │
         │  │       │  │  }                                   │  │
         │  │       │  └──────────────────────────────────────┘  │
@@ -874,8 +903,8 @@ Compute provider runs computation on encrypted data:
     │  ┌─── ON-CHAIN (Interfold.sol) ─────────────────────────────┐
     │  │                                                         │
 │  │  publishCiphertextOutput(e3Id, output, commitment, proof) { │
-    │  │    0. enter the shared publication reentrancy guard      │
-    │  │    1. require(stage == KeyPublished)                    │
+│  │    0. enter the shared publication reentrancy guard      │
+│  │    1. require(stage == KeyPublished)                    │
     │  │    2. require(block.timestamp <= computeDeadline)       │
     │  │    3. require(block.timestamp >= inputWindow[1])        │
     │  │       → Input window must have closed                   │
@@ -894,8 +923,8 @@ Compute provider runs computation on encrypted data:
 │  │       → Must return true                                 │
 │  │       → Cannot re-enter ciphertext or plaintext publication│
 │  │    9. Confirm the stage is still CiphertextReady          │
-│  │   10. Emit CiphertextOutputPublished(...)                 │
-│  │   11. Emit E3StageChanged(CiphertextReady)                │
+│  │   10. Emit CiphertextOutputPublished(...)                │
+│  │   11. Emit E3StageChanged(CiphertextReady)               │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 ```

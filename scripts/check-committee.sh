@@ -57,6 +57,13 @@ for required_file in \
   [[ -f "$required_file" ]] || fail "missing $required_file"
 done
 
+for committee in minimum micro small; do
+  for artifact in parity_insecure.nr parity_secure.nr smudging.nr; do
+    [[ -f "circuits/lib/src/configs/committee/$committee/$artifact" ]] \
+      || fail "missing generated committee artifact: $committee/$artifact"
+  done
+done
+
 # 1. Extract committee name from active.nr (matches "crate::configs::committee::<name>::N_PARTIES").
 if [[ ! -f "$ACTIVE_NR" ]]; then
   fail "missing $ACTIVE_NR"
@@ -405,6 +412,16 @@ format_parity_matrices_for_committee() {
     swapped_backup+=("$backup")
   done
 
+  live="$NOIR_LIB/src/configs/committee/$committee/smudging.nr"
+  fresh="$tmp/$committee/smudging.nr"
+  if [[ -f "$live" && -f "$fresh" ]]; then
+    backup="$tmp/$committee/smudging.live.bak"
+    cp "$live" "$backup"
+    cp "$fresh" "$live"
+    swapped_live+=("$live")
+    swapped_backup+=("$backup")
+  fi
+
   if ((${#swapped_live[@]} == 0)); then
     trap - ERR
     return 0
@@ -426,6 +443,15 @@ format_parity_matrices_for_committee() {
     cp "$backup" "$live"
     cp "$formatted" "$fresh"
   done
+  live="$NOIR_LIB/src/configs/committee/$committee/smudging.nr"
+  fresh="$tmp/$committee/smudging.nr"
+  backup="$tmp/$committee/smudging.live.bak"
+  formatted="$tmp/$committee/smudging.formatted.nr"
+  if [[ -f "$backup" ]]; then
+    cp "$live" "$formatted"
+    cp "$backup" "$live"
+    cp "$formatted" "$fresh"
+  fi
 
   trap - ERR
 }
@@ -454,6 +480,12 @@ if [[ -x "$GEN_BIN" ]]; then
           fail "$live drift vs generator output. Run: pnpm build:circuits --committee $c"
         fi
       done
+      live="circuits/lib/src/configs/committee/$c/smudging.nr"
+      fresh="$TMP/$c/smudging.nr"
+      [[ -f "$fresh" ]] || fail "$GEN_BIN did not generate $fresh"
+      if ! diff -q "$live" "$fresh" >/dev/null; then
+        fail "$live drift vs generator output. Run: pnpm build:circuits --committee $c"
+      fi
     done
   fi
 else
