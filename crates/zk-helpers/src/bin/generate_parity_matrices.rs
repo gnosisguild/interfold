@@ -79,6 +79,8 @@ fn file_for(root: &Path, committee: &str, preset: BfvPreset) -> PathBuf {
         // DKG-only variants don't need their own file.
         BfvPreset::InsecureDkg512 => "insecure",
         BfvPreset::SecureDkg8192 => "secure",
+        BfvPreset::SecureThreshold16384 => "secure-16384",
+        BfvPreset::SecureDkg16384 => "secure-16384",
     };
     root.join(committee).join(format!("parity_{suffix}.nr"))
 }
