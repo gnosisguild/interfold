@@ -89,22 +89,27 @@ impl E3RequestedWithChainId {
             .map(|sd| sd.mult_depth)
             .ok_or_else(|| anyhow::anyhow!("Failed to get search defaults for preset"))?;
 
-        let error_size =
-            match calculate_error_size(params_arc, threshold_n, threshold_m, mult_depth, lambda) {
-                Ok(size) => {
-                    let size_bytes = size.to_bytes_be();
-                    info!(
+        let error_size = match calculate_error_size(
+            params_arc,
+            threshold_n,
+            threshold_m,
+            mult_depth,
+            lambda,
+        ) {
+            Ok(size) => {
+                let size_bytes = size.to_bytes_be();
+                info!(
                         "Calculated error_size for E3 (threshold_n={}, threshold_m={}, lambda={}): {} bytes",
                         threshold_n, threshold_m, lambda_value, size_bytes.len()
                     );
-                    ArcBytes::from_bytes(&size_bytes)
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to calculate error_size, using fallback: {}. \
+                ArcBytes::from_bytes(&size_bytes)
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to calculate error_size, using fallback: {}. \
                         This may cause decryption failures!",
-                        e
-                    );
+                    e
+                );
                 ArcBytes::from_bytes(
                     &BigUint::from(36128399948547143872891754381312u128).to_bytes_be(),
                 )

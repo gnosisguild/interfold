@@ -171,7 +171,9 @@ impl Computation for Bounds {
             defaults.mult_depth,
             lambda,
         )
-        .map_err(|e| CircuitsErrors::Sample(format!("Failed to create smudging config: {:?}", e)))?;
+        .map_err(|e| {
+            CircuitsErrors::Sample(format!("Failed to create smudging config: {:?}", e))
+        })?;
 
         let e_sm_calculator = SmudgingBoundCalculator::new(e_sm_config);
 

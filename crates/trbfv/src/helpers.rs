@@ -80,8 +80,13 @@ pub fn calculate_error_size(
     mult_depth: u32,
     lambda: Lambda,
 ) -> Result<BigUint> {
-    let config =
-        SmudgingBoundCalculatorConfig::new_multiplicative(params, n, num_ciphertexts, mult_depth, lambda)?;
+    let config = SmudgingBoundCalculatorConfig::new_multiplicative(
+        params,
+        n,
+        num_ciphertexts,
+        mult_depth,
+        lambda,
+    )?;
     let calculator = SmudgingBoundCalculator::new(config);
     Ok(calculator.calculate_sm_bound()?)
 }
