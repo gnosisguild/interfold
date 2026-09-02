@@ -96,11 +96,11 @@ program:
   #     onchain: true # true = onchain requests, false = offchain
   #     Optional — custom auction parameters (defaults shown):
   #     min_price_eth: 0.00005
-  #     max_price_eth: 0.002
-  #     timeout_secs: 600
-  #     lock_timeout_secs: 300
-  #     ramp_up_secs: 60
-  #     lock_collateral_zkc: 2.0
+  #     max_price_eth: 0.012
+  #     timeout_secs: 28800
+  #     lock_timeout_secs: 14400
+  #     ramp_up_secs: 7200
+  #     lock_collateral_zkc: 100.0
   # Default profile: multithread uses (logical CPUs - 1) Rayon workers and the same concurrent job
   # limit. Reserve threads with `multithread_reserve_threads` (default 1 for Actix / libp2p).
   # Example override on a 16-core host:

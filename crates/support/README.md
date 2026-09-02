@@ -106,11 +106,11 @@ program:
       onchain: true
       # Optional auction parameters with their built-in defaults:
       # min_price_eth: 0.00005
-      # max_price_eth: 0.002
-      # timeout_secs: 600
-      # lock_timeout_secs: 300
-      # ramp_up_secs: 60
-      # lock_collateral_zkc: 2.0
+      # max_price_eth: 0.012
+      # timeout_secs: 28800
+      # lock_timeout_secs: 14400
+      # ramp_up_secs: 7200
+      # lock_collateral_zkc: 100.0
 ```
 
 ### Step 2: Compile the RISC Zero Guest Program
@@ -283,18 +283,20 @@ rewards distributed.
 
 `build_offer()` reads these environment variables. Defaults:
 
-| Parameter    | Env Var                         | Default   | Description                  |
-| ------------ | ------------------------------- | --------- | ---------------------------- |
-| Min price    | `BOUNDLESS_MIN_PRICE_ETH`       | `0.00005` | Starting price in ETH        |
-| Max price    | `BOUNDLESS_MAX_PRICE_ETH`       | `0.002`   | Maximum price in ETH         |
-| Timeout      | `BOUNDLESS_TIMEOUT_SECS`        | `600`     | Total request lifetime (sec) |
-| Lock timeout | `BOUNDLESS_LOCK_TIMEOUT_SECS`   | `300`     | Prover lock duration (sec)   |
-| Ramp-up      | `BOUNDLESS_RAMP_UP_SECS`        | `60`      | Price ramp-up period (sec)   |
-| Collateral   | `BOUNDLESS_LOCK_COLLATERAL_ZKC` | `2.0`     | ZKC locked per request       |
+| Parameter    | Env Var                         | Default   | Description                   |
+| ------------ | ------------------------------- | --------- | ----------------------------- |
+| Min price    | `BOUNDLESS_MIN_PRICE_ETH`       | `0.00005` | Starting price in ETH         |
+| Max price    | `BOUNDLESS_MAX_PRICE_ETH`       | `0.012`   | Maximum price in ETH          |
+| Timeout      | `BOUNDLESS_TIMEOUT_SECS`        | `28800`   | Total request lifetime (sec)  |
+| Lock timeout | `BOUNDLESS_LOCK_TIMEOUT_SECS`   | `14400`   | Primary prover deadline (sec) |
+| Ramp-up      | `BOUNDLESS_RAMP_UP_SECS`        | `7200`    | Price ramp-up period (sec)    |
+| Collateral   | `BOUNDLESS_LOCK_COLLATERAL_ZKC` | `100.0`   | ZKC locked per request        |
 
 Set the matching fields under `program.risc0.boundless` to change these values. The CLI sends each
 configured field through the support launcher to the container. Leave a field unset to use its
-default.
+default. These conservative defaults are calibrated for the secure CRISP guest, which executes about
+29 billion cycles for the current minimum-committee rehearsal input. Set explicit values for a
+materially smaller or larger guest.
 
 ---
 
