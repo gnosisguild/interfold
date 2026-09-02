@@ -308,12 +308,13 @@ ProofRequestActor receives ThresholdSharePending
    → Ensures no incomplete data is gossiped
 ```
 
-**C2 proofs:** For each C2a/C2b request, the prover builds a **recursive** proof for
-`sk_share_computation` / `e_sm_share_computation`. That `Proof` is what `PendingThresholdProofs`
-stores and what gets ECDSA-signed for gossip (`ProofType::C2aSkShareComputation` /
-`C2bESmShareComputation`). The old generic `recursive_aggregation/wrapper/*` circuits and two-proof
-`recursive_aggregation/fold` were removed; aggregation is done by ad-hoc Noir bins under
-`circuits/bin/recursive_aggregation/` (e.g. `c2ab_fold`, `c3ab_fold`, `c6_fold`, `node_fold`,
+**C2 proofs:** For each C2a/C2b request, the prover builds chunk proofs and a type-bound terminal
+proof for `sk_share_computation_chunk` / `esm_share_computation_chunk`. That terminal `Proof` is what
+`PendingThresholdProofs` stores and what gets ECDSA-signed for gossip
+(`ProofType::C2aSkShareComputation` / `C2bESmShareComputation`). The old generic
+`recursive_aggregation/wrapper/*` circuits and two-proof `recursive_aggregation/fold` were removed;
+aggregation is done by ad-hoc Noir bins under
+`circuits/bin/recursive_aggregation/` (e.g. `c2ab_chunk_fold`, `c3ab_fold`, `c6_fold`, `node_fold`,
 `nodes_fold`, `dkg_aggregator`, `decryption_aggregator` — `nodes_fold` chains `H` `node_fold` proofs
 for `dkg_aggregator`; `decryption_aggregator` folds C6 via non-ZK `c6_fold` then checks C7 with ZK).
 The per-circuit `wrapper/` Noir step was removed; aggregator response structs no longer carry a
@@ -719,6 +720,9 @@ phase.
   ├─ Calls contract.publishCommittee(
   │    e3_id, pkCommitment, proof, dkgAttestationBundle
   │  ) when the commitment is unset
+  │  └─ If that transaction is mined with a failed receipt, the writer reads the
+  │     commitment again. An equal commitment from another aggregator completes
+  │     the step; a different commitment stays an error
   └─ Calls contract.publishCommitteePublicKey(e3_id, publicKey) after the
      commitment is available, including after restart
      → A terminal result clears the intent; a retryable failure keeps it and retries after 30s
@@ -847,9 +851,11 @@ parameter hash, and input root in one ABI-encoded proof.
 The request-time scheme verifier reconstructs the protocol fields from on-chain state. The E3
 program reconstructs the application fields from its state. Both contracts verify the same receipt.
 An application verifier cannot create a decryption duty unless the scheme verifier also accepts it.
-The input root uses the smallest binary Poseidon tree that can hold the submitted SAFE ciphertext
-commitments, with a minimum depth of one. The compute provider and E3 program must use this same
-leaf value, order, zero value, and depth rule.
+The RISC Zero wrapper accepts only a receipt-verifier address that contains deployed code. An EOA
+cannot satisfy the verifier's void-return call with empty return data. The input root uses the
+smallest binary Poseidon tree that can hold the submitted SAFE ciphertext commitments, with a
+minimum depth of one. The compute provider and E3 program must use this same leaf value, order, zero
+value, and depth rule.
 
 The guest derives the input root from the ciphertexts it processed. `ComputeInput` holds only
 `fhe_inputs`, and `ComputeInput::process` calls `MerkleTreeBuilder::compute_leaf_hashes` over those
@@ -897,7 +903,8 @@ Compute provider runs computation on encrypted data:
     │  ┌─── ON-CHAIN (Interfold.sol) ─────────────────────────────┐
     │  │                                                         │
 │  │  publishCiphertextOutput(e3Id, output, commitment, proof) { │
-    │  │    1. require(stage == KeyPublished)                    │
+│  │    0. enter the shared publication reentrancy guard      │
+│  │    1. require(stage == KeyPublished)                    │
     │  │    2. require(block.timestamp <= computeDeadline)       │
     │  │    3. require(block.timestamp >= inputWindow[1])        │
     │  │       → Input window must have closed                   │
@@ -905,23 +912,28 @@ Compute provider runs computation on encrypted data:
     │  │       → Can only publish once                           │
     │  │    5. require(activeCount >= threshold[0])              │
     │  │       → The request-time committee is still viable      │
-│  │    6. Require no ciphertext publication is in progress  │
-│  │       Set the per-E3 publication guard                  │
-│  │       → Reentrant publication attempts revert           │
+│  │    6. Save output hash and SAFE commitment               │
+│  │       Set stage and decryption deadline                  │
+│  │       → A later revert restores all prior state          │
 │  │    7. schemeVerifier.verify(...)                         │
 │  │       → Checks the protocol fields in the compute receipt│
 │  │       → Must return true                                 │
 │  │    8. e3Program.verify(...)                              │
 │  │       → Checks the application fields in the same receipt│
 │  │       → Must return true                                 │
-│  │    9. Save output hash and SAFE commitment               │
-│  │       Set stage and decryption deadline                  │
-│  │       Clear the publication guard                        │
+│  │       → Cannot re-enter ciphertext or plaintext publication│
+│  │    9. Confirm the stage is still CiphertextReady          │
 │  │   10. Emit CiphertextOutputPublished(...)                │
 │  │   11. Emit E3StageChanged(CiphertextReady)               │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 ```
+
+`onCommitteePublished` stores the committee key and starts the compute clock. The compute deadline
+is `max(block.timestamp, inputWindow[1]) + requestTimeComputeWindow`. A late key publication does
+not consume the compute provider's allotted window, and publication still waits until the input
+window closes. The request-time timeout snapshot prevents later governance changes from changing an
+active E3's deadlines.
 
 ---
 

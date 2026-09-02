@@ -505,8 +505,6 @@ macro_rules! e2e_proof_tests {
 e2e_proof_tests! {
     (pk_generation, setup_pk_generation_test(), CircuitVariant::Recursive),
     (pk, setup_pk_test(), CircuitVariant::Recursive),
-    (share_computation_sk, setup_share_computation_sk_test(), CircuitVariant::Recursive),
-    (share_computation_e_sm, setup_share_computation_e_sm_test(), CircuitVariant::Recursive),
     (share_encryption_sk, setup_share_encryption_sk_test(), CircuitVariant::Recursive),
     (share_encryption_e_sm, setup_share_encryption_e_sm_test(), CircuitVariant::Recursive),
     (share_decryption, setup_share_decryption_test(), CircuitVariant::Recursive),
@@ -596,48 +594,6 @@ async fn test_pk_bfv_commitment_consistency() {
     assert_eq!(
         commitment_from_proof, commitment_calculated,
         "Commitment from proof must match independently calculated commitment"
-    );
-
-    prover.cleanup(e3_id).unwrap();
-}
-
-#[tokio::test]
-async fn test_share_computation_sk_commitment_consistency() {
-    let Some((_backend, _temp, prover, circuit, sample, preset, e3_id)) =
-        setup_share_computation_sk_test().await
-    else {
-        println!("skipping: bb not found");
-        return;
-    };
-
-    let artifacts_dir =
-        preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
-    let proof = circuit
-        .prove(&prover, &preset, &sample, e3_id, &artifacts_dir)
-        .expect("inner sk_share_computation proof should succeed");
-
-    assert_eq!(
-        proof.circuit,
-        CircuitName::SkShareComputation,
-        "expected SkShareComputation inner circuit tag"
-    );
-    assert!(
-        !proof.public_signals.is_empty() && proof.public_signals.len() % 32 == 0,
-        "inner C2 public signals should be non-empty 32-byte field chunks"
-    );
-
-    let fields = public_signals_to_fields(&proof.public_signals);
-    let threshold_preset = preset.threshold_counterpart().unwrap_or(preset);
-    let expected_fields =
-        1 + CiphernodesCommitteeSize::Minimum.values().n * threshold_preset.metadata().num_moduli;
-    assert_eq!(
-        fields.len(),
-        expected_fields,
-        "C2a public field count must match the active committee and threshold preset"
-    );
-    assert!(
-        fields.iter().any(|f| !f.is_zero()),
-        "inner share computation public signals should not all be zero"
     );
 
     prover.cleanup(e3_id).unwrap();
@@ -854,48 +810,6 @@ async fn test_secure_chunked_esm_share_computation_proof() {
             &artifacts_dir,
         )
         .expect("secure chunked C2b terminal proof verification should succeed"));
-    prover.cleanup(e3_id).unwrap();
-}
-
-#[tokio::test]
-async fn test_share_computation_e_sm_commitment_consistency() {
-    let Some((_backend, _temp, prover, circuit, sample, preset, e3_id)) =
-        setup_share_computation_e_sm_test().await
-    else {
-        println!("skipping: bb not found");
-        return;
-    };
-
-    let artifacts_dir =
-        preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
-    let proof = circuit
-        .prove(&prover, &preset, &sample, e3_id, &artifacts_dir)
-        .expect("inner e_sm_share_computation proof should succeed");
-
-    assert_eq!(
-        proof.circuit,
-        CircuitName::ESmShareComputation,
-        "expected ESmShareComputation inner circuit tag"
-    );
-    assert!(
-        !proof.public_signals.is_empty() && proof.public_signals.len() % 32 == 0,
-        "inner C2 public signals should be non-empty 32-byte field chunks"
-    );
-
-    let fields = public_signals_to_fields(&proof.public_signals);
-    let threshold_preset = preset.threshold_counterpart().unwrap_or(preset);
-    let expected_fields =
-        1 + CiphernodesCommitteeSize::Minimum.values().n * threshold_preset.metadata().num_moduli;
-    assert_eq!(
-        fields.len(),
-        expected_fields,
-        "C2b public field count must match the active committee and threshold preset"
-    );
-    assert!(
-        fields.iter().any(|f| !f.is_zero()),
-        "inner share computation public signals should not all be zero"
-    );
-
     prover.cleanup(e3_id).unwrap();
 }
 

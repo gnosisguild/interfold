@@ -110,10 +110,6 @@ pub enum CircuitName {
     PkBfv,
     /// TrBFV public key share proof (C1).
     PkGeneration,
-    /// Sk share computation inner proof (C2a, recursive).
-    SkShareComputation,
-    /// E_SM share computation inner proof (C2b, recursive).
-    ESmShareComputation,
     /// Share encryption proof (C3).
     ShareEncryption,
     /// DKG share decryption proof (C4).
@@ -132,8 +128,6 @@ pub enum CircuitName {
     C6Fold,
     /// Bootstrap circuit for [`CircuitName::C6Fold`] genesis accumulator proof (same ABI, no acc verify).
     C6FoldKernel,
-    /// Ad-hoc recursive aggregation: C2a + C2b.
-    C2abFold,
     /// Ad-hoc: final sk `c3_fold` + final e_sm `c3_fold`.
     C3abFold,
     /// Ad-hoc: C4a + C4b.
@@ -167,8 +161,6 @@ impl CircuitName {
         match self {
             CircuitName::PkBfv => "pk",
             CircuitName::PkGeneration => "pk_generation",
-            CircuitName::SkShareComputation => "sk_share_computation",
-            CircuitName::ESmShareComputation => "e_sm_share_computation",
             CircuitName::SkShareComputationChunk => "sk_share_computation_chunk",
             CircuitName::ESmShareComputationChunk => "esm_share_computation_chunk",
             CircuitName::C2ChunkBatch => "c2_chunk_batch",
@@ -184,7 +176,6 @@ impl CircuitName {
             CircuitName::C2abChunkFold => "c2ab_chunk_fold",
             CircuitName::C6Fold => "c6_fold",
             CircuitName::C6FoldKernel => "c6_fold_kernel",
-            CircuitName::C2abFold => "c2ab_fold",
             CircuitName::C3abFold => "c3ab_fold",
             CircuitName::C4abFold => "c4ab_fold",
             CircuitName::NodeFold => "node_fold",
@@ -198,8 +189,6 @@ impl CircuitName {
     pub fn group(&self) -> &'static str {
         match self {
             CircuitName::PkBfv => "dkg",
-            CircuitName::SkShareComputation => "dkg",
-            CircuitName::ESmShareComputation => "dkg",
             CircuitName::SkShareComputationChunk => "dkg",
             CircuitName::ESmShareComputationChunk => "dkg",
             CircuitName::ShareEncryption => "dkg",
@@ -216,7 +205,6 @@ impl CircuitName {
             | CircuitName::C2abChunkFold
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
-            | CircuitName::C2abFold
             | CircuitName::C3abFold
             | CircuitName::C4abFold
             | CircuitName::NodeFold
@@ -242,9 +230,6 @@ impl CircuitName {
             CircuitName::PkGeneration => CircuitOutputLayout::Fixed {
                 fields: PK_GENERATION_OUTPUTS,
             },
-            CircuitName::SkShareComputation | CircuitName::ESmShareComputation => {
-                CircuitOutputLayout::None
-            }
             CircuitName::SkShareComputationChunk | CircuitName::ESmShareComputationChunk => {
                 CircuitOutputLayout::None
             }
@@ -269,7 +254,6 @@ impl CircuitName {
             | CircuitName::C2abChunkFold
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
-            | CircuitName::C2abFold
             | CircuitName::C3abFold
             | CircuitName::C4abFold
             | CircuitName::NodeFold
@@ -317,31 +301,28 @@ mod tests {
         let expected = [
             (CircuitName::PkBfv, 0),
             (CircuitName::PkGeneration, 1),
-            (CircuitName::SkShareComputation, 2),
-            (CircuitName::ESmShareComputation, 3),
-            (CircuitName::ShareEncryption, 4),
-            (CircuitName::DkgShareDecryption, 5),
-            (CircuitName::PkAggregation, 6),
-            (CircuitName::ThresholdShareDecryption, 7),
-            (CircuitName::DecryptedSharesAggregation, 8),
-            (CircuitName::C3Fold, 9),
-            (CircuitName::C3FoldKernel, 10),
-            (CircuitName::C6Fold, 11),
-            (CircuitName::C6FoldKernel, 12),
-            (CircuitName::C2abFold, 13),
-            (CircuitName::C3abFold, 14),
-            (CircuitName::C4abFold, 15),
-            (CircuitName::NodeFold, 16),
-            (CircuitName::NodesFold, 17),
-            (CircuitName::NodesFoldKernel, 18),
-            (CircuitName::DkgAggregator, 19),
-            (CircuitName::DecryptionAggregator, 20),
-            (CircuitName::SkShareComputationChunk, 21),
-            (CircuitName::ESmShareComputationChunk, 22),
-            (CircuitName::C2ChunkBatch, 23),
-            (CircuitName::SkC2ChunkFinalize, 24),
-            (CircuitName::ESmC2ChunkFinalize, 25),
-            (CircuitName::C2abChunkFold, 26),
+            (CircuitName::ShareEncryption, 2),
+            (CircuitName::DkgShareDecryption, 3),
+            (CircuitName::PkAggregation, 4),
+            (CircuitName::ThresholdShareDecryption, 5),
+            (CircuitName::DecryptedSharesAggregation, 6),
+            (CircuitName::C3Fold, 7),
+            (CircuitName::C3FoldKernel, 8),
+            (CircuitName::C6Fold, 9),
+            (CircuitName::C6FoldKernel, 10),
+            (CircuitName::C3abFold, 11),
+            (CircuitName::C4abFold, 12),
+            (CircuitName::NodeFold, 13),
+            (CircuitName::NodesFold, 14),
+            (CircuitName::NodesFoldKernel, 15),
+            (CircuitName::DkgAggregator, 16),
+            (CircuitName::DecryptionAggregator, 17),
+            (CircuitName::SkShareComputationChunk, 18),
+            (CircuitName::ESmShareComputationChunk, 19),
+            (CircuitName::C2ChunkBatch, 20),
+            (CircuitName::SkC2ChunkFinalize, 21),
+            (CircuitName::ESmC2ChunkFinalize, 22),
+            (CircuitName::C2abChunkFold, 23),
         ];
 
         for (circuit, discriminant) in expected {

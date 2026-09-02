@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Per-node fold: C0, C1, `c2ab_fold`, `c3ab_fold`, `c4ab_fold` with same-party assertions.
+//! Per-node fold: C0, C1, `c2ab_chunk_fold`, `c3ab_fold`, `c4ab_fold` with same-party assertions.
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,

@@ -9,7 +9,7 @@
 //! compiled `c3_fold` / `c6_fold` JSON, and artifact staging under [`CircuitVariant::Default`]
 //! (`noir-recursive-no-zk` VKs — see `scripts/build-circuits.ts`).
 //!
-//! Loads compiled JSON for the node-fold **pipeline** ([`CircuitName::C2abFold`] … [`CircuitName::NodeFold`])
+//! Loads compiled JSON for the node-fold **pipeline** ([`CircuitName::C2abChunkFold`] … [`CircuitName::NodeFold`])
 //! and stages those artifacts; it does **not** run a full correlated `node_fold` proof — use
 //! `node_fold_correlated_e2e_tests.rs` for that.
 //!
@@ -18,7 +18,7 @@
 //! - [`c3_fold_sequential_proves_and_verifies`]: two inner `ShareEncryption` proofs → [`generate_sequential_c3_fold`].
 //! - [`c6_fold_sequential_proves_and_verifies`]: two inner `ThresholdShareDecryption` proofs → [`generate_sequential_c6_fold`].
 //! - [`node_fold_pipeline_compiled_json_load`] / [`node_fold_pipeline_recursive_aggregation_artifacts_staged`]:
-//!   pipeline circuits load + staged artifacts for C2ab/C3ab/C4ab/NodeFold.
+//!   pipeline circuits load + staged artifacts for C2abChunk/C3ab/C4ab/NodeFold.
 
 mod common;
 
@@ -58,9 +58,9 @@ fn recursive_aggregation_compiled_json_path(circuit: CircuitName) -> PathBuf {
         .join(format!("{}.json", circuit.as_str()))
 }
 
-/// `c2ab_fold` → `c3ab_fold` → `c4ab_fold` → inputs to `node_fold` (see `node_fold/src/main.nr`).
+/// `c2ab_chunk_fold` → `c3ab_fold` → `c4ab_fold` → inputs to `node_fold` (see `node_fold/src/main.nr`).
 const NODE_FOLD_PIPELINE: &[CircuitName] = &[
-    CircuitName::C2abFold,
+    CircuitName::C2abChunkFold,
     CircuitName::C3abFold,
     CircuitName::C4abFold,
     CircuitName::NodeFold,

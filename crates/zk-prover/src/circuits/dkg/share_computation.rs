@@ -12,13 +12,10 @@ use crate::circuits::aggregation::node_dkg_fold::FoldProveStepTiming;
 use crate::circuits::utils::inputs_json_to_input_map;
 use crate::error::ZkError;
 use crate::prover::ZkProver;
-use crate::traits::Provable;
 use e3_events::CircuitName;
 use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::computation::{Computation, DkgInputType};
-use e3_zk_helpers::dkg::share_computation::{
-    Inputs, ShareComputationCircuit, ShareComputationCircuitData,
-};
+use e3_zk_helpers::dkg::share_computation::{Inputs, ShareComputationCircuitData};
 use rayon::prelude::*;
 use serde_json::Value;
 use std::time::Instant;
@@ -48,30 +45,6 @@ pub struct ChunkedShareComputationProofs {
     pub chunk_count: usize,
     /// Per-step prove wall time inside [`prove_chunked_share_computation`] (for benchmarks / audit reports).
     pub step_timings: Vec<FoldProveStepTiming>,
-}
-
-impl Provable for ShareComputationCircuit {
-    type Params = BfvPreset;
-    type Input = ShareComputationCircuitData;
-    type Inputs = Inputs;
-
-    fn resolve_circuit_name(&self, _params: &Self::Params, input: &Self::Input) -> CircuitName {
-        match input.dkg_input_type {
-            DkgInputType::SecretKey => CircuitName::SkShareComputation,
-            DkgInputType::SmudgingNoise => CircuitName::ESmShareComputation,
-        }
-    }
-
-    fn valid_circuits(&self) -> Vec<CircuitName> {
-        vec![
-            CircuitName::SkShareComputation,
-            CircuitName::ESmShareComputation,
-        ]
-    }
-
-    fn circuit(&self) -> CircuitName {
-        CircuitName::SkShareComputation
-    }
 }
 
 fn push_step(timings: &mut Vec<FoldProveStepTiming>, step: &str, started: Instant) {
