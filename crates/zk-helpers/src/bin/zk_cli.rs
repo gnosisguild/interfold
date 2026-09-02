@@ -103,7 +103,7 @@ fn print_generation_info(
     println!("  Circuit:    {}", circuit);
     println!(
         "  Preset:     {} (degree {}, {} moduli)",
-        meta.security.as_config_str(),
+        preset.config_dir(),
         meta.degree,
         meta.num_moduli
     );
@@ -172,7 +172,8 @@ struct Cli {
     /// Circuit name to generate artifacts for (e.g. `pk`, `share-computation`).
     #[arg(long, required_unless_present = "list_circuits")]
     circuit: Option<String>,
-    /// Preset: "insecure"|"secure" or λ (2|80). Drives both threshold and DKG params.
+    /// Preset: exact name ("SECURE_THRESHOLD_16384", ...) or "insecure"|"secure" or λ (2|38|80).
+    /// Drives both threshold and DKG params.
     #[arg(long, required_unless_present = "list_circuits")]
     preset: Option<String>,
     /// Select the witness family when sample generation depends on it.
@@ -229,7 +230,11 @@ fn main() -> Result<()> {
 
     // Unwrap required arguments (clap ensures they're present when list_circuits is false).
     let circuit = args.circuit.unwrap();
-    let preset = BfvPreset::from_security_config_name(&args.preset.unwrap())?;
+    let preset_name = args.preset.unwrap();
+    // Accept either an exact preset name (e.g. "SECURE_THRESHOLD_16384") to disambiguate
+    // among the two secure tiers, or the backward-compatible "insecure"|"secure" / λ form.
+    let preset = BfvPreset::from_name(&preset_name)
+        .or_else(|_| BfvPreset::from_security_config_name(&preset_name))?;
 
     std::fs::create_dir_all(&args.output)
         .with_context(|| format!("failed to create output dir {}", args.output.display()))?;

@@ -73,9 +73,9 @@ pub enum BfvPreset {
     /// Secure threshold BFV parameters (degree 16384) - PRODUCTION READY
     ///
     /// Used for threshold encryption (GRECO) and threshold decryption operations with
-    /// multiplicative depth 2 (l-BFV support; depth 3 exceeds the runtime correctness
-    /// budget for these constants). These parameters define the threshold public key
-    /// that data providers use to encrypt inputs.
+    /// multiplicative depth up to 3 (l-BFV support; the regenerated constants satisfy
+    /// the runtime `2*(B_C + n*B_sm) < Delta` correctness budget at depth 3). These
+    /// parameters define the threshold public key that data providers use to encrypt inputs.
     SecureThreshold16384,
     /// Secure DKG parameters (degree 16384) - PRODUCTION READY
     ///
@@ -516,6 +516,18 @@ impl BfvPreset {
     pub fn artifacts_dir(&self) -> String {
         let meta = self.metadata();
         format!("{}-{}", meta.security.as_config_str(), meta.degree)
+    }
+
+    /// Returns the Noir config module name for this preset, e.g. `"insecure-512"`,
+    /// `"secure-8192"`, `"secure-16384"`. Codegen/zk-cli routing must use
+    /// this (not [`SecurityTier::as_config_str`]) so that `secure-8192` and
+    /// `secure-16384` resolve to distinct `configs::{module}` rather than both
+    /// collapsing onto `configs::secure`.
+    ///
+    /// Identical to [`BfvPreset::artifacts_dir`]; the two names are kept in sync
+    /// because artifacts and Noir configs are organized the same way.
+    pub fn config_dir(&self) -> String {
+        self.artifacts_dir()
     }
 
     /// Returns the per-committee artifact directory: `"{preset}/{committee}"`.

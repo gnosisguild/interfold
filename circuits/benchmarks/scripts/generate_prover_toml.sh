@@ -50,63 +50,8 @@ OUTPUT_DIR="${REPO_ROOT}/circuits/bin/${CIRCUIT_PATH}"
 # Map circuit path to zk_cli --circuit and optional --inputs
 # DKG circuits that need --inputs: share-computation, share-encryption, share-decryption
 # config has no witness inputs (verifies constants only), so skip zk_cli
-get_zk_args() {
-    local path="$1"
-    case "$path" in
-        config)
-            echo "_no_zk_cli"
-            return
-            ;;
-        dkg/pk)
-            echo "pk"
-            return
-            ;;
-        dkg/sk_share_computation)
-            echo "share-computation secret-key"
-            return
-            ;;
-        dkg/e_sm_share_computation)
-            echo "share-computation smudging-noise"
-            return
-            ;;
-        dkg/share_encryption)
-            echo "share-encryption secret-key"
-            return
-            ;;
-        dkg/share_decryption)
-            echo "share-decryption secret-key"
-            return
-            ;;
-        threshold/user_data_encryption_ct0)
-            echo "user-data-encryption"
-            return
-            ;;
-        threshold/user_data_encryption_ct1)
-            echo "user-data-encryption"
-            return
-            ;;
-        threshold/pk_generation)
-            echo "pk-generation"
-            return
-            ;;
-        threshold/pk_aggregation)
-            echo "pk-aggregation"
-            return
-            ;;
-        threshold/share_decryption)
-            echo "threshold-share-decryption"
-            return
-            ;;
-        threshold/decrypted_shares_aggregation)
-            echo "decrypted-shares-aggregation"
-            return
-            ;;
-        *)
-            echo "Error: unknown circuit path: $path" >&2
-            exit 1
-            ;;
-    esac
-}
+# shellcheck source=zk_cli_helpers.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/zk_cli_helpers.sh"
 
 ZK_ARGS=($(get_zk_args "$CIRCUIT_PATH"))
 ZK_CIRCUIT="${ZK_ARGS[0]}"
