@@ -85,4 +85,11 @@ pub mod defaults {
     pub const DEFAULT_INSECURE_LAMBDA: usize = 2;
     /// Default secure security parameter (λ).
     pub const DEFAULT_SECURE_LAMBDA: usize = 50;
+
+    /// Multiplicative depth for insecure-512 preset (no l-BFV support).
+    pub const INSECURE_512_MULT_DEPTH: u32 = 0;
+    /// Multiplicative depth for secure-8192 preset (no l-BFV support).
+    pub const SECURE_8192_MULT_DEPTH: u32 = 0;
+    /// Multiplicative depth for secure-16384 preset.
+    pub const SECURE_16384_MULT_DEPTH: u32 = 3;
 }

@@ -386,7 +386,6 @@ impl Computation for Inputs {
 
         let mut k1 = Polynomial::from_u64_vector(k1_u64);
         k1.reverse();
-        k1.center(&BigInt::from(t));
 
         let mut message = Polynomial::from_u64_vector(plaintext_poly_u64(&pt)?);
         message.reverse();

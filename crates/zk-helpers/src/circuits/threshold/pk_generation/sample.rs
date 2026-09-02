@@ -56,8 +56,12 @@ impl PkGenerationCircuitData {
         let share_manager = ShareManager::new(num_parties, threshold, threshold_params)?;
 
         // Generate smudging error coefficients
-        let esi_coeffs =
-            trbfv.generate_smudging_error(num_ciphertexts as usize, lambda, &mut rng)?;
+        let esi_coeffs = trbfv.generate_smudging_error(
+            num_ciphertexts as usize,
+            defaults.mult_depth,
+            lambda,
+            &mut rng,
+        )?;
 
         // Convert to polynomial in RNS representation
         // bigints_to_poly returns Zeroizing<Poly>, we need to clone the inner Poly

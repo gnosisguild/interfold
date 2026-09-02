@@ -370,7 +370,6 @@ impl Computation for Inputs {
         let mut k1 = Polynomial::from_u64_vector(k1_u64);
 
         k1.reverse();
-        k1.center(&BigInt::from(t));
 
         // Reconstruct u and e1 as polynomials (only the first limb is needed)
         let mut u = CrtPolynomial::from_fhe_polynomial(&u).limb(0).clone();

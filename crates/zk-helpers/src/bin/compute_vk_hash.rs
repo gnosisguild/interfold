@@ -34,12 +34,9 @@ fn field_from_vk_hash_file(path: &std::path::Path) -> Result<Fr> {
         bail!("{}: expected 32 bytes, got {}", path.display(), bytes.len());
     }
     let n = BigUint::from_bytes_be(&bytes);
-    let bigint = <Fr as PrimeField>::BigInt::try_from(n).map_err(|_| {
-        anyhow::anyhow!(
-            "{}: vk_hash integer does not fit the field's BigInt representation",
-            path.display()
-        )
-    })?;
+    let mut limbs = n.to_u64_digits();
+    limbs.resize(4, 0);
+    let bigint = ark_ff::BigInt::new([limbs[0], limbs[1], limbs[2], limbs[3]]);
     Fr::from_bigint(bigint).ok_or_else(|| {
         anyhow::anyhow!(
             "{}: vk_hash is not in the canonical range [0, p)",

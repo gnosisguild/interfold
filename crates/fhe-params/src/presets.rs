@@ -9,6 +9,8 @@ use crate::builder::{build_bfv_params_from_set, build_bfv_params_from_set_arc};
 use crate::constants::{
     defaults::DEFAULT_INSECURE_LAMBDA,
     defaults::DEFAULT_SECURE_LAMBDA,
+    defaults::INSECURE_512_MULT_DEPTH,
+    defaults::SECURE_8192_MULT_DEPTH,
     insecure_512,
     insecure_search_defaults::{
         B as INSECURE_B, B_CHI as INSECURE_B_CHI, SEARCH_K as INSECURE_SEARCH_K,
@@ -200,6 +202,11 @@ pub struct PresetSearchDefaults {
     /// Used to generate the secret key sk_i of each party i.
     /// This bound is used in security analysis equations.
     pub b_chi: u128,
+    /// Multiplicative depth for l-BFV smudging noise computation.
+    ///
+    /// Set to 0 for presets without l-BFV support (insecure-512, secure-8192).
+    /// Set to 3 for secure-16384.
+    pub mult_depth: u32,
 }
 
 #[derive(ThisError, Debug)]
@@ -476,6 +483,7 @@ impl BfvPreset {
                 lambda: DEFAULT_INSECURE_LAMBDA as u32,
                 b: INSECURE_B,
                 b_chi: INSECURE_B_CHI,
+                mult_depth: INSECURE_512_MULT_DEPTH,
             }),
             BfvPreset::SecureThreshold8192 => Some(PresetSearchDefaults {
                 n: SEARCH_N,
@@ -484,6 +492,7 @@ impl BfvPreset {
                 lambda: DEFAULT_SECURE_LAMBDA as u32,
                 b: B,
                 b_chi: B_CHI,
+                mult_depth: SECURE_8192_MULT_DEPTH,
             }),
             _ => None,
         }
