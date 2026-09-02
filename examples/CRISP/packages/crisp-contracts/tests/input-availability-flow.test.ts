@@ -149,10 +149,10 @@ describe('CRISP input availability flow', function () {
     expect(await program.inputCommitmentDeadline(e3Id)).to.equal(deadline)
 
     await setNextTimestamp(deadline - 1)
-    await expect(program.publishInput(e3Id, accepted.commitmentPayload)).to.emit(program, 'InputCommitted')
+    await expect(program.publishInput(e3Id, accepted.commitmentPayload, { gasLimit: 5_000_000 })).to.emit(program, 'InputCommitted')
 
     await setNextTimestamp(deadline)
-    await expect(program.publishInput(e3Id, refused.commitmentPayload))
+    await expect(program.publishInput(e3Id, refused.commitmentPayload, { gasLimit: 5_000_000 }))
       .to.be.revertedWithCustomError(program, 'InputCommitmentDeadlinePassed')
       .withArgs(e3Id, deadline)
   })
