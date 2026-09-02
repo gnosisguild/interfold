@@ -9,7 +9,7 @@
 use actix::{Actor, Context, Handler, Recipient};
 use e3_events::{
     ComputeRequestKind, E3Stage, E3id, Event, EventContextAccessors, EventSubscriber, EventType,
-    InterfoldEvent, InterfoldEventData, ZkRequest,
+    InterfoldEvent, InterfoldEventData, ProofType, VerifyShareProofsRequest, ZkRequest,
 };
 use e3_utils::MAILBOX_LIMIT;
 use std::collections::{HashMap, HashSet};
@@ -70,21 +70,42 @@ impl ComputeEffectGate {
                     | e3_trbfv::TrBFVRequest::GenPkShareAndSkSss(_)
                     | e3_trbfv::TrBFVRequest::CalculateDecryptionKey(_)
             ),
-            ComputeRequestKind::Zk(request) => matches!(
-                request,
-                ZkRequest::PkBfv(_)
-                    | ZkRequest::PkGeneration(_)
-                    | ZkRequest::ShareComputation(_)
-                    | ZkRequest::ShareEncryption(_)
-                    | ZkRequest::DkgShareDecryption(_)
-                    | ZkRequest::VerifyShareProofs(_)
-                    | ZkRequest::VerifyShareDecryptionProofs(_)
-                    | ZkRequest::PkAggregation(_)
-                    | ZkRequest::NodeDkgFold(_)
-                    | ZkRequest::NodesFoldStep(_)
-                    | ZkRequest::DkgAggregation(_)
-            ),
+            ComputeRequestKind::Zk(request) => {
+                matches!(
+                    request,
+                    ZkRequest::PkBfv(_)
+                        | ZkRequest::PkGeneration(_)
+                        | ZkRequest::ShareComputation(_)
+                        | ZkRequest::ShareEncryption(_)
+                        | ZkRequest::DkgShareDecryption(_)
+                        | ZkRequest::VerifyShareDecryptionProofs(_)
+                        | ZkRequest::PkAggregation(_)
+                        | ZkRequest::NodeDkgFold(_)
+                        | ZkRequest::NodesFoldStep(_)
+                        | ZkRequest::DkgAggregation(_)
+                ) || matches!(
+                    request,
+                    ZkRequest::VerifyShareProofs(request)
+                        if !Self::is_threshold_decryption_verification(request)
+                )
+            }
         }
+    }
+
+    /// `VerifyShareProofs` carries both DKG proofs (C1-C3) and final
+    /// threshold-decryption proofs (C6). Inspect the signed proof type so a
+    /// lifecycle filter cannot discard valid C6 work after key publication.
+    fn is_threshold_decryption_verification(request: &VerifyShareProofsRequest) -> bool {
+        let mut proofs = request
+            .party_proofs
+            .iter()
+            .flat_map(|party| party.signed_proofs.iter());
+        let Some(first) = proofs.next() else {
+            return false;
+        };
+
+        first.payload.proof_type == ProofType::C6ThresholdShareDecryption
+            && proofs.all(|proof| proof.payload.proof_type == ProofType::C6ThresholdShareDecryption)
     }
 
     fn request_is_obsolete(&self, e3_id: &E3id, kind: &ComputeRequestKind) -> bool {
@@ -243,9 +264,10 @@ mod tests {
     use super::*;
     use actix::{Message, ResponseFuture};
     use e3_events::{
-        ComputeRequest, CorrelationId, E3RequestComplete, EffectsEnabled,
-        EventConstructorWithTimestamp, EventSource, InterfoldEvent, PkBfvProofRequest, Unsequenced,
-        ZkRequest,
+        CircuitName, ComputeRequest, CorrelationId, E3RequestComplete, EffectsEnabled,
+        EventConstructorWithTimestamp, EventSource, InterfoldEvent, PartyProofsToVerify,
+        PkBfvProofRequest, Proof, ProofPayload, SignedProofPayload, Unsequenced,
+        VerifyShareProofsRequest, ZkRequest,
     };
     use e3_fhe_params::BfvPreset;
     use e3_utils::ArcBytes;
@@ -288,6 +310,46 @@ mod tests {
                 BfvPreset::default(),
                 CiphernodesCommitteeSize::Micro,
             )),
+            correlation_id,
+            E3id::new("4", 1),
+        );
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            request.into(),
+            None,
+            timestamp,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(1)
+    }
+
+    fn share_verification_compute(
+        correlation_id: CorrelationId,
+        timestamp: u128,
+        proof_type: ProofType,
+        circuit: CircuitName,
+    ) -> InterfoldEvent {
+        let proof = SignedProofPayload {
+            payload: ProofPayload {
+                e3_id: E3id::new("4", 1),
+                proof_type,
+                proof: Proof::new(
+                    circuit,
+                    ArcBytes::from_bytes(&[1]),
+                    ArcBytes::from_bytes(&[2]),
+                ),
+            },
+            signature: ArcBytes::from_bytes(&[3]),
+        };
+        let request = ComputeRequest::zk(
+            ZkRequest::VerifyShareProofs(VerifyShareProofsRequest {
+                party_proofs: vec![PartyProofsToVerify {
+                    sender_party_id: 0,
+                    signed_proofs: vec![proof],
+                }],
+                params_preset: BfvPreset::default(),
+                committee_size: CiphernodesCommitteeSize::Micro,
+            }),
             correlation_id,
             E3id::new("4", 1),
         );
@@ -382,5 +444,34 @@ mod tests {
         gate.send(compute(CorrelationId::new(), 40)).await.unwrap();
 
         assert!(recorder.send(Received).await.unwrap().is_empty());
+    }
+
+    #[actix::test]
+    async fn key_published_snapshot_keeps_threshold_decryption_verification() {
+        let recorder = Recorder::default().start();
+        let stages = HashMap::from([(E3id::new("4", 1), E3Stage::CiphertextReady)]);
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), stages).start();
+        let dkg_correlation_id = CorrelationId::new();
+        let correlation_id = CorrelationId::new();
+
+        gate.send(share_verification_compute(
+            dkg_correlation_id,
+            5,
+            ProofType::C1PkGeneration,
+            CircuitName::PkGeneration,
+        ))
+        .await
+        .unwrap();
+        gate.send(share_verification_compute(
+            correlation_id,
+            10,
+            ProofType::C6ThresholdShareDecryption,
+            CircuitName::ThresholdShareDecryption,
+        ))
+        .await
+        .unwrap();
+        gate.send(effects_enabled()).await.unwrap();
+
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![correlation_id]);
     }
 }
