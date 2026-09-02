@@ -131,6 +131,8 @@ COPY examples/CRISP/.interfold/   examples/CRISP/.interfold/
 COPY examples/CRISP/server/    examples/CRISP/server/
 COPY examples/CRISP/program/   examples/CRISP/program/
 COPY examples/CRISP/crates/   examples/CRISP/crates/
+COPY examples/CRISP/packages/crisp-contracts/deployed_contracts.json \
+    examples/CRISP/packages/crisp-contracts/deployed_contracts.json
 COPY examples/CRISP/Cargo.*    examples/CRISP/
 COPY Cargo.*                        ./
 COPY crates/           crates/

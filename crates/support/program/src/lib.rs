@@ -36,9 +36,10 @@ pub fn fhe_processor(fhe_inputs: &FHEInputs) -> Vec<u8> {
 /// Both are specific to this program and its contract. They live here, beside the `CRISPProgram`
 /// they must agree with, rather than in `e3-compute-provider`, which every E3 program shares.
 pub mod policy {
-    use e3_compute_provider::policy::{leaf_from_digest, PublishedInput};
+    use e3_compute_provider::policy::{PublishedInput, leaf_from_digest};
     use e3_compute_provider::{ComputeError, InputPolicy};
     use sha2::{Digest, Sha256};
+    use sha3::Keccak256;
     use std::collections::BTreeMap;
 
     /// The metadata `CRISPProgram` publishes with each input: 20-byte slot, then a 5-byte parent.
@@ -78,7 +79,7 @@ pub mod policy {
         })
     }
 
-    /// `sha256(sha256(ciphertext) || commitment || slot || parent) mod SNARK_SCALAR_FIELD`.
+    /// `sha256(keccak256(ciphertext) || commitment || slot || parent) mod SNARK_SCALAR_FIELD`.
     ///
     /// Must stay byte-identical to `CRISPProgram.inputLeaf`, or no root will ever match. It binds
     /// four things: the bytes, because the Noir proof constrains only the commitment and never sees
@@ -97,7 +98,7 @@ pub mod policy {
         metadata_of(input)?;
 
         let mut outer = Sha256::new();
-        outer.update(Sha256::digest(input.ciphertext));
+        outer.update(Keccak256::digest(input.ciphertext));
         outer.update(commitment);
         outer.update(input.metadata);
         Ok(leaf_from_digest(&outer.finalize()))

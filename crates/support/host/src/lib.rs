@@ -130,51 +130,103 @@ fn to_output_error<E: std::fmt::Display>(e: E) -> BoundlessOutput {
     }
 }
 
-/// Read optional environment variable as f64, returning None if unset or invalid.
-fn env_opt_f64(key: &str) -> Option<f64> {
-    std::env::var(key).ok().and_then(|v| v.parse().ok())
+/// Read an optional floating-point environment variable.
+fn env_opt_f64(key: &str) -> Result<Option<f64>> {
+    match std::env::var(key) {
+        Ok(value) => Ok(Some(
+            value
+                .parse()
+                .with_context(|| format!("{key} must be a number"))?,
+        )),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("failed to read {key}")),
+    }
 }
 
-/// Read optional environment variable as u64 (seconds), returning None if unset or invalid.
-fn env_opt_secs(key: &str) -> Option<u64> {
-    std::env::var(key).ok().and_then(|v| v.parse().ok())
+/// Read an optional whole-second environment variable.
+fn env_opt_secs(key: &str) -> Result<Option<u64>> {
+    match std::env::var(key) {
+        Ok(value) => {
+            Ok(Some(value.parse().with_context(|| {
+                format!("{key} must be a whole number of seconds")
+            })?))
+        }
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("failed to read {key}")),
+    }
 }
+
+const DEFAULT_BOUNDLESS_MIN_PRICE_ETH: &str = "0.00005";
+const DEFAULT_BOUNDLESS_MAX_PRICE_ETH: &str = "0.012";
+const DEFAULT_BOUNDLESS_TIMEOUT_SECS: u64 = 8 * 60 * 60;
+const DEFAULT_BOUNDLESS_LOCK_TIMEOUT_SECS: u64 = 4 * 60 * 60;
+const DEFAULT_BOUNDLESS_RAMP_UP_SECS: u64 = 2 * 60 * 60;
+const DEFAULT_BOUNDLESS_LOCK_COLLATERAL_ZKC: f64 = 100.0;
 
 /// Build the OfferParams from environment variables, using sensible defaults.
 fn build_offer() -> Result<OfferParams> {
-    let min_price = if let Some(v) = env_opt_f64("BOUNDLESS_MIN_PRICE_ETH") {
-        if v.is_sign_negative() || v.is_nan() {
+    build_offer_from_values(
+        env_opt_f64("BOUNDLESS_MIN_PRICE_ETH")?,
+        env_opt_f64("BOUNDLESS_MAX_PRICE_ETH")?,
+        env_opt_secs("BOUNDLESS_TIMEOUT_SECS")?,
+        env_opt_secs("BOUNDLESS_LOCK_TIMEOUT_SECS")?,
+        env_opt_secs("BOUNDLESS_RAMP_UP_SECS")?,
+        env_opt_f64("BOUNDLESS_LOCK_COLLATERAL_ZKC")?,
+    )
+}
+
+fn build_offer_from_values(
+    min_price_eth: Option<f64>,
+    max_price_eth: Option<f64>,
+    timeout_secs: Option<u64>,
+    lock_timeout_secs: Option<u64>,
+    ramp_up_secs: Option<u64>,
+    lock_collateral_zkc: Option<f64>,
+) -> Result<OfferParams> {
+    let min_price = if let Some(value) = min_price_eth {
+        if value.is_sign_negative() || !value.is_finite() {
             anyhow::bail!(
                 "BOUNDLESS_MIN_PRICE_ETH must be a non-negative number, got: {}",
-                v
+                value
             );
         }
-        parse_ether(&format!("{}", v)).context("Invalid BOUNDLESS_MIN_PRICE_ETH")?
+        parse_ether(&value.to_string()).context("Invalid BOUNDLESS_MIN_PRICE_ETH")?
     } else {
-        parse_ether("0.00005").context("Invalid default min_price")?
+        parse_ether(DEFAULT_BOUNDLESS_MIN_PRICE_ETH).context("Invalid default min_price")?
     };
-    let max_price = if let Some(v) = env_opt_f64("BOUNDLESS_MAX_PRICE_ETH") {
-        if v.is_sign_negative() || v.is_nan() {
+    let max_price = if let Some(value) = max_price_eth {
+        if value.is_sign_negative() || !value.is_finite() {
             anyhow::bail!(
                 "BOUNDLESS_MAX_PRICE_ETH must be a non-negative number, got: {}",
-                v
+                value
             );
         }
-        parse_ether(&format!("{}", v)).context("Invalid BOUNDLESS_MAX_PRICE_ETH")?
+        parse_ether(&value.to_string()).context("Invalid BOUNDLESS_MAX_PRICE_ETH")?
     } else {
-        parse_ether("0.002").context("Invalid default max_price")?
+        parse_ether(DEFAULT_BOUNDLESS_MAX_PRICE_ETH).context("Invalid default max_price")?
     };
-    let timeout = env_opt_secs("BOUNDLESS_TIMEOUT_SECS")
-        .map(|v| v as u32)
-        .unwrap_or(10 * 60);
-    let lock_timeout = env_opt_secs("BOUNDLESS_LOCK_TIMEOUT_SECS")
-        .map(|v| v as u32)
-        .unwrap_or(5 * 60);
-    let ramp_up = env_opt_secs("BOUNDLESS_RAMP_UP_SECS")
-        .map(|v| v as u32)
-        .unwrap_or(1 * 60);
-    let zkc = env_opt_f64("BOUNDLESS_LOCK_COLLATERAL_ZKC").unwrap_or(2.0);
-    if zkc.is_sign_negative() || zkc.is_nan() {
+
+    if min_price > max_price {
+        anyhow::bail!("BOUNDLESS_MIN_PRICE_ETH must not exceed BOUNDLESS_MAX_PRICE_ETH");
+    }
+
+    let timeout = u32::try_from(timeout_secs.unwrap_or(DEFAULT_BOUNDLESS_TIMEOUT_SECS))
+        .context("BOUNDLESS_TIMEOUT_SECS exceeds the supported range")?;
+    let lock_timeout =
+        u32::try_from(lock_timeout_secs.unwrap_or(DEFAULT_BOUNDLESS_LOCK_TIMEOUT_SECS))
+            .context("BOUNDLESS_LOCK_TIMEOUT_SECS exceeds the supported range")?;
+    let ramp_up = u32::try_from(ramp_up_secs.unwrap_or(DEFAULT_BOUNDLESS_RAMP_UP_SECS))
+        .context("BOUNDLESS_RAMP_UP_SECS exceeds the supported range")?;
+
+    if lock_timeout == 0 || lock_timeout >= timeout {
+        anyhow::bail!("BOUNDLESS_LOCK_TIMEOUT_SECS must be greater than zero and less than BOUNDLESS_TIMEOUT_SECS");
+    }
+    if ramp_up > lock_timeout {
+        anyhow::bail!("BOUNDLESS_RAMP_UP_SECS must not exceed BOUNDLESS_LOCK_TIMEOUT_SECS");
+    }
+
+    let zkc = lock_collateral_zkc.unwrap_or(DEFAULT_BOUNDLESS_LOCK_COLLATERAL_ZKC);
+    if zkc.is_sign_negative() || !zkc.is_finite() {
         anyhow::bail!(
             "BOUNDLESS_LOCK_COLLATERAL_ZKC must be a non-negative number, got: {}",
             zkc
@@ -531,6 +583,43 @@ mod tests {
             encoded.extend_from_slice(&u32::from(*byte).to_le_bytes());
         }
         encoded
+    }
+
+    #[test]
+    fn boundless_offer_defaults_fit_secure_compute() {
+        let offer = build_offer_from_values(None, None, None, None, None, None).unwrap();
+
+        assert_eq!(
+            offer.min_price,
+            Some(parse_ether(DEFAULT_BOUNDLESS_MIN_PRICE_ETH).unwrap())
+        );
+        assert_eq!(
+            offer.max_price,
+            Some(parse_ether(DEFAULT_BOUNDLESS_MAX_PRICE_ETH).unwrap())
+        );
+        assert_eq!(offer.timeout, Some(DEFAULT_BOUNDLESS_TIMEOUT_SECS as u32));
+        assert_eq!(
+            offer.lock_timeout,
+            Some(DEFAULT_BOUNDLESS_LOCK_TIMEOUT_SECS as u32)
+        );
+        assert_eq!(
+            offer.ramp_up_period,
+            Some(DEFAULT_BOUNDLESS_RAMP_UP_SECS as u32)
+        );
+        assert_eq!(
+            offer.lock_collateral,
+            Some(parse_units("100", 18).unwrap().into())
+        );
+    }
+
+    #[test]
+    fn boundless_offer_rejects_invalid_deadlines() {
+        let error = build_offer_from_values(None, None, Some(60), Some(60), None, None)
+            .expect_err("equal lock and total deadlines must fail");
+
+        assert!(error
+            .to_string()
+            .contains("BOUNDLESS_LOCK_TIMEOUT_SECS must be greater than zero"));
     }
 
     #[test]

@@ -19,6 +19,67 @@ library RegistrySortitionLib {
 
     uint256 private constant MIN_RANDOMNESS_REQUEST_TIMEOUT = 60;
     uint256 private constant MAX_RANDOMNESS_REQUEST_TIMEOUT = 1 days;
+    uint256 private constant MAX_COMMITTEE_PUBLIC_KEY_BYTES = 512 * 1024;
+    uint256 private constant MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES = 90 * 1024;
+
+    /// @notice Validates and emits one deterministic public-key chunk from registry storage.
+    /// @dev This external library call runs with `delegatecall`, so the registry proxy remains
+    ///      the event emitter and the original publisher remains `msg.sender`.
+    function publishCommitteePublicKeyChunk(
+        mapping(uint256 e3Id => ICiphernodeRegistry.Committee committee)
+            storage committees,
+        mapping(uint256 e3Id => bytes32 publicKeyHash) storage publicKeyHashes,
+        uint256 e3Id,
+        bytes32 candidateHash,
+        uint16 chunkIndex,
+        uint16 chunkCount,
+        uint32 totalLength,
+        bytes calldata chunk
+    ) external {
+        ICiphernodeRegistry.Committee storage committee = committees[e3Id];
+        bytes32 pkCommitment = publicKeyHashes[e3Id];
+        if (pkCommitment == bytes32(0))
+            revert ICiphernodeRegistry.CommitteeNotPublished();
+        if (
+            candidateHash == bytes32(0) ||
+            totalLength == 0 ||
+            totalLength > MAX_COMMITTEE_PUBLIC_KEY_BYTES ||
+            chunkCount == 0 ||
+            chunkIndex >= chunkCount
+        ) revert ICiphernodeRegistry.InvalidPublicKeyChunk();
+
+        uint256 expectedChunkCount = (uint256(totalLength) +
+            MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES -
+            1) / MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES;
+        if (chunkCount != expectedChunkCount)
+            revert ICiphernodeRegistry.InvalidPublicKeyChunk();
+
+        uint256 remaining = uint256(totalLength) -
+            uint256(chunkIndex) *
+            MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES;
+        uint256 expectedLength = remaining >
+            MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES
+            ? MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES
+            : remaining;
+        if (chunk.length != expectedLength)
+            revert ICiphernodeRegistry.InvalidPublicKeyChunk();
+        if (
+            committee.memberStatus[msg.sender] ==
+            ICiphernodeRegistry.MemberStatus.None
+        ) revert ICiphernodeRegistry.PublicKeyPublisherNotCommitteeMember();
+
+        emit ICiphernodeRegistry.CommitteePublicKeyChunkPublished(
+            e3Id,
+            msg.sender,
+            candidateHash,
+            committee.topNodes,
+            pkCommitment,
+            chunkIndex,
+            chunkCount,
+            totalLength,
+            chunk
+        );
+    }
 
     struct RandomnessRequest {
         IRandomnessProvider provider;

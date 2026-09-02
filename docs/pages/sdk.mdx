@@ -461,8 +461,8 @@ that wraps or complements the core Interfold SDK.
 - **Historical events**: `sdk.getHistoricalEvents(type, fromBlock, toBlock)` fetches logs without a
   WebSocket provider; useful for CRON jobs or health checks.
 - **Publish ciphertext output**:
-  `sdk.publishCiphertextOutput(e3Id, ciphertextOutput, ciphertextCommitment, proof, gasLimit?)`
-  submits the computed ciphertext output for an E3.
+  `sdk.publishCiphertextOutput(e3Id, { contentHash, ciphertextCommitment, computeProof, availabilityProof }, gasLimit?)`
+  submits a proof-backed reference to an aggregate ciphertext published on the configured DA layer.
 - **Gas controls**: pass `gasLimit` to `requestE3`, `publishCiphertextOutput`, or other write
   methods if you want fixed limits when interacting with Interfold on L2s.
 - **Gas estimation**: `sdk.estimateGas(functionName, args, contractAddress, abi)` returns the

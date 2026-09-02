@@ -107,13 +107,18 @@ voting rounds. The main contract is
 which orchestrates the entire voting process.
 
 When a new voting round is initialized, the `validate()` function sets up round parameters and
-initializes a Merkle tree to store votes efficiently. As votes are submitted, `publishInput()`
-processes each encrypted vote by verifying its Noir zero-knowledge proof, ensuring votes are
-correctly encrypted and voters are eligible. The round's census decides which verifier that is:
-`CRISPVerifier.sol` for a census posted as a Merkle root, and `CRISPOnchainVerifier.sol` for one
-read from token balances on chain. Both declare a contract named `HonkVerifier`, so they are
-distinguished by file. Votes are stored in the Merkle tree with slot addresses mapping to vote
-indices, allowing updates while maintaining uniqueness.
+initializes a Merkle tree to store votes efficiently. A vote then uses two transactions.
+`publishInput()` verifies the Noir proof and the availability service's signature, commits the
+encrypted vote's hash, and reserves its exact Merkle-tree position. The large ciphertext is stored
+on Avail instead of Ethereum. After VectorX anchors the relevant Avail range on Ethereum,
+`finalizeInput()` verifies the inclusion proof for that exact hash and marks the vote available.
+Computation cannot start while a committed vote is waiting for finalization.
+
+The round's census decides which Noir verifier `publishInput()` uses: `CRISPVerifier.sol` for a
+census posted as a Merkle root, and `CRISPOnchainVerifier.sol` for one read from token balances on
+chain. Both declare a contract named `HonkVerifier`, so they are distinguished by file. Votes are
+stored in the Merkle tree with slot addresses mapping to vote indices, allowing updates while
+maintaining uniqueness.
 
 After the voting period ends and FHE computation completes, the `verify()` function validates the
 RISC Zero proof attesting to the correctness of the homomorphic tally computation, verifying it
@@ -138,10 +143,13 @@ voter inclusion in the eligibility tree.
 When casting a vote, the SDK encrypts votes using BFV fully homomorphic encryption under the
 committee's public key and generates zero-knowledge proofs using compiled Noir circuits. These
 proofs demonstrate that votes are correctly encrypted and that voters are eligible to participate.
-The SDK also supports mask votes, generating proofs for zero-value votes that help reduce the risk
-of collusion and coercion. Before submission, proofs are verified locally to prevent failed
-transactions, and after voting concludes, the SDK decodes encrypted tally results into readable vote
-counts.
+The SDK stages the encrypted bytes with the coordination server and returns the compact commitment
+that the voter signs and publishes from their wallet. The server then publishes the stored bytes to
+Avail and finalizes the vote with its VectorX proof. The voter does not need to remain online for
+that second step. The SDK also supports mask votes, generating proofs for zero-value votes that help
+reduce the risk of collusion and coercion. Before submission, proofs are verified locally to prevent
+failed transactions, and after voting concludes, the SDK decodes encrypted tally results into
+readable vote counts.
 
 ## Next Steps
 
