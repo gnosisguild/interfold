@@ -82,6 +82,12 @@ run_case() {
   set +e
   CASE_OUTPUT=$(
     cd "$directory" || exit 1
+    # Keep each case independent from credentials and support settings in the parent process.
+    # GitHub Actions defines PRIVATE_KEY for other jobs in this workflow.
+    unset RISC0_DEV_MODE RPC_URL PRIVATE_KEY PINATA_JWT IPFS_GATEWAY_URL PROGRAM_URL
+    unset BOUNDLESS_ONCHAIN BOUNDLESS_MIN_PRICE_ETH BOUNDLESS_MAX_PRICE_ETH
+    unset BOUNDLESS_TIMEOUT_SECS BOUNDLESS_LOCK_TIMEOUT_SECS BOUNDLESS_RAMP_UP_SECS
+    unset BOUNDLESS_LOCK_COLLATERAL_ZKC
     export LOCAL_IMAGE_STATUS="$local_image_status"
     export PULL_STATUS="$pull_status"
     if [[ -n "$image_repository" ]]; then
