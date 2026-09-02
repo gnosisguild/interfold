@@ -82,13 +82,13 @@ export LOG_LEVEL="${LOG_LEVEL:-info}"
 # an enabled Ethereum chain must always render a reader into the ciphernode configuration.
 if [ -z "${AVAIL_RPC_URL:-}" ]; then
     case "${CHAIN_ID:-}" in
-        1) AVAIL_RPC_URL="wss://avail-rpc.publicnode.com/" ;;
-        11155111) AVAIL_RPC_URL="wss://turing-rpc.avail.so/ws" ;;
+        1) AVAIL_RPC_URL="https://avail-rpc.publicnode.com/" ;;
+        11155111) AVAIL_RPC_URL="https://turing-rpc.avail.so/rpc" ;;
         *) fail "AVAIL_RPC_URL is required for chain ${CHAIN_ID:-unknown}" ;;
     esac
 fi
 export AVAIL_RPC_URL
-[[ "$AVAIL_RPC_URL" =~ ^wss?:// ]] || fail "AVAIL_RPC_URL must be a WebSocket URL (ws:// or wss://)"
+[[ "$AVAIL_RPC_URL" =~ ^https?:// ]] || fail "AVAIL_RPC_URL must be an HTTP URL (http:// or https://)"
 
 case "$LOG_LEVEL" in
     info|debug|trace) ;;

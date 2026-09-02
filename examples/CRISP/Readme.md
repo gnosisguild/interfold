@@ -218,7 +218,7 @@ Sepolia and Ethereum mainnet use Avail. Before starting the CRISP server:
 ```dotenv
 # Sepolia + Avail Turing
 DATA_AVAILABILITY_MODE=avail
-AVAIL_RPC_URL=wss://turing-rpc.avail.so/ws
+AVAIL_RPC_URL=https://turing-rpc.avail.so/rpc
 AVAIL_BRIDGE_API_URL=https://turing-bridge-api.avail.so
 AVAIL_APP_ID=<registered-app-id>
 AVAIL_SEED=<dedicated-funded-secret-uri>
@@ -228,7 +228,7 @@ AVAIL_PROOF_LEAD_SECONDS=10800
 E3_DURATION=43200
 
 # Ethereum mainnet uses these two endpoints instead:
-# AVAIL_RPC_URL=wss://avail-rpc.publicnode.com/
+# AVAIL_RPC_URL=https://avail-rpc.publicnode.com/
 # AVAIL_BRIDGE_API_URL=https://bridge-api.avail.so
 ```
 

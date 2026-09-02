@@ -32,7 +32,7 @@ chains:
     chain_id: 1
     data_availability:
       mode: avail
-      rpc_url: "wss://avail-rpc.publicnode.com/"
+      rpc_url: "https://avail-rpc.publicnode.com/"
     contracts:
       # CRISPProgram is not yet deployed on mainnet (packages/crisp-contracts/deployed_contracts.json
       # has no mainnet entry). Fill in after `pnpm deploy:contracts --network mainnet`.
@@ -60,7 +60,7 @@ chains:
     chain_id: 11155111
     data_availability:
       mode: avail
-      rpc_url: "wss://turing-rpc.avail.so/ws"
+      rpc_url: "https://turing-rpc.avail.so/rpc"
     contracts:
       e3_program:
         address: "0xD9e4f9fec8dCa86B32d186730c5BF7c4a66892ED"

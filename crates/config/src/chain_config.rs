@@ -28,7 +28,7 @@ pub enum DataAvailabilityMode {
 #[derive(Debug, Clone, PartialEq, Hash, Eq, Deserialize, Serialize)]
 pub struct DataAvailabilityConfig {
     pub mode: DataAvailabilityMode,
-    /// Avail WebSocket RPC for `avail`, or the local object-service URL for `mock_http`.
+    /// Avail HTTP RPC for `avail`, or the local object-service URL for `mock_http`.
     pub rpc_url: String,
 }
 

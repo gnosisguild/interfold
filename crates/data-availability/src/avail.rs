@@ -1,10 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 use super::*;
+use anyhow::ensure;
 use avail_rust_client::{
     avail, ext::codec::Decode, Client, HasHeader, Keypair, Options, SecretUri,
 };
 use std::str::FromStr;
+
+fn validate_rpc_endpoint(endpoint: &str) -> Result<()> {
+    let url = reqwest::Url::parse(endpoint).context("invalid Avail RPC URL")?;
+    ensure!(
+        matches!(url.scheme(), "http" | "https"),
+        "Avail RPC URL must use HTTP or HTTPS; avail-rust-client does not accept WebSocket URLs"
+    );
+    Ok(())
+}
 
 /// Avail reader that finds a `submit_data` call in the Ethereum-verified block by content hash.
 #[derive(Clone)]
@@ -14,10 +24,8 @@ pub struct AvailReader {
 
 impl AvailReader {
     pub fn new(endpoint: impl Into<String>) -> Result<Self> {
-        let endpoint = endpoint.into();
-        if endpoint.trim().is_empty() {
-            bail!("Avail RPC URL is empty");
-        }
+        let endpoint = endpoint.into().trim().to_owned();
+        validate_rpc_endpoint(&endpoint)?;
         Ok(Self { endpoint })
     }
 }
@@ -70,10 +78,8 @@ impl AvailPublisher {
         bridge_api: impl Into<String>,
         destination_chain_id: u64,
     ) -> Result<Self> {
-        let endpoint = endpoint.into();
-        if endpoint.trim().is_empty() {
-            bail!("Avail RPC URL is empty");
-        }
+        let endpoint = endpoint.into().trim().to_owned();
+        validate_rpc_endpoint(&endpoint)?;
         let secret = SecretUri::from_str(secret_uri).context("invalid Avail secret URI")?;
         let signer = Keypair::from_uri(&secret).context("invalid Avail signing key")?;
         Ok(Self {
@@ -83,6 +89,20 @@ impl AvailPublisher {
             bridge: VectorXBridgeApi::new(bridge_api, destination_chain_id)?,
             submission_lock: tokio::sync::Mutex::new(()),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reader_requires_the_http_transport_used_by_avail_rust_client() {
+        assert!(AvailReader::new("https://avail.example/rpc").is_ok());
+        let error = AvailReader::new("wss://avail.example/ws")
+            .err()
+            .expect("WebSocket transport must be rejected");
+        assert!(error.to_string().contains("HTTP or HTTPS"));
     }
 }
 
