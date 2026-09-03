@@ -2,7 +2,7 @@
 ARG RUST_VERSION=1.91.1
 ARG SKIP_SOLIDITY=0
 
-FROM rust:${RUST_VERSION}-slim-bullseye AS base-dev
+FROM rust:${RUST_VERSION}-slim-bookworm AS base-dev
 
 ENV CARGO_HOME=/usr/local/cargo
 
