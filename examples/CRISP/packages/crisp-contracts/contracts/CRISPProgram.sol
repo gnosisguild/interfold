@@ -331,9 +331,13 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   }
 
   /// @notice Sets the Merkle root for an E3 program. Can only be set once.
+  /// @dev The availability service builds TOKEN and BY_REQUESTER censuses when it observes the
+  /// E3 request. It must be able to publish their roots without receiving the owner's broader
+  /// verifier and configuration permissions.
   /// @param _e3Id The E3 program ID
   /// @param _root The Merkle root to set.
-  function setMerkleRoot(uint256 _e3Id, uint256 _root) external onlyOwner {
+  function setMerkleRoot(uint256 _e3Id, uint256 _root) external {
+    if (msg.sender != owner() && msg.sender != inputAvailabilitySigner) revert CallerNotAuthorized();
     if (_root == 0) revert InvalidMerkleRoot();
     if (e3Data[_e3Id].merkleRoot != 0) revert MerkleRootAlreadySet();
 

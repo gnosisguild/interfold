@@ -199,6 +199,7 @@ export async function deployCRISPProgram(
     risc0Verifier?: MockRISC0Verifier
     bindInterfold?: boolean
     availabilityFinalizationWindow?: number
+    inputAvailabilitySigner?: string
   } = {},
 ) {
   const poseidonT3 = contracts.poseidonT3 || (await deployPoseidonT3())
@@ -225,7 +226,7 @@ export async function deployCRISPProgram(
     await onchainHonkVerifier.getAddress(),
     await dataAvailabilityVerifier.getAddress(),
     contracts.availabilityFinalizationWindow ?? 0,
-    await owner.getAddress(),
+    contracts.inputAvailabilitySigner ?? (await owner.getAddress()),
     zeroHash,
   )
 

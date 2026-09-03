@@ -81,6 +81,18 @@ describe('CRISPProgram census mode', function () {
     expect(await crispProgram.censusModeOf(5)).to.equal(TOKEN)
   })
 
+  it('allows the availability service to publish a census root without giving it ownership', async () => {
+    const [, availabilitySigner, stranger] = await ethers.getSigners()
+    const program = await deployCRISPProgram({ inputAvailabilitySigner: availabilitySigner.address })
+    await program.validate(7, 0, '0x', '0x', encode(CUSTOM, TOKEN))
+
+    await expect(program.connect(stranger).setMerkleRoot(7, 123)).to.be.revertedWithCustomError(program, 'CallerNotAuthorized')
+    await program.connect(availabilitySigner).setMerkleRoot(7, 123)
+
+    expect((await program.getRoundData(7)).merkleRoot).to.equal(123)
+    expect(await program.owner()).to.equal(owner)
+  })
+
   /// An unrecognised mode is a coordinator that would not know what to do. Better to refuse the
   /// round than to have it silently treated as a token vote.
   it('rejects an unknown census mode', async () => {
