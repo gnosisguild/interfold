@@ -13,10 +13,16 @@ use crate::server::{
         canonical_e3_id, e3_id_to_u256, GetRoundRequest, JsonResponse, PreviousCiphertextRequest,
         PreviousCiphertextResponse, RoundRequestWithRequester, WebhookPayload,
     },
+    rate_limit::ChainRateLimiter,
 };
-use actix_web::{web, HttpResponse, Responder};
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use alloy::primitives::Address;
 use log::{error, info};
+
+use super::chain::{admit, too_many_requests};
+
+/// Upstream reads performed before a new aggregate-output job is admitted.
+const OUTPUT_CALLBACK_READ_COST: usize = 6;
 
 pub fn setup_routes(config: &mut web::ServiceConfig) {
     config.service(
@@ -136,8 +142,10 @@ async fn handle_get_previous_ciphertext(
 /// # Returns
 /// * A JSON response indicating the success of the operation
 async fn handle_program_server_result(
+    request: HttpRequest,
     data: web::Json<WebhookPayload>,
     availability: web::Data<AvailabilityService>,
+    limiter: web::Data<ChainRateLimiter>,
 ) -> impl Responder {
     let incoming = data.into_inner();
 
@@ -179,6 +187,9 @@ async fn handle_program_server_result(
             if ciphertext_commitment.len() != 32 {
                 return HttpResponse::BadRequest()
                     .body("ciphertext_commitment must be exactly 32 bytes");
+            }
+            if let Err((caller, cost)) = admit(&request, &limiter, OUTPUT_CALLBACK_READ_COST) {
+                return too_many_requests(&caller, cost, "/state/add-result");
             }
 
             let mut commitment = [0u8; 32];

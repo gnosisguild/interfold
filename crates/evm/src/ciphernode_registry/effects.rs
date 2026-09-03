@@ -133,6 +133,9 @@ pub(in crate::actors::ciphernode_registry_sol) fn committee_publication_error_is
         ICiphernodeRegistry::PkCommitmentMismatch::SELECTOR,
         ICiphernodeRegistry::DomainBindingMismatch::SELECTOR,
         IInterfold::DKGDeadlinePassed::SELECTOR,
+        IInterfold::InvalidStage::SELECTOR,
+        ICiphernodeRegistry::InvalidPublicKeyChunk::SELECTOR,
+        ICiphernodeRegistry::PublicKeyPublisherNotCommitteeMember::SELECTOR,
     ]
     .into_iter()
     .any(|selector| contains_error_selector(&encoded, selector));
@@ -590,6 +593,15 @@ mod tests {
         )));
         assert!(committee_publication_error_is_terminal(&selector_error(
             IInterfold::DKGDeadlinePassed::SELECTOR
+        )));
+        assert!(committee_publication_error_is_terminal(&selector_error(
+            IInterfold::InvalidStage::SELECTOR
+        )));
+        assert!(committee_publication_error_is_terminal(&selector_error(
+            ICiphernodeRegistry::InvalidPublicKeyChunk::SELECTOR
+        )));
+        assert!(committee_publication_error_is_terminal(&selector_error(
+            ICiphernodeRegistry::PublicKeyPublisherNotCommitteeMember::SELECTOR
         )));
     }
 }

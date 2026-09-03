@@ -24,10 +24,7 @@ use std::{
     sync::{Arc, Mutex as StorageMutex},
     time::Duration,
 };
-use tokio::{
-    sync::{Mutex, Semaphore},
-    task::JoinSet,
-};
+use tokio::{sync::Semaphore, task::JoinSet};
 use tracing::warn;
 
 const JOB_POLL_INTERVAL: Duration = Duration::from_secs(30);
@@ -332,7 +329,7 @@ pub struct AvailabilityService {
     objects: Tree,
     input_retrievals: Tree,
     backend: Arc<Backend>,
-    in_progress: Arc<Mutex<HashSet<String>>>,
+    in_progress: Arc<StorageMutex<HashSet<String>>>,
     storage: Arc<StorageMutex<()>>,
     job_slots: Arc<Semaphore>,
     chain_id: u64,
@@ -344,6 +341,20 @@ pub struct AvailabilityService {
     input_duration_seconds: u64,
     proof_lead_seconds: u64,
     max_pending_bytes: u64,
+}
+
+struct ActiveJobGuard<'a> {
+    jobs: &'a StorageMutex<HashSet<String>>,
+    id: &'a str,
+}
+
+impl Drop for ActiveJobGuard<'_> {
+    fn drop(&mut self) {
+        self.jobs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(self.id);
+    }
 }
 
 impl AvailabilityService {
@@ -382,7 +393,7 @@ impl AvailabilityService {
             objects: db.open_tree("data-availability-objects")?,
             input_retrievals: db.open_tree("data-availability-input-retrievals")?,
             backend: Arc::new(backend),
-            in_progress: Arc::new(Mutex::new(HashSet::new())),
+            in_progress: Arc::new(StorageMutex::new(HashSet::new())),
             storage: Arc::new(StorageMutex::new(())),
             job_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_JOB_STEPS)),
             chain_id: config.chain_id,
@@ -984,9 +995,9 @@ impl AvailabilityService {
                 // memory and RPC spike. Keep only one bounded batch alive at a time.
                 while tasks.len() >= MAX_CONCURRENT_JOB_STEPS {
                     if let Some(result) = tasks.join_next().await {
-                        result.map_err(|error| {
-                            anyhow::anyhow!("data-availability worker task failed: {error}")
-                        })?;
+                        if let Err(error) = result {
+                            warn!(%error, "Data-availability job task panicked; continuing with the durable queue");
+                        }
                     }
                 }
                 let service = Arc::clone(&self);
@@ -995,9 +1006,9 @@ impl AvailabilityService {
                 });
             }
             while let Some(result) = tasks.join_next().await {
-                result.map_err(|error| {
-                    anyhow::anyhow!("data-availability worker task failed: {error}")
-                })?;
+                if let Err(error) = result {
+                    warn!(%error, "Data-availability job task panicked; continuing with the durable queue");
+                }
             }
             tokio::time::sleep(JOB_POLL_INTERVAL).await;
         }
@@ -1008,12 +1019,19 @@ impl AvailabilityService {
             warn!(job_id = id, "Data-availability worker is shutting down");
             return;
         };
-        {
-            let mut active = self.in_progress.lock().await;
+        let _active_job = {
+            let mut active = self
+                .in_progress
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if !active.insert(id.to_owned()) {
                 return;
             }
-        }
+            ActiveJobGuard {
+                jobs: &self.in_progress,
+                id,
+            }
+        };
         match tokio::time::timeout(JOB_STEP_TIMEOUT, self.process_inner(id)).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => warn!(job_id = id, %error, "Data-availability job will retry"),
@@ -1022,7 +1040,6 @@ impl AvailabilityService {
                 "Data-availability job step timed out and will retry"
             ),
         }
-        self.in_progress.lock().await.remove(id);
     }
 
     async fn process_inner(&self, id: &str) -> anyhow::Result<()> {
@@ -1138,6 +1155,14 @@ impl AvailabilityService {
                 }
             }
             JobState::Committed { transaction_hash } => {
+                if matches!(&job.kind, JobKind::Input { .. })
+                    && matches!(&*self.backend, Backend::Avail { .. })
+                {
+                    let (finalized_block, _) = self.finalized_block().await?;
+                    if !self.input_is_committed_at(&job, finalized_block).await? {
+                        return Ok(());
+                    }
+                }
                 job.state = self
                     .start_availability(&job, Some(transaction_hash))
                     .await?;
@@ -1425,6 +1450,16 @@ impl AvailabilityService {
         deadline: u64,
         inclusive: bool,
     ) -> anyhow::Result<Option<u64>> {
+        let (block_number, block_timestamp) = self.finalized_block().await?;
+        let passed = if inclusive {
+            block_timestamp >= deadline
+        } else {
+            block_timestamp > deadline
+        };
+        Ok(passed.then_some(block_number))
+    }
+
+    async fn finalized_block(&self) -> anyhow::Result<(u64, u64)> {
         let block = tokio::time::timeout(Duration::from_secs(15), async {
             let provider = ProviderBuilder::new().connect(&self.http_rpc_url).await?;
             provider
@@ -1434,12 +1469,7 @@ impl AvailabilityService {
         .await
         .map_err(|_| anyhow::anyhow!("timed out while reading the finalized Ethereum head"))??
         .ok_or_else(|| anyhow::anyhow!("the Ethereum RPC returned no finalized block"))?;
-        let passed = if inclusive {
-            block.header.timestamp >= deadline
-        } else {
-            block.header.timestamp > deadline
-        };
-        Ok(passed.then_some(block.header.number))
+        Ok((block.header.number, block.header.timestamp))
     }
 
     async fn input_is_committed_at(
@@ -1751,7 +1781,7 @@ mod tests {
             objects: db.open_tree("objects").unwrap(),
             input_retrievals: db.open_tree("retrievals").unwrap(),
             backend: Arc::new(Backend::Mock),
-            in_progress: Arc::new(Mutex::new(HashSet::new())),
+            in_progress: Arc::new(StorageMutex::new(HashSet::new())),
             storage: Arc::new(StorageMutex::new(())),
             job_slots: Arc::new(Semaphore::new(1)),
             chain_id: 31_337,
@@ -1764,6 +1794,19 @@ mod tests {
             proof_lead_seconds: 0,
             max_pending_bytes,
         }
+    }
+
+    #[test]
+    fn active_job_guard_releases_the_job_for_retry() {
+        let jobs = StorageMutex::new(HashSet::from(["job".to_owned()]));
+        let guard = ActiveJobGuard {
+            jobs: &jobs,
+            id: "job",
+        };
+
+        drop(guard);
+
+        assert!(jobs.lock().unwrap().is_empty());
     }
 
     const SDK_INPUT_ENVELOPE: &str = concat!(

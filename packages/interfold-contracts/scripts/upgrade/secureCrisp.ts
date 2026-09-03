@@ -656,20 +656,18 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     );
   }
   let retiredE3Program: string | undefined;
-  if (config.deployMockE3Program) {
-    retiredE3Program = address(
-      deployment.initialE3Program,
-      "bootstrap E3 program",
-    );
-    if (retiredE3Program.toLowerCase() === crispProgram.toLowerCase()) {
-      throw new Error("The secure CRISP program cannot be the bootstrap mock");
-    }
-    if (await interfold.e3Programs(retiredE3Program)) {
+  const initialE3Program = address(
+    deployment.initialE3Program,
+    "initial E3 program",
+  );
+  if (initialE3Program.toLowerCase() !== crispProgram.toLowerCase()) {
+    if (await interfold.e3Programs(initialE3Program)) {
+      retiredE3Program = initialE3Program;
       txs.push(
         safeTx(
           deployment.interfold,
           interfold.interface.encodeFunctionData("unregisterE3Program", [
-            retiredE3Program,
+            initialE3Program,
           ]),
         ),
       );
@@ -701,7 +699,7 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
   const batch = governanceBatch(config, txs);
   batch.meta.name = `${config.name} secure CRISP activation`;
   batch.meta.description =
-    "Install secure BFV routes, bind CRISP, retire the bootstrap mock, and require the matching ciphernode protocol while requests remain paused.";
+    "Install secure BFV routes, bind CRISP, retire the incompatible initial E3 program, and require the matching ciphernode protocol while requests remain paused.";
   writeJson(rawBatchFile, batch);
 
   let safeBuilderFile: string | undefined;
@@ -766,7 +764,7 @@ Secure CRISP activation prepared
   PK verifier router:        ${plan.pkVerifier}
   decryption router:         ${plan.decryptionVerifier}
   CRISP program:             ${plan.crispProgram}
-  retired bootstrap program: ${plan.retiredE3Program ?? "none"}
+  retired initial program:   ${plan.retiredE3Program ?? "none"}
   DA verifier:               ${plan.dataAvailabilityVerifier}
   input availability signer: ${plan.inputAvailabilitySigner}
   required node release:     ${plan.nodeRelease.version} (protocol ${plan.nodeRelease.protocolVersion}, generation ${plan.nodeRelease.nodeGeneration})

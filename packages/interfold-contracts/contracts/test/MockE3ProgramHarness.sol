@@ -22,6 +22,7 @@ contract MockE3ProgramHarness is IE3Program {
 
     IInterfold public interfold;
     bool public reenterPlaintextPublication;
+    bool public returnMismatchedAvailabilityHash;
     bytes public reentrantPlaintext;
     bytes public reentrantProof;
     address public observedTreasury;
@@ -51,6 +52,10 @@ contract MockE3ProgramHarness is IE3Program {
         reenterPlaintextPublication = true;
         reentrantPlaintext = plaintext;
         reentrantProof = proof;
+    }
+
+    function setReturnMismatchedAvailabilityHash(bool enabled) external {
+        returnMismatchedAvailabilityHash = enabled;
     }
 
     function observeTreasuryDuringValidation(
@@ -145,13 +150,15 @@ contract MockE3ProgramHarness is IE3Program {
         bytes calldata proof
     )
         external
-        pure
+        view
         returns (IDataAvailabilityVerifier.DataReference memory receipt)
     {
         require(keccak256(proof) == expectedContentHash, InvalidInput());
         return
             IDataAvailabilityVerifier.DataReference({
-                contentHash: expectedContentHash,
+                contentHash: returnMismatchedAvailabilityHash
+                    ? bytes32(uint256(expectedContentHash) ^ 1)
+                    : expectedContentHash,
                 blockNumber: 1,
                 leafIndex: 1
             });

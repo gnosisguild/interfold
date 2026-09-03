@@ -90,8 +90,28 @@ describe("AvailVectorXDataAvailabilityVerifier", function () {
     ).to.be.revertedWithCustomError(verifier, "InvalidVectorX");
   });
 
-  it("rejects retrieval coordinates that do not fit the recorded reference", async function () {
+  it("rejects a bridge and VectorX pair that do not match at deployment", async function () {
+    const { bridge, verifier } = await fixture();
+    const replacement = await ethers.deployContract("MockVectorX");
+    await replacement.waitForDeployment();
+
+    await expect(
+      ethers.deployContract("AvailVectorXDataAvailabilityVerifier", [
+        await bridge.getAddress(),
+        await replacement.getAddress(),
+      ]),
+    ).to.be.revertedWithCustomError(verifier, "InvalidVectorX");
+  });
+
+  it("rejects malformed proof encoding", async function () {
     const { verifier } = await fixture();
+    await expect(
+      verifier.verifyDataAvailability(contentHash, "0xdead"),
+    ).to.be.revert(ethers);
+  });
+
+  it("rejects retrieval coordinates that do not fit the recorded reference", async function () {
+    const { vectorx, verifier } = await fixture();
     await expect(
       verifier.verifyDataAvailability(
         contentHash,
@@ -104,5 +124,10 @@ describe("AvailVectorXDataAvailabilityVerifier", function () {
         proof({ leafIndex: 1n << 128n }),
       ),
     ).to.be.revertedWithCustomError(verifier, "LeafIndexTooLarge");
+
+    await vectorx.setRangeStartBlock(rangeHash, (1n << 32n) - 1n);
+    await expect(
+      verifier.verifyDataAvailability(contentHash, proof({ dataRootIndex: 0 })),
+    ).to.be.revertedWithCustomError(verifier, "BlockNumberOverflow");
   });
 });

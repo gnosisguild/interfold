@@ -336,25 +336,20 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
   if (!(await interfold.e3Programs(plan.crispProgram))) {
     throw new Error("CRISP program is not registered");
   }
-  if (config.deployMockE3Program) {
-    const expectedRetiredProgram = deployment.initialE3Program;
-    if (!plan.retiredE3Program) {
-      throw new Error(
-        "Upgrade plan does not identify the bootstrap E3 program",
+  const initialE3Program = deployment.initialE3Program;
+  if (initialE3Program.toLowerCase() !== plan.crispProgram.toLowerCase()) {
+    if (plan.retiredE3Program) {
+      equalAddress(
+        plan.retiredE3Program,
+        initialE3Program,
+        "retired initial E3 program",
       );
     }
-    equalAddress(
-      plan.retiredE3Program,
-      expectedRetiredProgram,
-      "retired bootstrap E3 program",
-    );
-    if (await interfold.e3Programs(plan.retiredE3Program)) {
-      throw new Error("Bootstrap E3 program still accepts new requests");
+    if (await interfold.e3Programs(initialE3Program)) {
+      throw new Error("Initial E3 program still accepts new requests");
     }
   } else if (plan.retiredE3Program) {
-    throw new Error(
-      "Upgrade plan retires an E3 program, but this deployment did not use the bootstrap mock",
-    );
+    throw new Error("Upgrade plan cannot retire the active CRISP program");
   }
   equalAddress(
     String(

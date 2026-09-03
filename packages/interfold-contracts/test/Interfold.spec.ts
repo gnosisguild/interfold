@@ -478,7 +478,15 @@ describe("Interfold", function () {
       await expect(interfold.unregisterE3Program(e3ProgramAddress))
         .to.be.revertedWithCustomError(interfold, "E3ProgramNotAllowed")
         .withArgs(e3ProgramAddress);
-      await expect(interfold.request(request))
+      const requestTime = await time.latest();
+      const requestAfterUnregister = {
+        ...request,
+        inputWindow: [
+          requestTime + 60,
+          requestTime + 60 + inputWindowDuration,
+        ] as [number, number],
+      };
+      await expect(interfold.request(requestAfterUnregister))
         .to.be.revertedWithCustomError(interfold, "E3ProgramNotAllowed")
         .withArgs(e3ProgramAddress);
     });
@@ -902,6 +910,47 @@ describe("Interfold", function () {
         ethers.ZeroHash,
       );
     });
+
+    it("rejects an availability receipt for a different content hash atomically", async function () {
+      const {
+        interfold,
+        request,
+        usdcToken,
+        ciphernodeRegistryContract,
+        operator1,
+        operator2,
+        operator3,
+        mocks,
+      } = await loadFixture(setup);
+      const e3Id = firstE3Id;
+
+      await makeRequest(interfold, usdcToken, {
+        ...request,
+        inputWindow: [(await time.latest()) + 20, (await time.latest()) + 100],
+      });
+      await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
+        operator1,
+        operator2,
+        operator3,
+      ]);
+      await mine(2, { interval: inputWindowDuration });
+      await mocks.e3Program.setReturnMismatchedAvailabilityHash(true);
+
+      await expect(
+        publishAvailableCiphertextOutput(
+          interfold,
+          e3Id,
+          data,
+          ciphertextCommitment,
+          proof,
+        ),
+      ).to.be.revertedWithCustomError(interfold, "InvalidOutput");
+      expect(await interfold.getE3Stage(e3Id)).to.equal(3);
+      expect((await interfold.getE3(e3Id)).ciphertextOutput).to.equal(
+        ethers.ZeroHash,
+      );
+    });
+
     it("keeps the request-time verifier after verifier rotation", async function () {
       const {
         interfold,

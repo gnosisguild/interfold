@@ -1023,6 +1023,26 @@ describe("CiphernodeRegistryOwnable", function () {
           "0xdead",
         ),
       ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
+      await expect(
+        publishPublicKey(
+          firstE3Id,
+          ethers.keccak256("0xdead"),
+          0,
+          2,
+          2,
+          "0xdead",
+        ),
+      ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
+      await expect(
+        publishPublicKey(
+          firstE3Id,
+          ethers.keccak256("0xdead"),
+          1,
+          2,
+          90 * 1024 + 1,
+          "0xdead",
+        ),
+      ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
 
       const candidate = "0xdead";
       const candidateHash = ethers.keccak256(candidate);

@@ -415,6 +415,8 @@ sol! {
         error PkCommitmentMismatch();
         error DomainBindingMismatch();
         error InvalidPublicKeyLength(uint256 supplied, uint256 maximum);
+        error InvalidPublicKeyChunk();
+        error PublicKeyPublisherNotCommitteeMember();
     }
 }
 

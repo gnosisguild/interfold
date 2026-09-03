@@ -28,7 +28,7 @@ use tracing::{info, warn};
 const OUTPUT_RETRY_DELAY: Duration = Duration::from_secs(30);
 const MAX_PUBLIC_KEY_BYTES: usize = 512 * 1024;
 const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
-pub const DATA_AVAILABILITY_RECOVERY_SCHEMA_VERSION: u32 = 1;
+pub const DATA_AVAILABILITY_RECOVERY_SCHEMA_VERSION: u32 = 2;
 
 type CandidateKey = (E3id, String, [u8; 32]);
 
@@ -47,6 +47,16 @@ fn validate_committee_public_key(
         params.plaintext_modulus,
         params.moduli.to_vec(),
     )
+}
+
+fn is_late_fact_for_terminal_e3(event: &InterfoldEventData, terminal_e3s: &HashSet<E3id>) -> bool {
+    event
+        .get_e3_id()
+        .is_some_and(|e3_id| terminal_e3s.contains(&e3_id))
+        && !matches!(
+            event,
+            InterfoldEventData::E3RequestComplete(_) | InterfoldEventData::E3Failed(_)
+        )
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -74,6 +84,7 @@ pub struct DataAvailabilityRecoveryState {
     published_keys: HashSet<E3id>,
     pending_outputs: HashMap<E3id, OutputReference>,
     resolved_outputs: HashSet<E3id>,
+    terminal_e3s: HashSet<E3id>,
 }
 
 impl Default for DataAvailabilityRecoveryState {
@@ -87,6 +98,7 @@ impl Default for DataAvailabilityRecoveryState {
             published_keys: HashSet::new(),
             pending_outputs: HashMap::new(),
             resolved_outputs: HashSet::new(),
+            terminal_e3s: HashSet::new(),
         }
     }
 }
@@ -169,6 +181,7 @@ pub struct DataAvailabilityCoordinator {
     pending_outputs: HashMap<E3id, OutputReference>,
     resolved_outputs: HashSet<E3id>,
     retrieving_outputs: HashSet<E3id>,
+    terminal_e3s: HashSet<E3id>,
     recovery: Repository<DataAvailabilityRecoveryState>,
 }
 
@@ -207,6 +220,7 @@ impl DataAvailabilityCoordinator {
             pending_outputs: recovered.pending_outputs,
             resolved_outputs: recovered.resolved_outputs,
             retrieving_outputs: HashSet::new(),
+            terminal_e3s: recovered.terminal_e3s,
             recovery,
         }
         .start();
@@ -237,6 +251,7 @@ impl DataAvailabilityCoordinator {
             published_keys: self.published_keys.clone(),
             pending_outputs: self.pending_outputs.clone(),
             resolved_outputs: self.resolved_outputs.clone(),
+            terminal_e3s: self.terminal_e3s.clone(),
         }
     }
 
@@ -298,6 +313,7 @@ impl DataAvailabilityCoordinator {
     fn start_output(&mut self, e3_id: &E3id, ctx: &mut Context<Self>) {
         if !self.effects_enabled
             || self.reader.is_none()
+            || self.terminal_e3s.contains(e3_id)
             || self.resolved_outputs.contains(e3_id)
             || !self.pending_outputs.contains_key(e3_id)
             || !self.retrieving_outputs.insert(e3_id.clone())
@@ -339,6 +355,9 @@ impl Handler<InterfoldEvent> for DataAvailabilityCoordinator {
         {
             return;
         }
+        if is_late_fact_for_terminal_e3(&event, &self.terminal_e3s) {
+            return;
+        }
         let persists_recovery = matches!(
             &event,
             InterfoldEventData::E3Requested(_)
@@ -348,7 +367,6 @@ impl Handler<InterfoldEvent> for DataAvailabilityCoordinator {
                 | InterfoldEventData::CiphertextOutputPublished(_)
                 | InterfoldEventData::EffectsEnabled(_)
                 | InterfoldEventData::E3RequestComplete(_)
-                | InterfoldEventData::E3Failed(_)
         );
         match event {
             InterfoldEventData::E3Requested(event) => {
@@ -423,8 +441,14 @@ impl Handler<InterfoldEvent> for DataAvailabilityCoordinator {
                     self.start_output(&e3_id, ctx);
                 }
             }
-            InterfoldEventData::E3RequestComplete(event) => self.cleanup(&event.e3_id),
-            InterfoldEventData::E3Failed(event) => self.cleanup(&event.e3_id),
+            InterfoldEventData::E3RequestComplete(event) => {
+                self.terminal_e3s.insert(event.e3_id.clone());
+                self.cleanup(&event.e3_id);
+            }
+            // `E3Failed` can be a local failure proposal which the chain has not accepted yet.
+            // `E3RequestComplete` is the router's durable teardown fact, so only that event makes
+            // this projection terminal and prevents later chain events from recreating state.
+            InterfoldEventData::E3Failed(_) => {}
             InterfoldEventData::Shutdown(_) => ctx.stop(),
             _ => {}
         }
@@ -460,6 +484,10 @@ impl Handler<RetrieveOutput> for DataAvailabilityCoordinator {
                 .into_actor(self)
                 .map(move |result, actor, ctx| match result {
                     Ok(bytes) => {
+                        if actor.terminal_e3s.contains(&e3_id) {
+                            actor.retrieving_outputs.remove(&e3_id);
+                            return;
+                        }
                         let event = CiphertextOutputPublished {
                             e3_id: e3_id.clone(),
                             ciphertext_output: vec![ArcBytes::from_bytes(&bytes)],
@@ -542,6 +570,18 @@ mod tests {
     }
 
     #[test]
+    fn terminal_e3_rejects_late_transport_facts() {
+        let bytes = vec![3; PUBLIC_KEY_CHUNK_BYTES + 1];
+        let event = chunk_event(&bytes, 0);
+        let terminal_e3s = HashSet::from([event.e3_id.clone()]);
+
+        assert!(is_late_fact_for_terminal_e3(
+            &InterfoldEventData::CommitteePublicKeyChunkPublished(event),
+            &terminal_e3s,
+        ));
+    }
+
+    #[test]
     fn partial_assembly_survives_the_repository_encoding() {
         let bytes = vec![3; PUBLIC_KEY_CHUNK_BYTES + 1];
         let first = chunk_event(&bytes, 0);
@@ -557,6 +597,7 @@ mod tests {
         state
             .selected_candidates
             .insert((first.e3_id, first.publisher), first.candidate_hash);
+        state.terminal_e3s.insert(E3id::new("8", 1));
 
         let encoded = bincode::serialize(&state).expect("encode recovery state");
         let recovered: DataAvailabilityRecoveryState =
@@ -564,6 +605,7 @@ mod tests {
 
         assert!(recovered.assemblies.contains_key(&key));
         assert!(recovered.assemblies[&key].bytes().is_none());
+        assert!(recovered.terminal_e3s.contains(&E3id::new("8", 1)));
     }
 
     #[test]

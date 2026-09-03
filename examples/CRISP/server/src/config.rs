@@ -140,6 +140,7 @@ impl Config {
             .try_deserialize()?;
         Self::validate_e3_param_set(config.chain_id, config.e3_param_set)?;
         Self::validate_data_availability(
+            config.chain_id,
             &config.data_availability_mode(),
             config
                 .avail_proof_lead_seconds
@@ -150,12 +151,24 @@ impl Config {
     }
 
     fn validate_data_availability(
+        chain_id: u64,
         mode: &str,
         proof_lead: u64,
         max_pending_bytes: u64,
     ) -> Result<(), ConfigError> {
-        if mode != "avail" {
+        if mode == "mock" {
+            if !matches!(chain_id, 1_337 | 31_337) {
+                return Err(ConfigError::Message(
+                    "DATA_AVAILABILITY_MODE=mock is allowed only on local development chains"
+                        .to_owned(),
+                ));
+            }
             return Ok(());
+        }
+        if mode != "avail" {
+            return Err(ConfigError::Message(format!(
+                "unsupported DATA_AVAILABILITY_MODE '{mode}'"
+            )));
         }
         if proof_lead == 0 {
             return Err(ConfigError::Message(
@@ -224,10 +237,18 @@ mod tests {
 
     #[test]
     fn avail_requires_a_nonzero_proof_lead() {
-        assert!(Config::validate_data_availability("mock", 0, 0).is_ok());
-        assert!(Config::validate_data_availability("avail", 10_800, 1024 * 1024).is_ok());
-        assert!(Config::validate_data_availability("avail", 0, 1024 * 1024).is_err());
-        assert!(Config::validate_data_availability("avail", 10_800, 1024).is_err());
+        assert!(Config::validate_data_availability(31_337, "mock", 0, 0).is_ok());
+        assert!(Config::validate_data_availability(1, "avail", 10_800, 1024 * 1024).is_ok());
+        assert!(Config::validate_data_availability(1, "avail", 0, 1024 * 1024).is_err());
+        assert!(Config::validate_data_availability(1, "avail", 10_800, 1024).is_err());
+    }
+
+    #[test]
+    fn mock_data_availability_is_local_only() {
+        assert!(Config::validate_data_availability(1, "mock", 0, 0).is_err());
+        assert!(Config::validate_data_availability(11_155_111, "mock", 0, 0).is_err());
+        assert!(Config::validate_data_availability(1_337, "mock", 0, 0).is_ok());
+        assert!(Config::validate_data_availability(31_337, "mock", 0, 0).is_ok());
     }
 
     #[test]
