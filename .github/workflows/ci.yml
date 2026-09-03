@@ -36,16 +36,10 @@ env:
 permissions:
   contents: read
 
-# The migrated jobs use RunsOn only for protected branch events.
-# Pull requests keep their previous runner targets, including enclave-ci where configured.
-# Each RunsOn label embeds run id, attempt, and job ID so jobs never share runners.
 jobs:
   detect_changes:
     timeout-minutes: 5
-    runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'detect_changes') || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     outputs:
       rust_unit_tests: ${{ steps.jobs.outputs.rust_unit_tests }}
       rust_integration_tests: ${{ steps.jobs.outputs.rust_integration_tests }}
@@ -178,10 +172,7 @@ jobs:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.rust_unit_tests == 'true'
     timeout-minutes: 20
-    runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'rust_unit_tests') || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     permissions:
       contents: read
       actions: write
@@ -290,10 +281,7 @@ jobs:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.zk_prover_integration == 'true'
     timeout-minutes: 30
-    runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'zk_prover_integration') || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -359,10 +347,7 @@ jobs:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.docker_support == 'true'
     timeout-minutes: 30
-    runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16/spot=false', github.run_id,
-      github.run_attempt, 'build_e3_support_risc0') || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     permissions:
       contents: read
       packages: write
@@ -406,10 +391,7 @@ jobs:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.docker_ciphernode == 'true'
     timeout-minutes: 60
-    runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16/spot=false', github.run_id,
-      github.run_attempt, 'build_ciphernode_image') || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     permissions:
       contents: read
       packages: write
@@ -455,10 +437,7 @@ jobs:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.contracts == 'true'
     timeout-minutes: 15
-    runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'test_contracts') || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     permissions:
       contents: read
       actions: write
@@ -516,10 +495,7 @@ jobs:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.net == 'true'
     timeout-minutes: 15
-    runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'test_net') || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     steps:
       - name: 'Check out the repo'
         uses: 'actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10' # v6
@@ -535,10 +511,7 @@ jobs:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.integration_prebuild == 'true'
     timeout-minutes: 30
-    runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'integration_prebuild') || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     steps:
       - name: 'Check out the repo'
         uses: 'actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10' # v6
@@ -734,13 +707,10 @@ jobs:
   crisp_unit:
     needs: [detect_changes, build_crisp_sdk]
     if: needs.detect_changes.outputs.crisp == 'true'
-    # Use a timeout for each leg because the workloads differ. Tests that generate a ballot prove
-    # five Noir circuits and can take several minutes. Other tests complete in seconds.
+    # Per leg, because they are not remotely the same size. Anything that generates a ballot proves
+    # five Noir circuits, which a two-vCPU runner takes minutes to do; everything else is seconds.
     timeout-minutes: ${{ matrix.timeout }}
-    runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}-{3}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'crisp_unit', matrix['test-suite']) || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     strategy:
       matrix:
         include:
@@ -1007,10 +977,7 @@ jobs:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.build_circuits == 'true'
     timeout-minutes: 30
-    runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'build_circuits') || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     permissions:
       contents: read
       actions: write
@@ -1153,10 +1120,7 @@ jobs:
     needs: [detect_changes, build_circuits]
     if: needs.detect_changes.outputs.zk == 'true'
     timeout-minutes: 30
-    runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'zk_prover_e2e') || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -1237,10 +1201,7 @@ jobs:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.build_e3_support_dev == 'true'
     timeout-minutes: 20
-    runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'build_e3_support_dev') || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -1276,10 +1237,7 @@ jobs:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.build_sdk == 'true'
     timeout-minutes: 30
-    runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'build_sdk') || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -1352,10 +1310,7 @@ jobs:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.crisp == 'true'
     timeout-minutes: 20
-    runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'build_crisp_sdk') || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -1526,10 +1481,7 @@ jobs:
     needs: [detect_changes, build_interfold_cli, build_e3_support_dev]
     if: needs.detect_changes.outputs.init == 'true'
     timeout-minutes: 10
-    runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'test_interfold_init') || 'ubuntu-latest' }}
+    runs-on: 'ubuntu-latest'
     steps:
       - name: Install pnpm
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
