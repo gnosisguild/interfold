@@ -631,7 +631,7 @@ mod tests {
             n: 20,
             z: 3,
             k: 1000,
-            lambda: 38,
+            lambda: 31,
             mult_depth: 3,
             b: 20,
             b_chi: 1,
@@ -688,7 +688,7 @@ mod tests {
     #[test]
     fn test_bfv_search_mult_depth_3_feasible() {
         let config = create_test_config();
-        let res = bfv_search(&config).expect("search succeeds for n=20 m=3 mult_depth=3 λ=38");
+        let res = bfv_search(&config).expect("search succeeds for n=20 m=3 mult_depth=3 λ=31");
         assert_eq!(res.d, 16384);
         assert_eq!(res.mult_depth, 3);
         assert_eq!(res.selected_primes.len(), 5);

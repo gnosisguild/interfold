@@ -18,8 +18,9 @@ pub global QIS: [Field; L] = [2251799813554177];
 pub global PLAINTEXT_MODULUS: Field = 68719403009;
 pub global Q_MOD_T: Field = 2415755265;
 pub global Q_MOD_T_CENTERED: Field = 2415755265;
+pub global DKG_ERROR_BOUND: Field = 6;
 
-// Parity matrix is sized for the active committee and the insecure-512 threshold QIS;
+// Parity matrix is sized for the active committee and the insecure threshold QIS;
 // see `committee/{name}/parity_insecure.nr`. Re-exported via `committee::active`.
 pub use crate::configs::committee::active::PARITY_MATRIX_INSECURE as PARITY_MATRIX;
 
@@ -70,7 +71,7 @@ pub global SHARE_ENCRYPTION_BIT_U: u32 = 1;
 pub global SHARE_ENCRYPTION_BIT_E0: u32 = 3;
 pub global SHARE_ENCRYPTION_BIT_E1: u32 = 3;
 pub global SHARE_ENCRYPTION_BIT_MSG: u32 = 36;
-pub global SHARE_ENCRYPTION_BIT_R1: u32 = 35;
+pub global SHARE_ENCRYPTION_BIT_R1: u32 = 36;
 pub global SHARE_ENCRYPTION_BIT_R2: u32 = 50;
 pub global SHARE_ENCRYPTION_BIT_P1: u32 = 9;
 pub global SHARE_ENCRYPTION_BIT_P2: u32 = 50;
@@ -80,8 +81,8 @@ pub global SHARE_ENCRYPTION_PK_BOUNDS: [Field; L] = [1125899906777088];
 pub global SHARE_ENCRYPTION_E0_BOUND: Field = 6;
 pub global SHARE_ENCRYPTION_E1_BOUND: Field = 6;
 pub global SHARE_ENCRYPTION_U_BOUND: Field = 1;
-pub global SHARE_ENCRYPTION_R1_LOW_BOUNDS: [Field; L] = [19605059183];
-pub global SHARE_ENCRYPTION_R1_UP_BOUNDS: [Field; L] = [19605059183];
+pub global SHARE_ENCRYPTION_R1_LOW_BOUNDS: [Field; L] = [256];
+pub global SHARE_ENCRYPTION_R1_UP_BOUNDS: [Field; L] = [39210118110];
 pub global SHARE_ENCRYPTION_R2_BOUNDS: [Field; L] = [1125899906777088];
 pub global SHARE_ENCRYPTION_P1_BOUNDS: [Field; L] = [256];
 pub global SHARE_ENCRYPTION_P2_BOUNDS: [Field; L] = [1125899906777088];

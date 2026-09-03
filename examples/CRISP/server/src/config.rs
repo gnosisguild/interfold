@@ -107,7 +107,7 @@ impl Config {
     fn validate_e3_param_set(chain_id: u64, param_set: u8) -> Result<(), ConfigError> {
         if param_set > 1 {
             return Err(ConfigError::Message(format!(
-                "E3_PARAM_SET must be 0 (insecure-512) or 1 (secure-8192), got {param_set}"
+                "E3_PARAM_SET must be 0 (insecure) or 1 (secure-8192), got {param_set}"
             )));
         }
         if chain_id == 1 && param_set != 1 {

@@ -26,7 +26,7 @@ rm -rf "${INTEGRATION_NOIR}/circuits"
 mkdir -p "${INTEGRATION_NOIR}/circuits" "${INTEGRATION_NOIR}/bin"
 
 if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
-  (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure-512 -o "${INTEGRATION_NOIR}/circuits")
+  (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure -o "${INTEGRATION_NOIR}/circuits")
   # `--check`: verify the committed Honk Solidity verifiers in
   # packages/interfold-contracts/contracts/verifiers/bfv/honk/ match the
   # freshly-built circuits' recursive VKs. Fails loudly on drift instead of
@@ -36,7 +36,7 @@ if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
 else
   # C5/C7 final aggregation is skipped, but DKG and decryption leaf proofs
   # still execute. Build only those two source groups for the fast CI profile.
-  (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure-512 --group dkg,threshold -o "${INTEGRATION_NOIR}/circuits")
+  (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure --group dkg,threshold -o "${INTEGRATION_NOIR}/circuits")
 fi
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -58,7 +58,7 @@ jq -n \
 cp "$(command -v bb)" "${INTEGRATION_NOIR}/bin/bb"
 chmod +x "${INTEGRATION_NOIR}/bin/bb"
 
-echo "Staged circuits under ${INTEGRATION_NOIR}/circuits/insecure-512"
+echo "Staged circuits under ${INTEGRATION_NOIR}/circuits/insecure"
 echo "Pinned noir version.json (bb=${REQUIRED_BB}, circuits=${REQUIRED_CIRCUITS})"
 echo ""
 echo "FINISHED BUILDING SOURCE-ALIGNED ZK CIRCUITS"

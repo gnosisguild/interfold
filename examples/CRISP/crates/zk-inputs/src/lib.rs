@@ -90,7 +90,7 @@ impl ZKInputsGenerator {
     /// Creates a new generator from a JavaScript-facing preset name.
     pub fn from_preset_name(name: &str) -> Result<Self> {
         let preset = match name.trim() {
-            "insecure-512" => BfvPreset::InsecureThreshold512,
+            "insecure" => BfvPreset::InsecureThreshold512,
             "secure-8192" => BfvPreset::SecureThreshold8192,
             other => BfvPreset::from_name(other)?,
         };
@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn from_preset_name_selects_the_requested_threshold_preset() {
-        let insecure = ZKInputsGenerator::from_preset_name("insecure-512")
+        let insecure = ZKInputsGenerator::from_preset_name("insecure")
             .expect("insecure preset should parse");
         let secure =
             ZKInputsGenerator::from_preset_name("secure-8192").expect("secure preset should parse");

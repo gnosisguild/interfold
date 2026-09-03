@@ -350,7 +350,7 @@ mod tests {
 
     /// Runtime feasibility guard: the `SmudgingBoundCalculator` must accept the
     /// Secure-16384 threshold parameters at the full committee (n=20) with the
-    /// configured smudging `m=z=3`, `mult_depth=3`, `lambda=38`. This encodes
+    /// configured smudging `m=z=3`, `mult_depth=3`, `lambda=31`. This encodes
     /// the `2*(B_C + n*B_sm) < Delta` correctness budget; if the constants are
     /// ever tightened beyond it, this test fails.
     #[test]

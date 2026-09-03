@@ -16,10 +16,10 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./insecure-512": {
-      "types": "./dist/presets/insecure-512.d.ts",
-      "import": "./dist/presets/insecure-512.js",
-      "default": "./dist/presets/insecure-512.js"
+    "./insecure": {
+      "types": "./dist/presets/insecure.d.ts",
+      "import": "./dist/presets/insecure.js",
+      "default": "./dist/presets/insecure.js"
     },
     "./secure-8192": {
       "types": "./dist/presets/secure-8192.d.ts",
@@ -43,16 +43,16 @@
     "compile:fold_onchain": "cd ../../circuits/bin/fold_onchain && nargo compile",
     "build:wasm": "pnpm -C ../crisp-zk-inputs build",
     "build": "pnpm build:testing",
-    "test": "pnpm stage:preset insecure-512 && vitest --run",
-    "test:core-and-ballot-proofs": "pnpm stage:preset insecure-512 && vitest --run -t \"^(?!.*generateMaskVoteProof)\"",
-    "test:mask-proofs": "pnpm stage:preset insecure-512 && vitest --run tests/vote.test.ts -t \"generateMaskVoteProof\"",
+    "test": "pnpm stage:preset insecure && vitest --run",
+    "test:core-and-ballot-proofs": "pnpm stage:preset insecure && vitest --run -t \"^(?!.*generateMaskVoteProof)\"",
+    "test:mask-proofs": "pnpm stage:preset insecure && vitest --run tests/vote.test.ts -t \"generateMaskVoteProof\"",
     "stage:preset": "node ../../scripts/stage-preset-artifacts.mjs",
     "build:presets": "node ../../scripts/build-presets.mjs",
     "build:presets:all": "node ../../scripts/build-presets.mjs --all",
     "check:presets": "node ../../scripts/check-presets.mjs",
     "prepublishOnly": "pnpm check:presets",
-    "build:testing": "pnpm build:wasm && pnpm build:presets && pnpm check:staged insecure-512 && CRISP_PRESET=insecure-512 tsup",
-    "build:prod": "pnpm build:wasm && pnpm build:presets:all && pnpm check:staged insecure-512 && pnpm check:staged secure-8192 && tsup",
+    "build:testing": "pnpm build:wasm && pnpm build:presets && pnpm check:staged insecure && CRISP_PRESET=insecure tsup",
+    "build:prod": "pnpm build:wasm && pnpm build:presets:all && pnpm check:staged insecure && pnpm check:staged secure-8192 && tsup",
     "check:staged": "node ../../scripts/check-staged-preset.mjs"
   },
   "publishConfig": {

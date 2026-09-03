@@ -2,6 +2,7 @@
 
 # run_benchmarks.sh - Main orchestration script for benchmarking circuits
 # Usage: ./run_benchmarks.sh [--config <config_file>] [--mode insecure|secure]
+#   [--preset insecure|secure-8192|secure-16384]
 #   [--committee minimum|micro|small] [--circuit <path>]
 #   [--skip-compile] [--bench-compile] [--clean] [--verbose]
 #   [--multithread-jobs N]
@@ -15,6 +16,7 @@ source "${SCRIPT_DIR}/benchmark_output_dir.sh"
 CONFIG_FILE="${BENCHMARKS_DIR}/config.json"
 CLEAN_ARTIFACTS=false
 MODE_OVERRIDE=""
+PRESET_OVERRIDE=""
 COMMITTEE_OVERRIDE=""
 SKIP_COMPILE=false
 BENCH_COMPILE=false
@@ -37,6 +39,17 @@ while [[ $# -gt 0 ]]; do
                 echo "Error: Mode must be 'insecure' or 'secure'"
                 exit 1
             fi
+            shift 2
+            ;;
+        --preset)
+            PRESET_OVERRIDE="$2"
+            case "$PRESET_OVERRIDE" in
+                insecure|secure-8192|secure-16384) ;;
+                *)
+                    echo "Error: --preset must be insecure|secure-8192|secure-16384"
+                    exit 1
+                    ;;
+            esac
             shift 2
             ;;
         --committee)
@@ -76,7 +89,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--config <config_file>] [--mode insecure|secure] [--committee minimum|micro|small] [--circuit <path>] [--skip-compile] [--bench-compile] [--clean] [--verbose] [--multithread-jobs N]"
+            echo "Usage: $0 [--config <config_file>] [--mode insecure|secure] [--preset insecure|secure-8192|secure-16384] [--committee minimum|micro|small] [--circuit <path>] [--skip-compile] [--bench-compile] [--clean] [--verbose] [--multithread-jobs N]"
             exit 1
             ;;
     esac
@@ -130,6 +143,23 @@ if [ "$MODE" != "insecure" ] && [ "$MODE" != "secure" ]; then
     exit 1
 fi
 
+if [ -n "$PRESET_OVERRIDE" ]; then
+    if [ "$PRESET_OVERRIDE" = "insecure" ]; then
+        MODE="insecure"
+    else
+        MODE="secure"
+    fi
+fi
+
+if [ -n "$PRESET_OVERRIDE" ]; then
+    PRESET_NAME="$PRESET_OVERRIDE"
+elif [ "$MODE" = "secure" ]; then
+    PRESET_NAME="secure-8192"
+else
+    PRESET_NAME="insecure"
+fi
+export BENCHMARK_PRESET="$PRESET_NAME"
+
 # Monorepo root (benchmarks live in circuits/benchmarks, so go up two levels)
 REPO_ROOT="$(cd "${BENCHMARKS_DIR}/../.." && pwd)"
 # Circuits live under circuits/bin (bin_dir is relative to benchmarks dir, e.g. ../bin)
@@ -167,18 +197,22 @@ BENCHMARK_OUTPUT_DIR_BASE="$OUTPUT_DIR_BASE"
 OUTPUT_DIR="$(benchmark_results_dir_basename "$MODE" "$OUTPUT_COMMITTEE")"
 mkdir -p "${BENCHMARKS_DIR}/${OUTPUT_DIR}/raw"
 
-# For secure mode, patch lib to use secure configs (restored at end)
+# For secure mode, patch lib to use the selected secure config (restored at end)
 DEFAULT_MOD_NR="${REPO_ROOT}/circuits/lib/src/configs/default/mod.nr"
 DEFAULT_MOD_BACKUP=""
 if [ "$MODE" = "secure" ] && [ -f "$DEFAULT_MOD_NR" ]; then
     DEFAULT_MOD_BACKUP="${DEFAULT_MOD_NR}.benchmark_backup"
     cp "$DEFAULT_MOD_NR" "$DEFAULT_MOD_BACKUP"
-    if sed --version 2>/dev/null | grep -q GNU; then
-        sed -i 's|super::insecure::|super::secure::|g' "$DEFAULT_MOD_NR"
-    else
-        sed -i '' 's|super::insecure::|super::secure::|g' "$DEFAULT_MOD_NR"
+    CONFIG_MODULE="secure_8192"
+    if [ "$PRESET_NAME" = "secure-16384" ]; then
+        CONFIG_MODULE="secure_16384"
     fi
-    echo "  Patched lib configs to secure (will restore)"
+    if sed --version 2>/dev/null | grep -q GNU; then
+        sed -i "s|super::insecure::|super::${CONFIG_MODULE}::|g" "$DEFAULT_MOD_NR"
+    else
+        sed -i '' "s|super::insecure::|super::${CONFIG_MODULE}::|g" "$DEFAULT_MOD_NR"
+    fi
+    echo "  Patched lib configs to ${CONFIG_MODULE} (will restore)"
 fi
 
 # Store git info
@@ -218,11 +252,6 @@ echo ""
 # Preflight build for selected preset so raw benches and integration stages
 # use consistent, freshly-generated circuit artifacts.
 if [ "$SKIP_COMPILE" = false ]; then
-    if [ "$MODE" = "secure" ]; then
-        PRESET_NAME="secure-8192"
-    else
-        PRESET_NAME="insecure-512"
-    fi
     ENSURE_ARGS=("$PRESET_NAME" --committee "$OUTPUT_COMMITTEE")
     if [ "$VERBOSE" = true ]; then
         ENSURE_ARGS+=(--verbose)
@@ -346,7 +375,7 @@ MT_JOBS_JSON="${BENCHMARK_MULTITHREAD_JOBS:-1}"
 load_committee_by_name "$OUTPUT_COMMITTEE" "$REPO_ROOT"
 jq -n \
     --arg mode "$MODE" \
-    --arg preset "$([ "$MODE" = "secure" ] && echo "secure-8192" || echo "insecure-512")" \
+    --arg preset "$PRESET_NAME" \
     --arg committee "$OUTPUT_COMMITTEE" \
     --argjson proof_agg true \
     --argjson multithread_jobs "$MT_JOBS_JSON" \

@@ -41,11 +41,11 @@ const PACKAGE_DIRS = ['packages/crisp-sdk', 'packages/crisp-contracts', 'package
  * leaves the workspace and client on the same exact version, so local development uses the
  * workspace and standalone deploys use the matching npm package.
  */
-const PRESETS = ['insecure-512', 'secure-8192'] as const
+const PRESETS = ['insecure', 'secure-8192'] as const
 type Preset = (typeof PRESETS)[number]
 
 const CHANNELS = {
-  testing: { tag: 'testing', presets: ['insecure-512'] as readonly Preset[], prerelease: true, tracksClient: false, bumpsRepo: false },
+  testing: { tag: 'testing', presets: ['insecure'] as readonly Preset[], prerelease: true, tracksClient: false, bumpsRepo: false },
   prod: { tag: 'latest', presets: PRESETS, prerelease: false, tracksClient: true, bumpsRepo: true },
 } as const
 
@@ -697,15 +697,15 @@ Arguments:
   version             The new version (e.g., 1.0.0, 1.0.0-beta.1)
 
 Options:
-  --channel <name>    Release channel: 'testing' (insecure-512) or 'prod' (both presets). Required.
+  --channel <name>    Release channel: 'testing' (insecure) or 'prod' (both presets). Required.
   --tag <name>        npm dist-tag override (default: the channel's tag)
   --skip-git          Skip all git operations (no commit)
   --dry-run           Show what would be done without making changes
   --help, -h          Show this help message
 
 Channels:
-  testing   npm tag 'testing', insecure-512 circuits, prerelease versions only
-  prod      npm tag 'latest',  insecure-512 and secure-8192 circuits, plain release versions only
+  testing   npm tag 'testing', insecure circuits, prerelease versions only
+  prod      npm tag 'latest',  insecure and secure-8192 circuits, plain release versions only
 
   Testing carries one preset to stay small. Production carries both presets so the client can select
   the required circuit bundle from the E3's on-chain param set.
@@ -718,7 +718,7 @@ Channels:
 
 Prerequisite:
   The SDK build stages the circuit artifacts it needs under circuits/dist/, which git does not
-  track. The testing channel stages only insecure-512. The production channel stages both presets.
+  track. The testing channel stages only insecure. The production channel stages both presets.
   The build refuses stale or missing artifacts (pnpm -C packages/crisp-sdk check:staged <preset>).
 
 Examples:

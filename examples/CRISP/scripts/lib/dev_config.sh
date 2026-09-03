@@ -20,18 +20,18 @@ load_crisp_dev_config() {
   source "$cfg"
   set +a
 
-  CRISP_BFV_PRESET="${CRISP_BFV_PRESET:-insecure-512}"
+  CRISP_BFV_PRESET="${CRISP_BFV_PRESET:-insecure}"
   CRISP_SKIP_PROOF_AGGREGATION="${CRISP_SKIP_PROOF_AGGREGATION:-true}"
 
   case "$CRISP_BFV_PRESET" in
-    insecure-512)
+    insecure)
       CRISP_E3_PARAM_SET=0
       ;;
     secure-8192)
       CRISP_E3_PARAM_SET=1
       ;;
     *)
-      echo "Invalid CRISP_BFV_PRESET='${CRISP_BFV_PRESET}' (use insecure-512 or secure-8192)" >&2
+      echo "Invalid CRISP_BFV_PRESET='${CRISP_BFV_PRESET}' (use insecure or secure-8192)" >&2
       exit 1
       ;;
   esac

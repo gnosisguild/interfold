@@ -39,14 +39,14 @@ pub mod secure_8192 {
     /// Threshold BFV parameters
     pub mod threshold {
         pub const PLAINTEXT_MODULUS: u64 = 1000000;
-        pub const MODULI: &[u64] = &[0x02000000015a0001, 0x0200000001460001, 0x0200000001210001];
-        pub const ERROR1_VARIANCE: &str = "18148392902450051384713312396360971277653333";
+        pub const MODULI: &[u64] = &[0x0400000000c00001, 0x0400000000a40001, 0x0400000000990001];
+        pub const ERROR1_VARIANCE: &str = "17723039943798878305460955570711717478400";
     }
 
     /// DKG parameters
     pub mod dkg {
-        pub const PLAINTEXT_MODULUS: u64 = 144115188098531329;
-        pub const MODULI: &[u64] = &[0x0800000000004001, 0x0800000000044001];
+        pub const PLAINTEXT_MODULUS: u64 = 288230376164294657;
+        pub const MODULI: &[u64] = &[0x1000000000024001, 0x1000000000054001];
         pub const ERROR1_VARIANCE: &str = "10";
     }
 }
@@ -63,19 +63,19 @@ pub mod secure_16384 {
     pub mod threshold {
         pub const PLAINTEXT_MODULUS: u64 = 1000;
         pub const MODULI: &[u64] = &[
-            0x0020000000c70001,
-            0x0020000000c10001,
-            0x0020000000bf0001,
-            0x0020000000b30001,
-            0x0020000000970001,
+            0x00040000009f0001,
+            0x00040000008a0001,
+            0x0004000000800001,
+            0x00040000007e0001,
+            0x0004000000750001,
         ];
-        pub const ERROR1_VARIANCE: &str = "4326914048779023023775413607683413333";
+        pub const ERROR1_VARIANCE: &str = "264093875047547791978479834453333";
     }
 
     /// DKG parameters
     pub mod dkg {
-        pub const PLAINTEXT_MODULUS: u64 = 9007199267782657;
-        pub const MODULI: &[u64] = &[0x0080000000080001, 0x0080000000130001];
+        pub const PLAINTEXT_MODULUS: u64 = 1125899917262849;
+        pub const MODULI: &[u64] = &[0x0010000000060001, 0x00100000000f0001];
         pub const ERROR1_VARIANCE: &str = "10";
     }
 }
@@ -124,11 +124,11 @@ pub mod defaults {
     /// Default insecure security parameter (λ).
     pub const DEFAULT_INSECURE_LAMBDA: usize = 2;
     /// Default secure security parameter (λ) for the 8192 presets.
-    pub const DEFAULT_SECURE_LAMBDA: usize = 50;
+    pub const DEFAULT_SECURE_LAMBDA: usize = 45;
     /// Statistical security parameter (λ) for the 16384 presets.
-    pub const DEFAULT_SECURE_16384_LAMBDA: usize = 38;
+    pub const DEFAULT_SECURE_16384_LAMBDA: usize = 31;
 
-    /// Multiplicative depth for insecure-512 preset (no l-BFV support).
+    /// Multiplicative depth for insecure preset (no l-BFV support).
     pub const INSECURE_512_MULT_DEPTH: u32 = 0;
     /// Multiplicative depth for secure-8192 preset (no l-BFV support).
     pub const SECURE_8192_MULT_DEPTH: u32 = 0;

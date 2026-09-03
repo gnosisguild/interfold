@@ -9,7 +9,7 @@
 #
 # Produces per-circuit `configs.nr` + `Prover.toml` under:
 #     dist/circuit-codegen/<preset>/<committee>/<circuit_path>/
-# for all three BFV presets (insecure-512, secure-8192, secure-16384) and all
+# for all three BFV presets (insecure, secure-8192, secure-16384) and all
 # committees (minimum, micro, small).
 #
 # This is a convenience batch wrapper: it drives the same per-circuit `zk_cli codegen`
@@ -21,7 +21,7 @@
 # path; this script is the deterministic matrix sweep.
 #
 # Usage:
-#   ./scripts/generate-circuit-configs.sh [--preset insecure-512|secure-8192|secure-16384|all] [--committee minimum|micro|small|all] [--circuits <comma-separated paths>] [--output <dir>]
+#   ./scripts/generate-circuit-configs.sh [--preset insecure|secure-8192|secure-16384|all] [--committee minimum|micro|small|all] [--circuits <comma-separated paths>] [--output <dir>]
 
 set -euo pipefail
 
@@ -32,7 +32,7 @@ cd "$REPO_ROOT"
 ZK_CLI_HELPERS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../circuits/benchmarks/scripts" && pwd)/zk_cli_helpers.sh"
 source "$ZK_CLI_HELPERS"
 
-ALL_PRESETS=("insecure-512" "secure-8192" "secure-16384")
+ALL_PRESETS=("insecure" "secure-8192" "secure-16384")
 ALL_COMMITTEES=("minimum" "micro" "small")
 DEFAULT_OUTPUT="$REPO_ROOT/dist/circuit-codegen"
 
@@ -80,7 +80,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            echo "Usage: $0 [--preset insecure-512|secure-8192|secure-16384|all] [--committee minimum|micro|small|all] [--circuits <csv>] [--output <dir>] [--strict]"
+            echo "Usage: $0 [--preset insecure|secure-8192|secure-16384|all] [--committee minimum|micro|small|all] [--circuits <csv>] [--output <dir>] [--strict]"
             exit 0
             ;;
         *)
@@ -98,7 +98,7 @@ done
 # map circuit path -> exact zk_cli preset name (BfvPreset::name, e.g. SECURE_THRESHOLD_16384)
 preset_to_zk_name() {
     case "$1" in
-        insecure-512) echo "INSECURE_THRESHOLD_512" ;;
+        insecure) echo "INSECURE_THRESHOLD_512" ;;
         secure-8192) echo "SECURE_THRESHOLD_8192" ;;
         secure-16384) echo "SECURE_THRESHOLD_16384" ;;
         *) echo "Error: unknown preset $1" >&2; return 1 ;;

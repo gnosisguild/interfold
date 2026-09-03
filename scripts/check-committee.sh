@@ -10,7 +10,7 @@
 #
 #   1. packages/interfold-contracts/scripts/protocol/constants.ts (deployment parameters)
 #   2. crates/fhe-params/src/constants.rs (ciphernode parameters)
-#   3. circuits/lib/src/configs/{insecure,secure}/threshold.nr (circuit parameters)
+#   3. circuits/lib/src/configs/{insecure,secure_8192,secure_16384}/threshold.nr (circuit parameters)
 #   4. circuits/lib/src/configs/committee/active.nr (Noir-side active committee)
 #   5. packages/interfold-contracts/scripts/utils.ts (deployment hashes and committee values)
 #   6. crates/zk-helpers/src/ciphernodes_committee.rs (committee enum values)
@@ -58,7 +58,7 @@ for required_file in \
 done
 
 for committee in minimum micro small; do
-  for artifact in parity_insecure.nr parity_secure.nr smudging.nr; do
+  for artifact in parity_insecure.nr parity_secure_8192.nr parity_secure_16384.nr smudging.nr; do
     [[ -f "circuits/lib/src/configs/committee/$committee/$artifact" ]] \
       || fail "missing generated committee artifact: $committee/$artifact"
   done
@@ -162,6 +162,7 @@ if (value < 2n) {
     current = next;
     next = (current + value / current) / 2n;
   }
+  if (current * current < value) current += 1n;
   process.stdout.write(current.toString());
 }
 ' "$1"
@@ -214,7 +215,7 @@ check_bfv_preset() {
 
   noir_degree=$(grep -E '^pub global N: u32 = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   noir_plaintext=$(grep -E '^pub global PLAINTEXT_MODULUS: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
-  noir_moduli=$(grep -E '^pub global QIS:' "$noir_file" | sed -E 's/.*= \[([^]]+)\];/\1/' | tr -d ' ')
+  noir_moduli=$(awk '/^pub global QIS:/,/];/ { gsub(/[^0-9,]/, ""); if ($0 != "") { printf "%s%s", sep, $0; sep = "," } }' "$noir_file")
   noir_error_bound=$(grep -E '^pub global PK_GENERATION_B_ENC: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   expected_error_bound=$(error_bound_for_variance "$ts_error")
 
@@ -225,8 +226,9 @@ check_bfv_preset() {
   fi
 }
 
-check_bfv_preset insecure-512 insecure512 insecure_512 insecure
-check_bfv_preset secure-8192 secure8192 secure_8192 secure
+check_bfv_preset insecure insecure512 insecure_512 insecure
+check_bfv_preset secure-8192 secure8192 secure_8192 secure_8192
+check_bfv_preset secure-16384 secure16384 secure_16384 secure_16384
 
 # 6. Every chain-supported route in utils.ts must match the Noir committee shape and the
 #    parameter/configuration hashes compiled into ActiveCryptoConfig.sol. Keep this check
@@ -305,9 +307,9 @@ check_utils_route() {
   fi
 }
 
-check_utils_route INSECURE_MINIMUM insecure-512 minimum 0
-check_utils_route INSECURE_MICRO insecure-512 micro 1
-check_utils_route INSECURE_SMALL insecure-512 small 2
+check_utils_route INSECURE_MINIMUM insecure minimum 0
+check_utils_route INSECURE_MICRO insecure micro 1
+check_utils_route INSECURE_SMALL insecure small 2
 check_utils_route SECURE_MINIMUM secure-8192 minimum 0
 check_utils_route SECURE_MICRO secure-8192 micro 1
 check_utils_route SECURE_SMALL secure-8192 small 2
@@ -400,7 +402,7 @@ format_parity_matrices_for_committee() {
 
   trap '_restore_swapped_parity_live' ERR
 
-  for variant in insecure secure; do
+  for variant in insecure secure_8192 secure_16384; do
     live="$NOIR_LIB/src/configs/committee/$committee/parity_${variant}.nr"
     fresh="$tmp/$committee/parity_${variant}.nr"
     [[ -f "$live" && -f "$fresh" ]] || continue
@@ -433,7 +435,7 @@ format_parity_matrices_for_committee() {
     return 1
   fi
 
-  for variant in insecure secure; do
+  for variant in insecure secure_8192 secure_16384; do
     live="$NOIR_LIB/src/configs/committee/$committee/parity_${variant}.nr"
     fresh="$tmp/$committee/parity_${variant}.nr"
     backup="$tmp/$committee/parity_${variant}.live.bak"
@@ -473,7 +475,7 @@ if [[ -x "$GEN_BIN" ]]; then
       [[ -d "$TMP/$c" ]] || continue
       "$GEN_BIN" --committee "$c" --output-root "$TMP" >/dev/null
       format_parity_matrices_for_committee "$c" "$TMP"
-      for variant in insecure secure; do
+      for variant in insecure secure_8192 secure_16384; do
         live="circuits/lib/src/configs/committee/$c/parity_${variant}.nr"
         fresh="$TMP/$c/parity_${variant}.nr"
         if [[ -f "$live" && -f "$fresh" ]] && ! diff -q "$live" "$fresh" >/dev/null; then

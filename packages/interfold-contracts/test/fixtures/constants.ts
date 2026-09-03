@@ -55,7 +55,7 @@ function encodeBfvParams(params: {
   );
 }
 
-/** The insecure-512 parameter set compiled into the active test circuits. */
+/** The insecure parameter set compiled into the active test circuits. */
 export const BFV_PARAMS_DEFAULT = encodeBfvParams(BFV_PARAMS.insecure512);
 
 /** The secure-8192 parameter set that Sepolia/local deployments can also register. */

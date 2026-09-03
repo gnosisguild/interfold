@@ -21,15 +21,15 @@ import { fileURLToPath } from 'node:url'
 
 const CRISP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(CRISP, '..', '..')
-const ALL_PRESETS = ['secure-8192', 'insecure-512']
+const ALL_PRESETS = ['secure-8192', 'insecure']
 
 const usage = () => {
-  console.error('Usage: build-presets.mjs [--preset insecure-512|secure-8192] [--all]')
-  console.error('Defaults to --preset insecure-512 for pull-request CI and local development.')
+  console.error('Usage: build-presets.mjs [--preset insecure|secure-8192] [--all]')
+  console.error('Defaults to --preset insecure for pull-request CI and local development.')
 }
 
 const args = process.argv.slice(2)
-let requested = 'insecure-512'
+let requested = 'insecure'
 for (let i = 0; i < args.length; i++) {
   const arg = args[i]
   if (arg === '--all') {

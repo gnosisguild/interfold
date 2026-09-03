@@ -42,7 +42,7 @@ struct Args {
     k: u128,
 
     /// Statistical security parameter λ (negl(λ)=2^{-λ}).
-    #[arg(long, default_value_t = 38u32)]
+    #[arg(long, default_value_t = 31u32)]
     lambda: u32,
 
     /// Bound B on the error distribution ψ (e.g. 20 for CBD with σ≈3.2).

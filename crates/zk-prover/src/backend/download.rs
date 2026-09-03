@@ -467,7 +467,7 @@ mod tests {
         include_manifest: bool,
         extra_entries: &[(&str, &[u8])],
     ) -> Vec<u8> {
-        let rel_path = "insecure-512/minimum/default/dkg/pk/pk.json";
+        let rel_path = "insecure/minimum/default/dkg/pk/pk.json";
         let encoder = GzEncoder::new(Vec::new(), Compression::default());
         let mut builder = Builder::new(encoder);
         append_global_pax_header(&mut builder);
@@ -532,11 +532,11 @@ mod tests {
 
         let installed_circuit = backend
             .circuits_dir
-            .join("insecure-512/minimum/default/dkg/pk/pk.json");
+            .join("insecure/minimum/default/dkg/pk/pk.json");
         write_file(&backend.circuits_dir, "installed.txt", b"installed");
         write_file(
             &backend.circuits_dir,
-            "insecure-512/minimum/default/dkg/pk/pk.json",
+            "insecure/minimum/default/dkg/pk/pk.json",
             b"previous-circuit",
         );
 
@@ -581,14 +581,10 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let circuits_dir = temp.path();
         let contents = b"flat";
-        write_file(
-            circuits_dir,
-            "insecure-512/default/dkg/pk/pk.json",
-            contents,
-        );
+        write_file(circuits_dir, "insecure/default/dkg/pk/pk.json", contents);
         let hash = sha256_hex(contents);
 
-        let data = read_manifest_file(circuits_dir, "insecure-512/default/dkg/pk/pk.json", &hash)
+        let data = read_manifest_file(circuits_dir, "insecure/default/dkg/pk/pk.json", &hash)
             .await
             .unwrap();
 
@@ -603,23 +599,15 @@ mod tests {
         let small = b"small";
         write_file(
             circuits_dir,
-            "insecure-512/minimum/default/dkg/pk/pk.json",
+            "insecure/minimum/default/dkg/pk/pk.json",
             minimum,
         );
-        write_file(
-            circuits_dir,
-            "insecure-512/small/default/dkg/pk/pk.json",
-            small,
-        );
+        write_file(circuits_dir, "insecure/small/default/dkg/pk/pk.json", small);
         let small_hash = sha256_hex(small);
 
-        let data = read_manifest_file(
-            circuits_dir,
-            "insecure-512/default/dkg/pk/pk.json",
-            &small_hash,
-        )
-        .await
-        .unwrap();
+        let data = read_manifest_file(circuits_dir, "insecure/default/dkg/pk/pk.json", &small_hash)
+            .await
+            .unwrap();
 
         assert_eq!(data, small);
     }
@@ -631,14 +619,14 @@ mod tests {
         let contents = b"minimum";
         write_file(
             circuits_dir,
-            "insecure-512/minimum/default/dkg/pk/pk.json",
+            "insecure/minimum/default/dkg/pk/pk.json",
             contents,
         );
         let hash = sha256_hex(contents);
 
         let data = read_manifest_file(
             circuits_dir,
-            "insecure-512/minimum/default/dkg/pk/pk.json",
+            "insecure/minimum/default/dkg/pk/pk.json",
             &hash,
         )
         .await

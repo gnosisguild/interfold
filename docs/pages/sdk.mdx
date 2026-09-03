@@ -240,7 +240,7 @@ const ct = await encryptNumber(42n, pk, 'INSECURE_THRESHOLD_512')
 
 `generateProof()` — and the `*AndGenProof` helpers that call it — run the user-data-encryption (UDE)
 circuits that are embedded in the package. Those artifacts are compiled with
-`--preset insecure-512 --committee minimum` (see
+`--preset insecure --committee minimum` (see
 `packages/interfold-sdk/scripts/compile-circuits.sh`), so they only match `INSECURE_THRESHOLD_512`
 and a minimum-size committee.
 

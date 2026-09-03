@@ -6,11 +6,11 @@
 
 import type { CircuitBundle, CircuitPreset } from '../circuits'
 
-export const preset: CircuitPreset = 'insecure-512'
+export const preset: CircuitPreset = 'insecure'
 
 export const loadCircuits = async (): Promise<CircuitBundle> => {
   throw new Error(
-    'The insecure-512 circuits are not included in this @crisp-e3/sdk build. ' +
-      'Install an SDK release channel that carries insecure-512.',
+    'The insecure circuits are not included in this @crisp-e3/sdk build. ' +
+      'Install an SDK release channel that carries insecure.',
   )
 }

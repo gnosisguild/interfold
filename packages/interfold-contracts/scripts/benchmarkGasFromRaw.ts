@@ -24,7 +24,7 @@ import {
   readVkRecursiveHash,
 } from "./utils";
 
-const CANONICAL_BFV_PRESET = "insecure-512";
+const CANONICAL_BFV_PRESET = "insecure";
 const COMMITTED_HONK_DIR = path.join(
   getRepoRoot(),
   "packages/interfold-contracts/contracts/verifiers/bfv/honk",
@@ -79,7 +79,7 @@ function readBenchmarkPreset(foldedArtifact?: unknown): string {
 }
 
 /**
- * Committed Honk `.sol` files embed the insecure-512 aggregator VK. Secure benchmark
+ * Committed Honk `.sol` files embed the insecure aggregator VK. Secure benchmark
  * proofs need verifiers generated from the active circuits/bin preset.
  */
 function ensureHonkVerifierContractDir(preset: string): string {
@@ -355,7 +355,7 @@ async function main() {
   const honkDir = ensureHonkVerifierContractDir(benchmarkPreset);
   if (benchmarkPreset !== CANONICAL_BFV_PRESET) {
     console.log(
-      `[benchmarkGasFromRaw] Using preset ${benchmarkPreset} Honk verifiers (not committed insecure-512 .sol).`,
+      `[benchmarkGasFromRaw] Using preset ${benchmarkPreset} Honk verifiers (not committed insecure .sol).`,
     );
   }
 

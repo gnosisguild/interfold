@@ -93,7 +93,7 @@ export function getRepoRoot(): string {
 
 /**
  * <generated-committee-doc>
- * Active insecure-512 / minimum committee layout for BFV aggregator verifiers.
+ * Active insecure / minimum committee layout for BFV aggregator verifiers.
  * Must match `lib::configs::default::{H, T}` in compiled circuits.
  * Minimum committee: N=3, T=1, H=2.
  * </generated-committee-doc>
@@ -104,7 +104,7 @@ export const ACTIVE_BFV_PARAM_SET = 0;
 export const ACTIVE_BFV_COMMITTEE_SIZE = 0;
 export const ACTIVE_BFV_COMMITTEE_N = 3;
 
-export type BfvArtifactPreset = "insecure-512" | "secure-8192";
+export type BfvArtifactPreset = "insecure" | "secure-8192";
 export type BfvCommittee = "minimum" | "micro" | "small";
 
 export interface ActiveBfvConfig {
@@ -124,9 +124,9 @@ const INSECURE_PARAM_SET_HASH =
 const INSECURE_CONFIG_ID =
   "0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78";
 const SECURE_PARAM_SET_HASH =
-  "0xd7068fdcc1910f5e49c8b05530cf74f876cadee2a1caf797a40b1ae53ae143ec";
+  "0x80775a19b6126a12943f9c1c53f92299f0c92ece819b625026ab1406bbbe0721";
 const SECURE_CONFIG_ID =
-  "0xd9c86e581f8291ffb5b63595600e8d096ed30b16e2e0a6634a76c22b1f58fb4e";
+  "0x2af9e43a7b95b11300b6185f3ffaece530facafd2ce98c5e1a1cece8a80ad3cb";
 
 function bfvConfig(
   preset: BfvArtifactPreset,
@@ -145,19 +145,19 @@ function bfvConfig(
 }
 
 export const INSECURE_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
-  "insecure-512",
+  "insecure",
   "minimum",
   { committeeSize: 0, h: 2, t: 1, n: 3 },
 );
 
 export const INSECURE_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
-  "insecure-512",
+  "insecure",
   "micro",
   { committeeSize: 1, h: 5, t: 4, n: 9 },
 );
 
 export const INSECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
-  "insecure-512",
+  "insecure",
   "small",
   { committeeSize: 2, h: 10, t: 9, n: 19 },
 );

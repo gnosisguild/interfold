@@ -209,7 +209,7 @@ sdk.onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, (e) =>
 | --------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------- |
 | E3 request reverts          | Insufficient fee token approval          | Call `sdk.approveFeeToken()` first                                           |
 | Committee never forms       | Not enough active ciphernodes on Sepolia | Check the registry for active operators                                      |
-| Proof generation fails      | Preset mismatch with the SDK's circuits  | The embedded circuits are `insecure-512`; compile your own for other presets |
+| Proof generation fails      | Preset mismatch with the SDK's circuits  | The embedded circuits are `insecure`; compile your own for other presets |
 | Decryption produces garbage | BFV preset mismatch                      | Verify both SDK and E3 request use `INSECURE_THRESHOLD_512` / `paramSet: 0`  |
 
 ---

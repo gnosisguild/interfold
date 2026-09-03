@@ -225,7 +225,7 @@ pub struct PresetSearchDefaults {
     pub b_chi: u128,
     /// Multiplicative depth for l-BFV smudging noise computation.
     ///
-    /// Set to 0 for presets without l-BFV support (insecure-512, secure-8192).
+    /// Set to 0 for presets without l-BFV support (insecure, secure-8192).
     /// Set to 3 for secure-16384.
     pub mult_depth: u32,
 }
@@ -349,7 +349,7 @@ impl BfvPreset {
         }
     }
 
-    /// Parses "insecure"|"secure" or λ (e.g. 2|80) into the threshold preset. Uses [`PAIR_PRESETS`] and [`PresetMetadata`].
+    /// Parses `insecure`, `secure-8192`, `secure-16384`, or a preset λ into the threshold preset.
     pub fn from_security_config_name(name: &str) -> Result<Self, PresetError> {
         let s = name.trim();
         if let Ok(lambda) = s.parse::<usize>() {
@@ -359,12 +359,12 @@ impl BfvPreset {
                 .find(|p| p.metadata().lambda == lambda)
                 .ok_or_else(|| PresetError::UnknownPreset(format!("lambda {lambda}")));
         }
-        let tier: SecurityTier = s.parse()?;
-        Self::PAIR_PRESETS
-            .iter()
-            .copied()
-            .find(|p| p.metadata().security == tier)
-            .ok_or_else(|| PresetError::UnknownPreset(name.to_string()))
+        match s.to_ascii_lowercase().as_str() {
+            "insecure" => Ok(Self::InsecureThreshold512),
+            "secure-8192" => Ok(Self::SecureThreshold8192),
+            "secure-16384" => Ok(Self::SecureThreshold16384),
+            _ => Err(PresetError::UnknownPreset(name.to_string())),
+        }
     }
 
     pub fn list() -> Vec<&'static str> {
@@ -511,18 +511,20 @@ impl BfvPreset {
         self.lambda_config().into_lambda()
     }
 
-    /// Returns the base directory name for circuit artifacts (e.g. `"insecure-512"`, `"secure-8192"`).
+    /// Returns the base directory name for circuit artifacts (e.g. `"insecure"`, `"secure-8192"`).
     /// Threshold and DKG presets at the same degree share the same compiled circuits.
     pub fn artifacts_dir(&self) -> String {
         let meta = self.metadata();
-        format!("{}-{}", meta.security.as_config_str(), meta.degree)
+        match self {
+            BfvPreset::InsecureThreshold512 | BfvPreset::InsecureDkg512 => "insecure".to_string(),
+            _ => format!("{}-{}", meta.security.as_config_str(), meta.degree),
+        }
     }
 
-    /// Returns the Noir config module name for this preset, e.g. `"insecure-512"`,
+    /// Returns the Noir config module name for this preset, e.g. `"insecure"`,
     /// `"secure-8192"`, `"secure-16384"`. Codegen/zk-cli routing must use
-    /// this (not [`SecurityTier::as_config_str`]) so that `secure-8192` and
-    /// `secure-16384` resolve to distinct `configs::{module}` rather than both
-    /// collapsing onto `configs::secure`.
+    /// this (not [`SecurityTier::as_config_str`]) so that each preset resolves to a distinct
+    /// `configs::{module}` namespace.
     ///
     /// Identical to [`BfvPreset::artifacts_dir`]; the two names are kept in sync
     /// because artifacts and Noir configs are organized the same way.
@@ -530,10 +532,19 @@ impl BfvPreset {
         self.artifacts_dir()
     }
 
+    /// Returns the valid Noir module name for this preset's generated configs.
+    pub fn noir_config_module(&self) -> &'static str {
+        match self {
+            BfvPreset::InsecureThreshold512 | BfvPreset::InsecureDkg512 => "insecure",
+            BfvPreset::SecureThreshold8192 | BfvPreset::SecureDkg8192 => "secure_8192",
+            BfvPreset::SecureThreshold16384 | BfvPreset::SecureDkg16384 => "secure_16384",
+        }
+    }
+
     /// Returns the per-committee artifact directory: `"{preset}/{committee}"`.
     ///
     /// Use this at runtime so each committee size resolves to its own compiled artifacts
-    /// (e.g. `"secure-8192/small"`, `"insecure-512/micro"`).
+    /// (e.g. `"secure-8192/small"`, `"insecure/micro"`).
     pub fn artifacts_dir_for_committee<C: AsRef<str>>(&self, committee: C) -> String {
         format!("{}/{}", self.artifacts_dir(), committee.as_ref())
     }
@@ -782,11 +793,8 @@ mod tests {
 
     #[test]
     fn test_artifacts_dir() {
-        assert_eq!(
-            BfvPreset::InsecureThreshold512.artifacts_dir(),
-            "insecure-512"
-        );
-        assert_eq!(BfvPreset::InsecureDkg512.artifacts_dir(), "insecure-512");
+        assert_eq!(BfvPreset::InsecureThreshold512.artifacts_dir(), "insecure");
+        assert_eq!(BfvPreset::InsecureDkg512.artifacts_dir(), "insecure");
         assert_eq!(
             BfvPreset::SecureThreshold8192.artifacts_dir(),
             "secure-8192"

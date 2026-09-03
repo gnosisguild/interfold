@@ -3,7 +3,7 @@
 # generate_prover_toml.sh - Generates Prover.toml (and configs.nr) for a circuit via zk_cli
 # Usage: ./generate_prover_toml.sh <circuit_path> <mode> <repo_root>
 #   circuit_path: e.g. "dkg/pk" or "threshold/share_decryption"
-#   mode: "insecure" or "secure"
+#   mode: "insecure" or "secure"; set BENCHMARK_PRESET for the exact BFV preset
 #   repo_root: absolute path to repository root (where Cargo.toml and circuits/ live)
 
 set -e
@@ -25,8 +25,12 @@ if [ "$MODE" != "insecure" ] && [ "$MODE" != "secure" ]; then
     exit 1
 fi
 
-PRESET="insecure"
-[ "$MODE" = "secure" ] && PRESET="secure"
+PRESET="INSECURE_THRESHOLD_512"
+if [ "${BENCHMARK_PRESET:-}" = "secure-8192" ]; then
+    PRESET="SECURE_THRESHOLD_8192"
+elif [ "${BENCHMARK_PRESET:-}" = "secure-16384" ]; then
+    PRESET="SECURE_THRESHOLD_16384"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=load_default_committee.sh

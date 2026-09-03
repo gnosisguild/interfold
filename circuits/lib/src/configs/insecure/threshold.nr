@@ -24,6 +24,11 @@ pub global PLAINTEXT_MODULUS: Field = 100;
 pub global Q_MOD_T: Field = 93;
 pub global Q_MOD_T_CENTERED: Field = -7;
 pub global Q_INVERSE_MOD_T: Field = 57;
+pub global PARAMS_SEARCH_Z: Field = 1024;
+pub global PARAMS_LAMBDA: u32 = 2;
+pub global PARAMS_TWO_POW_LAMBDA_PLUS_ONE: Field = 8;
+pub global PARAMS_MULT_DEPTH: u32 = 0;
+pub global PARAMS_SMUDGING_B_ENC: Field = 6;
 
 pub global CRP: [Polynomial<N>; L] = [
     Polynomial::new([
@@ -1105,21 +1110,21 @@ pub global USER_DATA_ENCRYPTION_BIT_CT: u32 = 35;
 pub global USER_DATA_ENCRYPTION_BIT_U: u32 = 1;
 pub global USER_DATA_ENCRYPTION_BIT_E0: u32 = 5;
 pub global USER_DATA_ENCRYPTION_BIT_E1: u32 = 5;
-pub global USER_DATA_ENCRYPTION_BIT_K: u32 = 6;
+pub global USER_DATA_ENCRYPTION_BIT_K: u32 = 7;
 pub global USER_DATA_ENCRYPTION_BIT_R1: u32 = 9;
 pub global USER_DATA_ENCRYPTION_BIT_R2: u32 = 35;
 pub global USER_DATA_ENCRYPTION_BIT_P1: u32 = 9;
 pub global USER_DATA_ENCRYPTION_BIT_P2: u32 = 35;
 
 pub global USER_DATA_ENCRYPTION_K0IS: [Field; L] = [61160268678, 8933500027];
-pub global USER_DATA_ENCRYPTION_PK_BOUNDS: [Field; L] = [68719403008, 68719230976];
+pub global USER_DATA_ENCRYPTION_PK_BOUNDS: [Field; L] = [34359701504, 34359615488];
 pub global USER_DATA_ENCRYPTION_E0_BOUND: Field = 20;
 pub global USER_DATA_ENCRYPTION_E1_BOUND: Field = 20;
 pub global USER_DATA_ENCRYPTION_U_BOUND: Field = 1;
-pub global USER_DATA_ENCRYPTION_K1_LOW_BOUND: Field = 50;
-pub global USER_DATA_ENCRYPTION_K1_UP_BOUND: Field = 49;
-pub global USER_DATA_ENCRYPTION_R1_LOW_BOUNDS: [Field; L] = [301, 263];
-pub global USER_DATA_ENCRYPTION_R1_UP_BOUNDS: [Field; L] = [300, 263];
+pub global USER_DATA_ENCRYPTION_K1_LOW_BOUND: Field = 0;
+pub global USER_DATA_ENCRYPTION_K1_UP_BOUND: Field = 99;
+pub global USER_DATA_ENCRYPTION_R1_LOW_BOUNDS: [Field; L] = [256, 256];
+pub global USER_DATA_ENCRYPTION_R1_UP_BOUNDS: [Field; L] = [345, 269];
 pub global USER_DATA_ENCRYPTION_R2_BOUNDS: [Field; L] = [34359701504, 34359615488];
 pub global USER_DATA_ENCRYPTION_P1_BOUNDS: [Field; L] = [256, 256];
 pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] = [34359701504, 34359615488];
@@ -1146,7 +1151,7 @@ pub global USER_DATA_ENCRYPTION_CT0_CONFIGS: UserDataEncryptionCt0Configs<N, L> 
 -------------------------------------
 user_data_encryption_ct1 (CIRCUIT B - CT1 ENCRYPTION)
 -------------------------------------
-***--------------------------------*/
+************************************/
 
 pub global USER_DATA_ENCRYPTION_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> = UserDataEncryptionCt1Configs::new(
     QIS,
@@ -1184,6 +1189,7 @@ pub global THRESHOLD_SHARE_DECRYPTION_CONFIGS: ShareDecryptionConfigs<L> = Share
 decrypted_shares_aggregation (CIRCUIT 7)
 -------------------------------------
 ************************************/
+
 pub global DECRYPTED_SHARES_AGGREGATION_BIT_NOISE: u32 = 65;
 pub global DECRYPTED_SHARES_AGGREGATION_BIT_D_NATIVE: u32 = 36;
 

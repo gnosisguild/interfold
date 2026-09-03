@@ -110,10 +110,14 @@ RAW_DIR="${OUTPUT_DIR}/raw"
 
 # Ensure recursive/noir VK variants exist for integration-based folded-proof export.
 # This populates target artifacts required by `test_trbfv_actor`.
-if [ "$MODE" = "secure" ]; then
+if [ "${BENCHMARK_PRESET:-}" = "secure-16384" ]; then
+    PRESET_NAME="secure-16384"
+elif [ "${BENCHMARK_PRESET:-}" = "secure-8192" ]; then
+    PRESET_NAME="secure-8192"
+elif [ "$MODE" = "secure" ]; then
     PRESET_NAME="secure-8192"
 else
-    PRESET_NAME="insecure-512"
+    PRESET_NAME="insecure"
 fi
 
 require_preset_artifacts() {
@@ -137,7 +141,7 @@ else
     echo "  [gas] Build artifacts ready."
 
     # Align circuits/bin with PRESET_NAME, then verify preset artifacts.
-    # insecure: also diff committed Honk .sol (pinned to insecure-512).
+    # insecure: also diff committed Honk .sol (pinned to insecure).
     # secure:   committed .sol stay insecure-only; gas replay deploys fresh verifiers from bin.
     echo "  [gas] Verifying circuit preset '${PRESET_NAME}' (dist stamp + circuits/bin)..."
     if [ "$VERBOSE" = true ]; then

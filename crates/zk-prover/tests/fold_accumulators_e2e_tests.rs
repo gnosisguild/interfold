@@ -196,7 +196,7 @@ async fn recursive_aggregation_default_artifacts_staged() {
 
     let base = backend
         .circuits_dir
-        .join("insecure-512")
+        .join("insecure")
         .join("minimum")
         .join("default")
         .join(CircuitName::C3Fold.dir_path());
@@ -233,7 +233,7 @@ async fn recursive_aggregation_c6_fold_kernel_artifacts_staged() {
 
     let base = backend
         .circuits_dir
-        .join("insecure-512")
+        .join("insecure")
         .join("minimum")
         .join("default")
         .join(CircuitName::C6FoldKernel.dir_path());
@@ -274,7 +274,7 @@ async fn node_fold_pipeline_recursive_aggregation_artifacts_staged() {
 
     let preset_base = backend
         .circuits_dir
-        .join("insecure-512")
+        .join("insecure")
         .join("minimum")
         .join("default");
     for &c in NODE_FOLD_PIPELINE {

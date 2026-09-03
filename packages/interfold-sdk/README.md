@@ -488,7 +488,7 @@ production, together with your own `secure-8192` circuit artifacts (see
 
 `generateProof()`, `encryptNumberAndGenProof()`, and `encryptVectorAndGenProof()` run the
 user-data-encryption (UDE) circuits bundled in this package. Those artifacts are compiled with
-`--preset insecure-512 --committee minimum` (`scripts/compile-circuits.sh`), so they only match
+`--preset insecure --committee minimum` (`scripts/compile-circuits.sh`), so they only match
 `'INSECURE_THRESHOLD_512'` and a minimum-size committee. With `'SECURE_THRESHOLD_8192'`,
 `encryptNumberAndGenInputs()` returns N=8192 circuit inputs that the bundled N=512 circuits cannot
 execute.
