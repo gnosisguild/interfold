@@ -967,7 +967,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -978,7 +978,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2911,7 +2911,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2986,7 +2986,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 [[package]]
 name = "e3-bfv-client"
 version = "0.14.0"
-source = "git+https://github.com/theinterfold/interfold?rev=10ac245af1ecb8873a332bb188dad2972903ae18#10ac245af1ecb8873a332bb188dad2972903ae18"
+source = "git+https://github.com/theinterfold/interfold?rev=3ef513da7eb1daef68031681516fc9363c5011b7#3ef513da7eb1daef68031681516fc9363c5011b7"
 dependencies = [
  "anyhow",
  "e3-fhe-params",
@@ -3001,7 +3001,7 @@ dependencies = [
 [[package]]
 name = "e3-compute-provider"
 version = "0.14.0"
-source = "git+https://github.com/theinterfold/interfold?rev=10ac245af1ecb8873a332bb188dad2972903ae18#10ac245af1ecb8873a332bb188dad2972903ae18"
+source = "git+https://github.com/theinterfold/interfold?rev=3ef513da7eb1daef68031681516fc9363c5011b7#3ef513da7eb1daef68031681516fc9363c5011b7"
 dependencies = [
  "ark-bn254 0.4.0",
  "ark-ff 0.4.2",
@@ -3023,7 +3023,7 @@ dependencies = [
 [[package]]
 name = "e3-fhe-params"
 version = "0.14.0"
-source = "git+https://github.com/theinterfold/interfold?rev=10ac245af1ecb8873a332bb188dad2972903ae18#10ac245af1ecb8873a332bb188dad2972903ae18"
+source = "git+https://github.com/theinterfold/interfold?rev=3ef513da7eb1daef68031681516fc9363c5011b7#3ef513da7eb1daef68031681516fc9363c5011b7"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -3041,7 +3041,7 @@ dependencies = [
 [[package]]
 name = "e3-parity-matrix"
 version = "0.14.0"
-source = "git+https://github.com/theinterfold/interfold?rev=10ac245af1ecb8873a332bb188dad2972903ae18#10ac245af1ecb8873a332bb188dad2972903ae18"
+source = "git+https://github.com/theinterfold/interfold?rev=3ef513da7eb1daef68031681516fc9363c5011b7#3ef513da7eb1daef68031681516fc9363c5011b7"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -3052,7 +3052,7 @@ dependencies = [
 [[package]]
 name = "e3-polynomial"
 version = "0.14.0"
-source = "git+https://github.com/theinterfold/interfold?rev=10ac245af1ecb8873a332bb188dad2972903ae18#10ac245af1ecb8873a332bb188dad2972903ae18"
+source = "git+https://github.com/theinterfold/interfold?rev=3ef513da7eb1daef68031681516fc9363c5011b7#3ef513da7eb1daef68031681516fc9363c5011b7"
 dependencies = [
  "fhe-math",
  "num-bigint",
@@ -3064,7 +3064,7 @@ dependencies = [
 [[package]]
 name = "e3-safe"
 version = "0.14.0"
-source = "git+https://github.com/theinterfold/interfold?rev=10ac245af1ecb8873a332bb188dad2972903ae18#10ac245af1ecb8873a332bb188dad2972903ae18"
+source = "git+https://github.com/theinterfold/interfold?rev=3ef513da7eb1daef68031681516fc9363c5011b7#3ef513da7eb1daef68031681516fc9363c5011b7"
 dependencies = [
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
@@ -3149,7 +3149,7 @@ dependencies = [
 [[package]]
 name = "e3-zk-helpers"
 version = "0.14.0"
-source = "git+https://github.com/theinterfold/interfold?rev=10ac245af1ecb8873a332bb188dad2972903ae18#10ac245af1ecb8873a332bb188dad2972903ae18"
+source = "git+https://github.com/theinterfold/interfold?rev=3ef513da7eb1daef68031681516fc9363c5011b7#3ef513da7eb1daef68031681516fc9363c5011b7"
 dependencies = [
  "anyhow",
  "ark-bn254 0.5.0",
@@ -3376,7 +3376,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4933,7 +4933,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5598,7 +5598,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
 dependencies = [
  "heck",
- "itertools 0.11.0",
+ "itertools 0.14.0",
  "log",
  "multimap",
  "petgraph 0.8.3",
@@ -5617,7 +5617,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.11.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -5630,7 +5630,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.11.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -6458,7 +6458,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7237,7 +7237,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8022,7 +8022,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

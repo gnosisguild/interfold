@@ -80,16 +80,16 @@ impl ComputeProvider for BoundlessProvider {
     }
 }
 
-fn encode_input(input: &[u8]) -> Result<Vec<u8>, Error> {
-    Ok(bytemuck::pod_collect_to_vec(&risc0_zkvm::serde::to_vec(
-        input,
-    )?))
-}
-
 fn encode_journal(result: &ComputeJournal) -> Result<Vec<u8>, Error> {
     Ok(bytemuck::pod_collect_to_vec(&risc0_zkvm::serde::to_vec(
         result,
     )?))
+}
+
+fn encode_guest_input(input: &ComputeGuestInput) -> Result<Vec<u8>, Error> {
+    // Boundless passes these bytes directly to guest stdin. A RISC Zero serde wrapper would store
+    // each bincode byte in a 32-bit word and would add no integrity or decoding guarantee.
+    serialize(input).context("Failed to serialize guest input")
 }
 
 /// Dev mode: return fake proof without executing
@@ -306,8 +306,7 @@ async fn boundless_prove_inner(
         domain: domain.clone(),
         input: input.clone(),
     };
-    let serialized_input = serialize(&guest_input).context("Failed to serialize guest input")?;
-    let input_bytes = encode_input(&serialized_input).context("Failed to encode input")?;
+    let input_bytes = encode_guest_input(&guest_input)?;
 
     let program_url = std::env::var("PROGRAM_URL").ok();
     let stdin_size = input_bytes.len();
@@ -461,7 +460,7 @@ impl ComputeProvider for Risc0Provider {
             domain: self.domain.clone(),
             input: input.clone(),
         };
-        let encoded_input = encode_input(&serialize(&guest_input).unwrap()).unwrap();
+        let encoded_input = encode_guest_input(&guest_input).unwrap();
         let env = ExecutorEnv::builder()
             .write_slice(&encoded_input)
             .build()
@@ -574,6 +573,7 @@ pub fn encode_compute_proof(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bincode::deserialize;
     use risc0_zkvm::sha::{Impl, Sha256};
 
     fn risc0_vec32(value: &[u8]) -> Vec<u8> {
@@ -620,6 +620,42 @@ mod tests {
         assert!(error
             .to_string()
             .contains("BOUNDLESS_LOCK_TIMEOUT_SECS must be greater than zero"));
+    }
+
+    #[test]
+    fn guest_input_uses_direct_bincode() {
+        let input = ComputeGuestInput {
+            domain: ComputeDomain::new(
+                31_337,
+                "0x1111111111111111111111111111111111111111",
+                "7",
+                &[0x22; 32],
+                &[0x33; 32],
+            )
+            .unwrap(),
+            input: ComputeInput {
+                fhe_inputs: FHEInputs {
+                    ciphertexts: vec![(vec![0xaa; 32], 0)],
+                    params: vec![0xbb; 16],
+                },
+                published: vec![PublishedData {
+                    commitment: Some([0xcc; 32]),
+                    metadata: vec![0xdd; 25],
+                }],
+            },
+        };
+
+        let encoded = encode_guest_input(&input).unwrap();
+        let decoded: ComputeGuestInput = deserialize(&encoded).unwrap();
+        let legacy: Vec<u8> =
+            bytemuck::pod_collect_to_vec(&risc0_zkvm::serde::to_vec(&encoded).unwrap());
+
+        assert_eq!(decoded.domain.e3_id, input.domain.e3_id);
+        assert_eq!(
+            decoded.input.fhe_inputs.ciphertexts,
+            input.input.fhe_inputs.ciphertexts
+        );
+        assert_eq!(legacy.len(), encoded.len() * 4 + 4);
     }
 
     #[test]

@@ -13,7 +13,7 @@ e3-support-app = { path = "./app" }
 e3-support-host = { path = "./host" }
 e3-user-program = { path = "./program" }
 e3-support-types = { path = "./types" }
-e3-fhe-params = { git = "https://github.com/theinterfold/interfold", rev = "10ac245af1ecb8873a332bb188dad2972903ae18" }
+e3-fhe-params = { git = "https://github.com/theinterfold/interfold", rev = "3ef513da7eb1daef68031681516fc9363c5011b7" }
 
 methods = { path = "./methods" }
 alloy-primitives = { version = "1.3", default-features = false, features = [
@@ -51,8 +51,8 @@ sha3 = "=0.10.8"
 # image ID. Bump it only together with a reproducible rebuild of
 # crates/support/contracts/ImageID.sol and a complete provenance manifest.
 #
-# Why this revision: 10ac245a is the durable main commit used as the base of the Avail branch. It
-# contains the compute-input binding and secure-parameter fixes that the guest must run.
+# Why this revision: 3ef513da contains the compute-input binding, secure-parameter fixes, and
+# shared-parameter commitment path that the guest must run.
 #
 # It replaces c2097da6, the scope commit of the 2026-08-17 Zenith protocol audit. Sitting at the
 # audited baseline read as the conservative choice and was not: the audit covered six Solidity
@@ -64,7 +64,7 @@ sha3 = "=0.10.8"
 fhe = { package = "fhe", git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
 fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
 fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
-e3-compute-provider = { git = "https://github.com/theinterfold/interfold", rev = "10ac245af1ecb8873a332bb188dad2972903ae18" }
+e3-compute-provider = { git = "https://github.com/theinterfold/interfold", rev = "3ef513da7eb1daef68031681516fc9363c5011b7" }
 tokio = { version = "=1.46.1", features = ["full"] }
 rand = { version = "=0.9.2" }
 tracing-subscriber = { version = "=0.3.20", features = ["env-filter"] }
