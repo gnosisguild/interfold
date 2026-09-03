@@ -204,13 +204,14 @@ class VerifierGenerator {
       return
     }
 
-    // Clean stale nargo build caches unless caller just ran build:circuits (--no-compile / --no-clean-targets).
-    if (!this.options.noCleanTargets && this.options.compile !== false) {
-      this.cleanTargetDirs(circuits)
-    }
-
     if (this.options.check && this.options.clean) {
       throw new Error('--check and --clean are mutually exclusive (check must not mutate the working tree)')
+    }
+
+    // Clean stale nargo build caches only when writing. Check mode must preserve the existing
+    // artifacts so a verifier drift check cannot destroy the inputs it is supposed to inspect.
+    if (!this.options.check && !this.options.noCleanTargets && this.options.compile !== false) {
+      this.cleanTargetDirs(circuits)
     }
 
     // In write mode, prepare output directory.

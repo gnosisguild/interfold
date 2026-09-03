@@ -1,0 +1,7 @@
+[package]
+name = "chonk_c3_tail_kernel"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+ivc_types = { path = "../ivc_types" }

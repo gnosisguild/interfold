@@ -128,7 +128,7 @@ pub enum CircuitName {
     C6Fold,
     /// Bootstrap circuit for [`CircuitName::C6Fold`] genesis accumulator proof (same ABI, no acc verify).
     C6FoldKernel,
-    /// Ad-hoc: final sk `c3_fold` + final e_sm `c3_fold`.
+    /// C3a/C3b wrapper; the Chonk path supplies ordinary proofs from `c3_chunk_fold`.
     C3abFold,
     /// Ad-hoc: C4a + C4b.
     C4abFold,
@@ -154,6 +154,10 @@ pub enum CircuitName {
     ESmC2ChunkFinalize,
     /// Combines type-bound terminal C2a and C2b chunk proofs.
     C2abChunkFold,
+    /// Legacy ad-hoc C3 wrapper for sequential UltraHonk `c3_fold` proofs.
+    C3abFoldSequential,
+    /// Root wrapper that closes two Chonk C3 tube proofs into one ordinary C3 proof.
+    C3ChunkFold,
 }
 
 impl CircuitName {
@@ -177,6 +181,8 @@ impl CircuitName {
             CircuitName::C6Fold => "c6_fold",
             CircuitName::C6FoldKernel => "c6_fold_kernel",
             CircuitName::C3abFold => "c3ab_fold",
+            CircuitName::C3abFoldSequential => "c3ab_fold_sequential",
+            CircuitName::C3ChunkFold => "c3_chunk_fold",
             CircuitName::C4abFold => "c4ab_fold",
             CircuitName::NodeFold => "node_fold",
             CircuitName::NodesFold => "nodes_fold",
@@ -206,6 +212,8 @@ impl CircuitName {
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
             | CircuitName::C3abFold
+            | CircuitName::C3abFoldSequential
+            | CircuitName::C3ChunkFold
             | CircuitName::C4abFold
             | CircuitName::NodeFold
             | CircuitName::NodesFold
@@ -255,6 +263,8 @@ impl CircuitName {
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
             | CircuitName::C3abFold
+            | CircuitName::C3abFoldSequential
+            | CircuitName::C3ChunkFold
             | CircuitName::C4abFold
             | CircuitName::NodeFold
             | CircuitName::NodesFold

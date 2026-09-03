@@ -1,0 +1,8 @@
+[package]
+name = "chonk_c3_batch_app"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+bb_proof_verification = { git = "https://github.com/AztecProtocol/aztec-packages/", tag = "v5.1.0", directory = "barretenberg/noir/bb_proof_verification" }
+ivc_types = { path = "../ivc_types" }

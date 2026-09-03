@@ -793,6 +793,7 @@ fn handle_dkg_aggregation_proof(
         c5_proof: &req.c5_proof,
         party_ids: &req.party_ids,
         committee_addresses: &req.committee_addresses,
+        c3_overrides: None,
     };
     let proof = prove_dkg_aggregation(
         prover,

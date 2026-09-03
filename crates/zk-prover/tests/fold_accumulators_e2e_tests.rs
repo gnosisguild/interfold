@@ -62,6 +62,7 @@ fn recursive_aggregation_compiled_json_path(circuit: CircuitName) -> PathBuf {
 const NODE_FOLD_PIPELINE: &[CircuitName] = &[
     CircuitName::C2abChunkFold,
     CircuitName::C3abFold,
+    CircuitName::C3abFoldSequential,
     CircuitName::C4abFold,
     CircuitName::NodeFold,
 ];
@@ -315,20 +316,24 @@ async fn setup_c3_fold_with_inner_share_encryption() -> Option<(
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C3Fold).await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C3FoldKernel).await;
 
-    let sample_a = ShareEncryptionCircuitData::generate_sample(
+    let mut sample_a = ShareEncryptionCircuitData::generate_sample(
         preset,
         committee.clone(),
         DkgInputType::SecretKey,
         sd.z,
     )
     .ok()?;
-    let sample_b = ShareEncryptionCircuitData::generate_sample(
+    sample_a.party_idx = 0;
+    sample_a.mod_idx = 0;
+    let mut sample_b = ShareEncryptionCircuitData::generate_sample(
         preset,
         committee,
         DkgInputType::SecretKey,
         sd.z,
     )
     .ok()?;
+    sample_b.party_idx = 0;
+    sample_b.mod_idx = 1;
     let prover = ZkProver::new(&backend);
 
     Some((
@@ -342,8 +347,6 @@ async fn setup_c3_fold_with_inner_share_encryption() -> Option<(
     ))
 }
 
-/// Expected C3 fold slot count when circuits are compiled for the minimum committee (N=3, T=1).
-const MINIMUM_C3_FOLD_SLOTS: usize = 2;
 /// Expected C6 fold slot count when circuits are compiled for the minimum committee (N=3, T=1).
 const MINIMUM_C6_FOLD_SLOTS: usize = 2;
 
@@ -357,10 +360,12 @@ async fn c3_fold_sequential_proves_and_verifies() {
     };
 
     let total_slots = c3_fold_total_slots_from_compiled_json();
-    if total_slots != MINIMUM_C3_FOLD_SLOTS {
+    let expected_slots =
+        CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
+    if total_slots != expected_slots {
         println!(
             "skipping c3_fold_sequential_proves_and_verifies: circuits compiled for \
-             non-minimum committee (total_slots={total_slots}, expected {MINIMUM_C3_FOLD_SLOTS}). \
+             non-minimum committee (total_slots={total_slots}, expected {expected_slots}). \
              Rebuild with `pnpm build:circuits --committee minimum` to run this test."
         );
         return;

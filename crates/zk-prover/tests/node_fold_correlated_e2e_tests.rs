@@ -138,7 +138,7 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
         CircuitName::C2abChunkFold,
         CircuitName::C3Fold,
         CircuitName::C3FoldKernel,
-        CircuitName::C3abFold,
+        CircuitName::C3abFoldSequential,
         CircuitName::C4abFold,
         CircuitName::NodeFold,
     ] {
@@ -406,7 +406,7 @@ async fn node_fold_correlated_secure_multi_chunk_proves_and_verifies() {
         CircuitName::C2abChunkFold,
         CircuitName::C3Fold,
         CircuitName::C3FoldKernel,
-        CircuitName::C3abFold,
+        CircuitName::C3abFoldSequential,
         CircuitName::C4abFold,
         CircuitName::NodeFold,
     ];

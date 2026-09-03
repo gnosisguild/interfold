@@ -91,6 +91,15 @@ struct C3abFoldWitness {
 }
 
 #[derive(Serialize)]
+struct ChonkC3ChunkFoldWitness {
+    c3_vks: Vec<Vec<String>>,
+    c3_proofs: Vec<Vec<String>>,
+    c3_public: Vec<Vec<String>>,
+    c3_key_hash: String,
+    c3_fold_key_hash: String,
+}
+
+#[derive(Serialize)]
 struct C4abFoldWitness {
     c4a_vk: Vec<String>,
     c4a_proof: Vec<String>,
@@ -143,6 +152,43 @@ pub struct NodeDkgFoldInput<'a> {
     pub party_id: u64,
 }
 
+/// External Chonk tube proofs produced outside the Rust prover.
+///
+/// The proofs must expose the normal six-field C3 prefix plus the `pk/msg/ct` accumulator tail. The
+/// supplied VK is the VK that verifies each external Chonk tube proof; the node fold closes the
+/// two-tube chunks before feeding the resulting C3 proofs into `c3ab_fold`.
+pub struct NodeDkgFoldC3Proof<'a> {
+    pub proofs: &'a [Proof],
+    pub verification_key: &'a [String],
+    pub key_hash: &'a str,
+}
+
+/// Optional C3a/C3b replacements for [`prove_node_dkg_fold`].
+pub struct NodeDkgFoldC3Overrides<'a> {
+    pub c3a: NodeDkgFoldC3Proof<'a>,
+    pub c3b: NodeDkgFoldC3Proof<'a>,
+}
+
+fn c3ab_fold_circuit(c3_overrides: Option<&NodeDkgFoldC3Overrides>) -> CircuitName {
+    if c3_overrides.is_some() {
+        CircuitName::C3abFold
+    } else {
+        CircuitName::C3abFoldSequential
+    }
+}
+
+/// Optional replacement for the production C3 fold VK hash in the DKG aggregator manifest.
+///
+/// This is needed when [`NodeDkgFoldC3Overrides`] supplies a tube whose public IO matches C3 fold
+/// but whose verifier key is not the production `c3_fold` key. The default path remains unchanged.
+pub struct DkgAggregationC3Overrides<'a> {
+    pub c3_fold_key_hash: &'a str,
+    /// C3a/C3b wrapper circuit used by the supplied node-fold proofs.
+    pub c3ab_fold_circuit: CircuitName,
+}
+
+const CHONK_C3_CHUNK_COUNT: usize = 2;
+
 /// Per-step prove wall time inside [`prove_node_dkg_fold`] (for benchmarks / audit reports).
 #[derive(Clone, Debug, Serialize)]
 pub struct FoldProveStepTiming {
@@ -174,7 +220,22 @@ pub fn prove_node_dkg_fold(
     e3_id: &str,
     artifacts_dir: &str,
 ) -> Result<NodeDkgFoldProveResult, ZkError> {
+    prove_node_dkg_fold_with_c3_overrides(prover, input, e3_id, artifacts_dir, None)
+}
+
+/// Run the node DKG fold pipeline with optional externally-produced C3a/C3b folds.
+///
+/// `None` preserves the production sequential C3 path. `Some` is an experimental integration
+/// seam for Chonk tube proofs (or another prover) whose public IO matches the C3 fold ABI.
+pub fn prove_node_dkg_fold_with_c3_overrides(
+    prover: &ZkProver,
+    input: &NodeDkgFoldInput,
+    e3_id: &str,
+    artifacts_dir: &str,
+    c3_overrides: Option<&NodeDkgFoldC3Overrides>,
+) -> Result<NodeDkgFoldProveResult, ZkError> {
     let mut step_timings = Vec::with_capacity(6);
+    let c3ab_circuit = c3ab_fold_circuit(c3_overrides);
     let c2a_circuit = match input.c2a_proof.circuit {
         CircuitName::SkC2ChunkFinalize => input.c2a_proof.circuit,
         other => {
@@ -231,26 +292,42 @@ pub fn prove_node_dkg_fold(
                 rayon::join(
                     || {
                         let t = Instant::now();
-                        let r = generate_sequential_c3_fold(
-                            prover,
-                            input.c3a_inner_proofs,
-                            input.c3_slot_indices_a,
-                            input.c3_total_slots,
-                            &format!("{e3_id}-c3a"),
-                            artifacts_dir,
-                        );
+                        let r = if let Some(overrides) = c3_overrides {
+                            overrides.c3a.proofs.first().cloned().ok_or_else(|| {
+                                ZkError::InvalidInput(
+                                    "external C3a proofs must not be empty".into(),
+                                )
+                            })
+                        } else {
+                            generate_sequential_c3_fold(
+                                prover,
+                                input.c3a_inner_proofs,
+                                input.c3_slot_indices_a,
+                                input.c3_total_slots,
+                                &format!("{e3_id}-c3a"),
+                                artifacts_dir,
+                            )
+                        };
                         (r, t.elapsed())
                     },
                     || {
                         let t = Instant::now();
-                        let r = generate_sequential_c3_fold(
-                            prover,
-                            input.c3b_inner_proofs,
-                            input.c3_slot_indices_b,
-                            input.c3_total_slots,
-                            &format!("{e3_id}-c3b"),
-                            artifacts_dir,
-                        );
+                        let r = if let Some(overrides) = c3_overrides {
+                            overrides.c3b.proofs.first().cloned().ok_or_else(|| {
+                                ZkError::InvalidInput(
+                                    "external C3b proofs must not be empty".into(),
+                                )
+                            })
+                        } else {
+                            generate_sequential_c3_fold(
+                                prover,
+                                input.c3b_inner_proofs,
+                                input.c3_slot_indices_b,
+                                input.c3_total_slots,
+                                &format!("{e3_id}-c3b"),
+                                artifacts_dir,
+                            )
+                        };
                         (r, t.elapsed())
                     },
                 )
@@ -262,35 +339,127 @@ pub fn prove_node_dkg_fold(
         step: c2ab_circuit.as_str().to_string(),
         seconds: c2ab_elapsed.as_secs_f64(),
     });
-    let c3a_folded = c3a_result?;
+    let mut c3a_folded = c3a_result?;
     step_timings.push(FoldProveStepTiming {
         step: "c3a_fold".to_string(),
         seconds: c3a_elapsed.as_secs_f64(),
     });
-    let c3b_folded = c3b_result?;
+    let mut c3b_folded = c3b_result?;
     step_timings.push(FoldProveStepTiming {
         step: "c3b_fold".to_string(),
         seconds: c3b_elapsed.as_secs_f64(),
     });
 
-    let c3_fold_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C3Fold,
-    )?;
+    let (c3a_verification_key, c3a_key_hash, c3b_verification_key, c3b_key_hash) =
+        if let Some(overrides) = c3_overrides {
+            if overrides.c3a.proofs.len() != CHONK_C3_CHUNK_COUNT
+                || overrides.c3b.proofs.len() != CHONK_C3_CHUNK_COUNT
+            {
+                return Err(ZkError::InvalidInput(format!(
+                    "external C3 proofs must contain exactly {CHONK_C3_CHUNK_COUNT} Chonk chunks"
+                )));
+            }
+            if overrides.c3a.key_hash != overrides.c3b.key_hash {
+                return Err(ZkError::InvalidInput(
+                    "external C3a/C3b proofs must use the same replacement C3 VK hash".into(),
+                ));
+            }
+            let c3_chunk_vk = vk::load_vk_artifacts(
+                &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+                CircuitName::C3ChunkFold,
+            )?;
+            let c3a_chunk = ChonkC3ChunkFoldWitness {
+                c3_vks: (0..CHONK_C3_CHUNK_COUNT)
+                    .map(|_| overrides.c3a.verification_key.to_vec())
+                    .collect(),
+                c3_proofs: overrides
+                    .c3a
+                    .proofs
+                    .iter()
+                    .map(proof_field_strings)
+                    .collect::<Result<_, _>>()?,
+                c3_public: overrides
+                    .c3a
+                    .proofs
+                    .iter()
+                    .map(proof_public_field_strings)
+                    .collect::<Result<_, _>>()?,
+                c3_key_hash: overrides.c3a.key_hash.to_owned(),
+                c3_fold_key_hash: c3_chunk_vk.key_hash.clone(),
+            };
+            let c3b_chunk = ChonkC3ChunkFoldWitness {
+                c3_vks: (0..CHONK_C3_CHUNK_COUNT)
+                    .map(|_| overrides.c3b.verification_key.to_vec())
+                    .collect(),
+                c3_proofs: overrides
+                    .c3b
+                    .proofs
+                    .iter()
+                    .map(proof_field_strings)
+                    .collect::<Result<_, _>>()?,
+                c3_public: overrides
+                    .c3b
+                    .proofs
+                    .iter()
+                    .map(proof_public_field_strings)
+                    .collect::<Result<_, _>>()?,
+                c3_key_hash: overrides.c3b.key_hash.to_owned(),
+                c3_fold_key_hash: c3_chunk_vk.key_hash.clone(),
+            };
+            let (c3a_result, c3b_result) = rayon::join(
+                || {
+                    build_and_prove_recursive_bin(
+                        prover,
+                        CircuitName::C3ChunkFold,
+                        &c3a_chunk,
+                        &format!("{e3_id}-c3a-chunk"),
+                        artifacts_dir,
+                    )
+                },
+                || {
+                    build_and_prove_recursive_bin(
+                        prover,
+                        CircuitName::C3ChunkFold,
+                        &c3b_chunk,
+                        &format!("{e3_id}-c3b-chunk"),
+                        artifacts_dir,
+                    )
+                },
+            );
+            c3a_folded = c3a_result?;
+            c3b_folded = c3b_result?;
+            (
+                c3_chunk_vk.verification_key.clone(),
+                c3_chunk_vk.key_hash.clone(),
+                c3_chunk_vk.verification_key,
+                c3_chunk_vk.key_hash,
+            )
+        } else {
+            let c3_fold_vk = vk::load_vk_artifacts(
+                &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+                CircuitName::C3Fold,
+            )?;
+            (
+                c3_fold_vk.verification_key.clone(),
+                c3_fold_vk.key_hash.clone(),
+                c3_fold_vk.verification_key,
+                c3_fold_vk.key_hash,
+            )
+        };
+    let t = Instant::now();
     let c3ab = C3abFoldWitness {
-        c3a_vk: c3_fold_vk.verification_key.clone(),
+        c3a_vk: c3a_verification_key,
         c3a_proof: proof_field_strings(&c3a_folded)?,
         c3a_public: proof_public_field_strings(&c3a_folded)?,
-        c3b_vk: c3_fold_vk.verification_key.clone(),
+        c3b_vk: c3b_verification_key,
         c3b_proof: proof_field_strings(&c3b_folded)?,
         c3b_public: proof_public_field_strings(&c3b_folded)?,
-        c3a_key_hash: c3_fold_vk.key_hash.clone(),
-        c3b_key_hash: c3_fold_vk.key_hash.clone(),
+        c3a_key_hash,
+        c3b_key_hash,
     };
-    let t = Instant::now();
     let c3ab_proof = build_and_prove_recursive_bin(
         prover,
-        CircuitName::C3abFold,
+        c3ab_circuit,
         &c3ab,
         &format!("{e3_id}-c3ab"),
         artifacts_dir,
@@ -337,7 +506,7 @@ pub fn prove_node_dkg_fold(
     )?;
     let c3ab_fold_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C3abFold,
+        c3ab_circuit,
     )?;
     let c4ab_fold_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
@@ -394,6 +563,8 @@ pub struct DkgAggregationInput<'a> {
     pub party_ids: &'a [u64],
     /// Address-ordered committee (`topNodes` / party order) for `committee_hash_*` public inputs.
     pub committee_addresses: &'a [Address],
+    /// Experimental replacement for the production C3 fold hash in the VK manifest.
+    pub c3_overrides: Option<DkgAggregationC3Overrides<'a>>,
 }
 
 fn validate_dkg_aggregation_shape(
@@ -477,6 +648,11 @@ pub fn prove_dkg_aggregation(
     )?;
     let artifacts_dir = prover.resolve_artifacts_dir(preset, committee.as_str());
     let artifacts_dir = artifacts_dir.as_str();
+    let c3ab_fold_circuit = input
+        .c3_overrides
+        .as_ref()
+        .map(|overrides| overrides.c3ab_fold_circuit)
+        .unwrap_or(CircuitName::C3abFoldSequential);
     let h = input.node_fold_proofs.len();
     let nodes_fold_proof = if let Some(precomputed) = input.nodes_fold_proof {
         precomputed.clone()
@@ -518,7 +694,7 @@ pub fn prove_dkg_aggregation(
     )?;
     let c3ab_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C3abFold,
+        c3ab_fold_circuit,
     )?;
     let c4ab_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
@@ -581,6 +757,12 @@ pub fn prove_dkg_aggregation(
         .map(address_to_field_hex)
         .collect();
 
+    let c3_fold_key_hash = input
+        .c3_overrides
+        .as_ref()
+        .map(|overrides| overrides.c3_fold_key_hash.to_owned())
+        .unwrap_or(c3_fold_vk.key_hash);
+
     let witness = DkgAggregatorWitness {
         nodes_fold_vk: nodes_fold_vk.verification_key.clone(),
         nodes_fold_proof: proof_field_strings(&nodes_fold_proof)?,
@@ -606,7 +788,7 @@ pub fn prove_dkg_aggregation(
             c2_batch_vk.key_hash,
             c2a_chunk_vk.key_hash,
             c2b_chunk_vk.key_hash,
-            c3_fold_vk.key_hash,
+            c3_fold_key_hash,
             share_encryption_vk.key_hash,
             c4_vk.key_hash,
             c3_fold_kernel_vk.key_hash,

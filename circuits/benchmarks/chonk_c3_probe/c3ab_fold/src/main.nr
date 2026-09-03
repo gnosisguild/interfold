@@ -4,37 +4,31 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Combines the final chunk-fold proof for the sk C3 chain with the final chunk-fold proof for
-//! e_sm. Each chunk-fold proof has already closed its pair of Chonk tube IPA accumulators.
-
-use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
+use bb_proof_verification::{
+    RollupHonkProof, RollupHonkVerificationKey, verify_root_rolluphonk_proof,
+};
 use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::N_PARTIES;
 use lib::math::commitments::compute_vk_hash;
 
-/// Must match the C3 fold: one slot per (party, threshold-modulus) pair.
+/// Chonk tube proofs are rollup UltraHonk proofs because the Chonk verifier carries an IPA claim.
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
-
-/// Must match `c3_fold`: `6 + 3*C3_SLOTS` public fields per final proof.
 pub global C3_FOLD_PUBLIC_LEN: u32 = 6 + (3 * C3_SLOTS);
-
 pub global C3_FOLD_PREFIX_LEN: u32 = C3_FOLD_PUBLIC_LEN - (3 * C3_SLOTS);
-
-/// Total public fields for `c3ab_fold` (two key hashes + flattened return tuple).
 pub global C3AB_FOLD_PUBLIC_LEN: u32 = 2 + 2 + (6 * C3_SLOTS);
 
 fn main(
-    c3a_vk: UltraHonkVerificationKey,
-    c3a_proof: UltraHonkProof,
+    c3a_vk: RollupHonkVerificationKey,
+    c3a_proof: RollupHonkProof,
     c3a_public: [Field; C3_FOLD_PUBLIC_LEN],
-    c3b_vk: UltraHonkVerificationKey,
-    c3b_proof: UltraHonkProof,
+    c3b_vk: RollupHonkVerificationKey,
+    c3b_proof: RollupHonkProof,
     c3b_public: [Field; C3_FOLD_PUBLIC_LEN],
     c3a_key_hash: pub Field,
     c3b_key_hash: pub Field,
     ) -> pub (Field, [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], Field) {
-    verify_honk_proof_non_zk(c3a_vk, c3a_proof, c3a_public, c3a_key_hash);
-    verify_honk_proof_non_zk(c3b_vk, c3b_proof, c3b_public, c3b_key_hash);
+    verify_root_rolluphonk_proof(c3a_vk, c3a_proof, c3a_public, c3a_key_hash);
+    verify_root_rolluphonk_proof(c3b_vk, c3b_proof, c3b_public, c3b_key_hash);
 
     let vk_hashes = [c3a_key_hash, c3b_key_hash].as_vector();
     let key_hash = compute_vk_hash(vk_hashes);

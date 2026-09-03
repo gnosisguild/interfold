@@ -1,0 +1,7 @@
+[package]
+name = "chonk_c3_hiding_kernel"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+ivc_types = { path = "../ivc_types" }

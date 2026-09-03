@@ -41,6 +41,7 @@
   },
   "scripts": {
     "compile:circuits": "bash scripts/compile-circuits.sh",
+    "probe:chonk-c3": "tsx scripts/chonk-c3-probe.ts",
     "prebuild": "pnpm -C ../interfold-contracts build && pnpm -C ../../ wasm:build && pnpm compile:circuits",
     "build": "tsup",
     "dev": "tsup --watch",

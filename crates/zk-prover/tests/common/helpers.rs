@@ -390,6 +390,13 @@ pub fn circuits_compiled_for_minimum() -> bool {
 }
 
 pub fn require_minimum_circuits_for_preset(preset: BfvPreset) -> Option<()> {
+    require_circuits_for_preset_and_committee(preset, "minimum")
+}
+
+pub fn require_circuits_for_preset_and_committee(
+    preset: BfvPreset,
+    expected_committee: &str,
+) -> Option<()> {
     let Some(active) = active_bin_preset() else {
         println!("skipping: active circuit preset stamp is missing");
         return None;
@@ -398,13 +405,13 @@ pub fn require_minimum_circuits_for_preset(preset: BfvPreset) -> Option<()> {
         println!("skipping: active circuit committee stamp is missing");
         return None;
     };
-    if committee != "minimum" {
+    if committee != expected_committee {
         println!(
-            "skipping: circuits not compiled for minimum committee. Rebuild with `pnpm build:circuits --committee minimum` to run this test."
+            "skipping: circuits not compiled for {expected_committee} committee. Rebuild with `pnpm build:circuits --committee {expected_committee}` to run this test."
         );
         return None;
     }
-    let expected = expected_preset_name(preset, "minimum");
+    let expected = expected_preset_name(preset, expected_committee);
     if active != expected {
         println!("skipping: active preset is {active}, expected {expected}");
         return None;
