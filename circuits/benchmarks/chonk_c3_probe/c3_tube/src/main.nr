@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
 use ivc_types::{
     C3_ACCUMULATOR_LEN, C3_FOLD_PREFIX_LEN, C3_FOLD_PUBLIC_LEN, CHONK_PROOF_LENGTH,
     CHONK_VK_LENGTH_IN_FIELDS, PROOF_TYPE_CHONK,
@@ -24,8 +30,3 @@ fn main(
         assert(c3_public_inputs[C3_FOLD_PREFIX_LEN + i] == chonk_public_inputs[i]);
     }
 }
-// SPDX-License-Identifier: LGPL-3.0-only
-//
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
-// or FITNESS FOR A PARTICULAR PURPOSE.

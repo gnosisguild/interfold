@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
 /// Field lengths pinned by bb.js 5.1.0 and the v5.1.0 Chonk ABI.
 pub global MEGA_VK_LENGTH_IN_FIELDS: u32 = 163;
 pub global CHONK_VK_LENGTH_IN_FIELDS: u32 = 115;
@@ -26,8 +32,3 @@ pub struct VerificationKey {
     pub key: [Field; MEGA_VK_LENGTH_IN_FIELDS],
     pub hash: Field,
 }
-// SPDX-License-Identifier: LGPL-3.0-only
-//
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
-// or FITNESS FOR A PARTICULAR PURPOSE.
