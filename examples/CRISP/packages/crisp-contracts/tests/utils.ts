@@ -17,7 +17,7 @@ const connection = await network.connect()
 export const ethers: HardhatEthers = connection.ethers
 export const abiCoder = ethers.AbiCoder.defaultAbiCoder()
 const inputEnvelopeTypes = ['bytes', 'address', 'bytes32', 'bytes32', 'uint40', 'bytes'] as const
-const inputCommitmentTypes = ['bytes', 'address', 'bytes32', 'bytes32', 'uint40', 'bytes'] as const
+export const inputCommitmentTypes = ['bytes', 'address', 'bytes32', 'bytes32', 'uint40', 'uint64', 'bytes'] as const
 
 /** Read time from the same in-memory chain used by the exported Hardhat ethers helper. */
 export async function latestTimestamp(): Promise<number> {
@@ -54,9 +54,11 @@ export function splitInputEnvelope(encoded: string) {
   }
 }
 
-export async function inputCommitmentPayload(program: CRISPProgram, e3Id: bigint, encoded: string) {
+export async function inputCommitmentPayload(program: CRISPProgram, e3Id: bigint, encoded: string, expiresAt?: bigint) {
   const input = splitInputEnvelope(encoded)
   const [availabilitySigner] = await ethers.getSigners()
+  const availabilityAttestationExpiresAt =
+    expiresAt ?? BigInt(await latestTimestamp()) + (await program.INPUT_AVAILABILITY_ATTESTATION_TTL())
   const inputId = await program.inputId(
     e3Id,
     input.encryptedVoteHash,
@@ -76,9 +78,10 @@ export async function inputCommitmentPayload(program: CRISPProgram, e3Id: bigint
       InputAvailability: [
         { name: 'e3Id', type: 'uint256' },
         { name: 'inputId', type: 'bytes32' },
+        { name: 'expiresAt', type: 'uint64' },
       ],
     },
-    { e3Id, inputId },
+    { e3Id, inputId, expiresAt: availabilityAttestationExpiresAt },
   )
   return abiCoder.encode(inputCommitmentTypes, [
     input.noirProof,
@@ -86,6 +89,7 @@ export async function inputCommitmentPayload(program: CRISPProgram, e3Id: bigint
     input.encryptedVoteCommitment,
     input.encryptedVoteHash,
     input.parentIndexPlusOne,
+    availabilityAttestationExpiresAt,
     availabilityAttestation,
   ])
 }

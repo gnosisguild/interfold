@@ -168,7 +168,11 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   /// only prevents a caller from committing a hash while withholding the bytes from the service.
   address public immutable inputAvailabilitySigner;
 
-  bytes32 public constant INPUT_AVAILABILITY_TYPEHASH = keccak256("InputAvailability(uint256 e3Id,bytes32 inputId)");
+  /// @notice Maximum lifetime of an input availability promise.
+  /// @dev The service starts this period after it validates and stores the complete ciphertext.
+  uint64 public constant INPUT_AVAILABILITY_ATTESTATION_TTL = 10 minutes;
+
+  bytes32 public constant INPUT_AVAILABILITY_TYPEHASH = keccak256("InputAvailability(uint256 e3Id,bytes32 inputId,uint64 expiresAt)");
 
   /// @notice The EIP-712 type of the message a voter signs to authorise one ballot.
   /// @dev The digest binds the signature to the round, the slot, and this exact ciphertext. The
@@ -228,6 +232,7 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   error InputAlreadyCommitted(bytes32 inputId);
   error InputNotCommitted(bytes32 inputId);
   error InvalidInputAvailabilityAttestation();
+  error InputAvailabilityAttestationExpired(uint64 expiresAt);
   error InputAvailabilitySignerAddressZero();
   error InputAvailabilityPending(uint40 count);
   error SlotIsEmpty();
@@ -592,15 +597,22 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
       bytes32 encryptedVoteCommitment,
       bytes32 encryptedVoteHash,
       uint40 parentIndexPlusOne,
+      uint64 availabilityAttestationExpiresAt,
       bytes memory availabilityAttestation
-    ) = abi.decode(data, (bytes, address, bytes32, bytes32, uint40, bytes));
+    ) = abi.decode(data, (bytes, address, bytes32, bytes32, uint40, uint64, bytes));
+
+    if (block.timestamp >= availabilityAttestationExpiresAt) {
+      revert InputAvailabilityAttestationExpired(availabilityAttestationExpiresAt);
+    }
 
     _verifyInputProof(e3Id, e3, noirProof, slotAddress, encryptedVoteCommitment, encryptedVoteHash, parentIndexPlusOne);
 
     bytes32 id = inputId(e3Id, encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
     RoundData storage round = e3Data[e3Id];
     if (round.inputStatus[id] != InputStatus.NONE) revert InputAlreadyCommitted(id);
-    if (ECDSA.recover(inputAvailabilityDigest(e3Id, id), availabilityAttestation) != inputAvailabilitySigner) {
+    if (
+      ECDSA.recover(inputAvailabilityDigest(e3Id, id, availabilityAttestationExpiresAt), availabilityAttestation) != inputAvailabilitySigner
+    ) {
       revert InvalidInputAvailabilityAttestation();
     }
 
@@ -1027,8 +1039,8 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   /// @notice EIP-712 digest signed after the availability service stores the ciphertext.
   /// @dev Exposed so relays can ask this deployment for the exact chain-bound digest instead of
   /// reproducing its domain separator off chain.
-  function inputAvailabilityDigest(uint256 e3Id, bytes32 id) public view returns (bytes32) {
-    return _hashTypedDataV4(keccak256(abi.encode(INPUT_AVAILABILITY_TYPEHASH, e3Id, id)));
+  function inputAvailabilityDigest(uint256 e3Id, bytes32 id, uint64 expiresAt) public view returns (bytes32) {
+    return _hashTypedDataV4(keccak256(abi.encode(INPUT_AVAILABILITY_TYPEHASH, e3Id, id, expiresAt)));
   }
 
   /// @notice Number of committed inputs still waiting for a verified DA receipt.

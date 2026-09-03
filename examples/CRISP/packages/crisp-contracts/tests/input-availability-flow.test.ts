@@ -14,6 +14,7 @@ import {
   ethers,
   increaseTimeTo,
   inputCommitmentPayload,
+  inputCommitmentTypes,
   latestTimestamp,
   setNextTimestamp,
 } from './utils'
@@ -119,7 +120,7 @@ describe('CRISP input availability flow', function () {
   it('rejects a proof commitment not attested by the configured availability service', async function () {
     const { program, e3Id } = await openRound()
     const ballot = await input(program, e3Id)
-    const decoded = abiCoder.decode(['bytes', 'address', 'bytes32', 'bytes32', 'uint40', 'bytes'], ballot.commitmentPayload)
+    const decoded = abiCoder.decode(inputCommitmentTypes, ballot.commitmentPayload)
     const [, wrongSigner] = await ethers.getSigners()
     const inputId = await program.inputId(e3Id, decoded[3], decoded[2], decoded[1], decoded[4])
     const network = await ethers.provider.getNetwork()
@@ -129,23 +130,88 @@ describe('CRISP input availability flow', function () {
         InputAvailability: [
           { name: 'e3Id', type: 'uint256' },
           { name: 'inputId', type: 'bytes32' },
+          { name: 'expiresAt', type: 'uint64' },
         ],
       },
-      { e3Id, inputId },
+      { e3Id, inputId, expiresAt: decoded[5] },
     )
-    const forged = abiCoder.encode(
-      ['bytes', 'address', 'bytes32', 'bytes32', 'uint40', 'bytes'],
-      [decoded[0], decoded[1], decoded[2], decoded[3], decoded[4], wrongAttestation],
-    )
+    const forged = abiCoder.encode(inputCommitmentTypes, [
+      decoded[0],
+      decoded[1],
+      decoded[2],
+      decoded[3],
+      decoded[4],
+      decoded[5],
+      wrongAttestation,
+    ])
 
     await expect(program.publishInput(e3Id, forged)).to.be.revertedWithCustomError(program, 'InvalidInputAvailabilityAttestation')
   })
 
+  it('rejects an availability promise at its exact expiry', async function () {
+    const { program, e3Id } = await openRound()
+    const expiry = BigInt((await latestTimestamp()) + 20)
+    const ballot = await input(program, e3Id)
+    const payload = await inputCommitmentPayload(
+      program,
+      e3Id,
+      abiCoder.encode(
+        ['bytes', 'address', 'bytes32', 'bytes32', 'uint40', 'bytes'],
+        [
+          '0x01',
+          ballot.slotAddress,
+          ballot.encryptedVoteCommitment,
+          ballot.encryptedVoteHash,
+          ballot.parentIndexPlusOne,
+          ballot.ciphertext,
+        ],
+      ),
+      expiry,
+    )
+
+    await setNextTimestamp(Number(expiry))
+    await expect(program.publishInput(e3Id, payload))
+      .to.be.revertedWithCustomError(program, 'InputAvailabilityAttestationExpired')
+      .withArgs(expiry)
+  })
+
+  it('accepts an availability promise one second before its expiry', async function () {
+    const { program, e3Id } = await openRound()
+    const expiry = BigInt((await latestTimestamp()) + 20)
+    const ballot = await input(program, e3Id)
+    const stagedEnvelope = abiCoder.encode(
+      ['bytes', 'address', 'bytes32', 'bytes32', 'uint40', 'bytes'],
+      ['0x01', ballot.slotAddress, ballot.encryptedVoteCommitment, ballot.encryptedVoteHash, ballot.parentIndexPlusOne, ballot.ciphertext],
+    )
+    const payload = await inputCommitmentPayload(program, e3Id, stagedEnvelope, expiry)
+
+    await setNextTimestamp(Number(expiry - 1n))
+    await expect(program.publishInput(e3Id, payload)).to.emit(program, 'InputCommitted')
+  })
+
+  it('binds the availability promise expiry into the signer attestation', async function () {
+    const { program, e3Id } = await openRound()
+    const ballot = await input(program, e3Id)
+    const decoded = abiCoder.decode(inputCommitmentTypes, ballot.commitmentPayload)
+    const altered = abiCoder.encode(inputCommitmentTypes, [
+      decoded[0],
+      decoded[1],
+      decoded[2],
+      decoded[3],
+      decoded[4],
+      decoded[5] + 1n,
+      decoded[6],
+    ])
+
+    await expect(program.publishInput(e3Id, altered)).to.be.revertedWithCustomError(program, 'InvalidInputAvailabilityAttestation')
+  })
+
   it('accepts the last commitment second and closes at the finalization tail', async function () {
     const { program, e3Id, end } = await openRound()
+    const deadline = end - FINALIZATION_WINDOW
+    await increaseTimeTo(deadline - 2)
     const accepted = await input(program, e3Id, 'last-accepted')
     const refused = await input(program, e3Id, 'first-refused')
-    const deadline = end - FINALIZATION_WINDOW
     expect(await program.inputCommitmentDeadline(e3Id)).to.equal(deadline)
 
     await setNextTimestamp(deadline - 1)

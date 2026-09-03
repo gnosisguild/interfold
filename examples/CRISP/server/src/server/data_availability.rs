@@ -97,6 +97,7 @@ sol! {
         bytes32 encryptedVoteCommitment;
         bytes32 encryptedVoteHash;
         uint40 parentIndexPlusOne;
+        uint64 availabilityAttestationExpiresAt;
         bytes availabilityAttestation;
     }
 
@@ -177,6 +178,8 @@ enum JobState {
     Created,
     AwaitingCommitment {
         ethereum_payload: Vec<u8>,
+        #[serde(default)]
+        attestation_expires_at: u64,
     },
     Committed {
         transaction_hash: String,
@@ -270,7 +273,9 @@ impl AvailableInputReference {
 impl From<&AvailabilityJob> for AvailabilityJobView {
     fn from(job: &AvailabilityJob) -> Self {
         let (status, tx_hash, encoded_proof, message) = match &job.state {
-            JobState::AwaitingCommitment { ethereum_payload } => (
+            JobState::AwaitingCommitment {
+                ethereum_payload, ..
+            } => (
                 "ready_for_commitment",
                 None,
                 Some(format!("0x{}", hex::encode(ethereum_payload))),
@@ -499,7 +504,10 @@ impl AvailabilityService {
         let id = self.job_id(b"input", e3_id, actual, &request_identity);
         if self.load(&id)?.is_some() {
             self.process(&id).await;
-            return Ok((&self.load_required(&id)?).into());
+            let existing = self.load_required(&id)?;
+            if !matches!(&existing.state, JobState::Failed { .. }) {
+                return Ok((&existing).into());
+            }
         }
 
         // Reject invalid Noir proofs before the service pays an Avail submission fee.
@@ -583,8 +591,10 @@ impl AvailabilityService {
                 .storage
                 .lock()
                 .map_err(|_| anyhow::anyhow!("data-availability storage lock is poisoned"))?;
-            if self.load(&id)?.is_some() {
-                return Ok((&self.load_required(&id)?).into());
+            if let Some(existing) = self.load(&id)? {
+                if !matches!(&existing.state, JobState::Failed { .. }) {
+                    return Ok((&existing).into());
+                }
             }
             if self
                 .uncommitted_input_for_slot(e3_id, envelope.slotAddress, &id)?
@@ -881,6 +891,13 @@ impl AvailabilityService {
                         ),
                     ));
                 }
+                if matches!(&stored.state, JobState::Failed { .. }) {
+                    if objects.get(job.content_hash)?.is_none() {
+                        objects.insert(job.content_hash.as_slice(), object)?;
+                    }
+                    jobs.insert(job.id.as_bytes(), encoded_job.as_slice())?;
+                    return Ok(());
+                }
                 if objects.get(job.content_hash)?.is_none() {
                     return Err(sled::transaction::ConflictableTransactionError::Abort(
                         sled::Error::Unsupported(
@@ -1089,6 +1106,36 @@ impl AvailabilityService {
             ..
         } = &job.kind
         {
+            if let JobState::AwaitingCommitment {
+                attestation_expires_at,
+                ..
+            } = &job.state
+            {
+                if now >= *attestation_expires_at && !self.input_is_committed(&job).await? {
+                    // The contract rejects the signature at this exact timestamp. Wait for a
+                    // finalized block at or after it before releasing the promised ciphertext.
+                    // This preserves a commitment that landed just before the expiry boundary.
+                    if let Some(block) = self
+                        .finalized_block_past(*attestation_expires_at, true)
+                        .await?
+                    {
+                        if self.input_is_committed_at(&job, block).await? {
+                            job.state = JobState::Committed {
+                                transaction_hash: "wallet-committed".to_owned(),
+                            };
+                        } else {
+                            job.state = JobState::Failed {
+                                message:
+                                    "the input availability promise expired before Ethereum accepted its commitment"
+                                        .to_owned(),
+                            };
+                        }
+                        self.save(&job)?;
+                    }
+                    return Ok(());
+                }
+            }
+
             let waiting_for_commitment = matches!(
                 &job.state,
                 JobState::Created | JobState::AwaitingCommitment { .. }
@@ -1130,8 +1177,11 @@ impl AvailabilityService {
                         };
                     }
                     JobKind::Input { .. } if self.chain_id == 1 => {
+                        let (ethereum_payload, attestation_expires_at) =
+                            self.commitment_payload(&job).await?;
                         job.state = JobState::AwaitingCommitment {
-                            ethereum_payload: self.commitment_payload(&job).await?,
+                            ethereum_payload,
+                            attestation_expires_at,
                         };
                     }
                     JobKind::Input { .. } => {
@@ -1288,7 +1338,7 @@ impl AvailabilityService {
         }
     }
 
-    async fn commitment_payload(&self, job: &AvailabilityJob) -> anyhow::Result<Vec<u8>> {
+    async fn commitment_payload(&self, job: &AvailabilityJob) -> anyhow::Result<(Vec<u8>, u64)> {
         let JobKind::Input {
             e3_id,
             staged_envelope,
@@ -1317,6 +1367,16 @@ impl AvailabilityService {
             configured == signer.address(),
             "the CRISP inputAvailabilitySigner does not match this service key"
         );
+        let ttl = contract
+            .input_availability_attestation_ttl()
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        anyhow::ensure!(ttl > 0, "the input availability promise lifetime is zero");
+        let attestation_expires_at = self
+            .chain_timestamp()
+            .await?
+            .checked_add(ttl)
+            .ok_or_else(|| anyhow::anyhow!("input availability promise expiry overflows u64"))?;
         let digest = contract
             .input_availability_digest(
                 e3_id_to_u256(e3_id)?,
@@ -1324,6 +1384,7 @@ impl AvailabilityService {
                 envelope.encryptedVoteCommitment,
                 envelope.slotAddress,
                 envelope.parentIndexPlusOne.to::<u64>(),
+                attestation_expires_at,
             )
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -1336,9 +1397,13 @@ impl AvailabilityService {
             encryptedVoteCommitment: envelope.encryptedVoteCommitment,
             encryptedVoteHash: envelope.encryptedVoteHash,
             parentIndexPlusOne: envelope.parentIndexPlusOne,
+            availabilityAttestationExpiresAt: attestation_expires_at,
             availabilityAttestation: Bytes::copy_from_slice(&attestation.as_bytes()),
         };
-        Ok(encode_input_commitment_envelope(&commitment_envelope))
+        Ok((
+            encode_input_commitment_envelope(&commitment_envelope),
+            attestation_expires_at,
+        ))
     }
 
     async fn submit_input_commitment(
@@ -1356,7 +1421,8 @@ impl AvailabilityService {
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let e3_id = e3_id_to_u256(e3_id)?;
-        let payload = Bytes::from(self.commitment_payload(job).await?);
+        let (payload, _) = self.commitment_payload(job).await?;
+        let payload = Bytes::from(payload);
         contract
             .simulate_publish_input(e3_id, payload.clone())
             .await
@@ -1845,11 +1911,16 @@ mod tests {
             encryptedVoteCommitment: envelope.encryptedVoteCommitment,
             encryptedVoteHash: envelope.encryptedVoteHash,
             parentIndexPlusOne: envelope.parentIndexPlusOne,
+            availabilityAttestationExpiresAt: 600,
             availabilityAttestation: envelope.availabilityProof,
         };
+        let encoded_commitment = encode_input_commitment_envelope(&commitment_envelope);
+        let decoded_commitment =
+            InputCommitmentEnvelope::abi_decode_params_validate(&encoded_commitment).unwrap();
+        assert_eq!(decoded_commitment.availabilityAttestationExpiresAt, 600);
         assert_eq!(
-            encode_input_commitment_envelope(&commitment_envelope),
-            encoded
+            decoded_commitment.availabilityAttestation.as_ref(),
+            &[0xaa, 0xbb]
         );
     }
 
@@ -1931,6 +2002,41 @@ mod tests {
         assert!(error
             .to_string()
             .contains("unsupported available-input reference schema version"));
+    }
+
+    #[test]
+    fn legacy_uncommitted_job_without_expiry_fails_closed() {
+        let job = AvailabilityJob {
+            schema_version: AVAILABILITY_JOB_SCHEMA_VERSION,
+            id: "legacy-input".to_owned(),
+            content_hash: [0x11; 32],
+            kind: JobKind::Input {
+                e3_id: "1".to_owned(),
+                staged_envelope: vec![0x22],
+                deadline: 1_000,
+                commitment_deadline: 900,
+            },
+            state: JobState::AwaitingCommitment {
+                ethereum_payload: vec![0x33],
+                attestation_expires_at: 600,
+            },
+        };
+        let mut encoded = serde_json::to_value(&job).unwrap();
+        encoded["state"]
+            .as_object_mut()
+            .unwrap()
+            .remove("attestation_expires_at");
+
+        let decoded =
+            AvailabilityService::decode_job(&serde_json::to_vec(&encoded).unwrap()).unwrap();
+        let JobState::AwaitingCommitment {
+            attestation_expires_at,
+            ..
+        } = decoded.state
+        else {
+            panic!("expected an uncommitted input job");
+        };
+        assert_eq!(attestation_expires_at, 0);
     }
 
     #[test]
@@ -2053,5 +2159,49 @@ mod tests {
             panic!("expected an output job");
         };
         assert!(compute_proof.is_empty());
+    }
+
+    #[test]
+    fn failed_input_job_can_be_staged_again() {
+        let service = test_service(1024);
+        let object = b"ciphertext";
+        let content_hash = keccak256(object).0;
+        let mut job = AvailabilityJob {
+            schema_version: AVAILABILITY_JOB_SCHEMA_VERSION,
+            id: "retry-input".to_owned(),
+            content_hash,
+            kind: JobKind::Input {
+                e3_id: "1".to_owned(),
+                staged_envelope: vec![0x11],
+                deadline: 1_000,
+                commitment_deadline: 900,
+            },
+            state: JobState::Created,
+        };
+
+        service.store_new_job_with_object(&job, object).unwrap();
+        job.state = JobState::Failed {
+            message: "availability promise expired".to_owned(),
+        };
+        service.save(&job).unwrap();
+        assert!(service.object_required(content_hash).is_err());
+
+        let replacement = AvailabilityJob {
+            kind: JobKind::Input {
+                e3_id: "1".to_owned(),
+                staged_envelope: vec![0x22],
+                deadline: 1_000,
+                commitment_deadline: 900,
+            },
+            state: JobState::Created,
+            ..job
+        };
+        service
+            .store_new_job_with_object(&replacement, object)
+            .unwrap();
+
+        assert_eq!(service.object_required(content_hash).unwrap(), object);
+        let stored = service.load_required(&replacement.id).unwrap();
+        assert!(matches!(stored.state, JobState::Created));
     }
 }

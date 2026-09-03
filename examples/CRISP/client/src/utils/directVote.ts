@@ -13,8 +13,8 @@ const PUBLISH_INPUT_ABI = parseAbi(['function publishInput(uint256 e3Id, bytes d
  * Commit an encoded input proof straight from the voter's wallet.
  *
  * `publishInput` is permissionless. The payload carries the proof, slot, ciphertext commitment,
- * content hash, and parent. It does not carry the ciphertext or wait for VectorX. The durable
- * availability service publishes those bytes and finalizes the input later.
+ * content hash, parent, and signed 10-minute expiry. It does not carry the ciphertext or wait for
+ * VectorX. The durable availability service publishes those bytes and finalizes the input later.
  *
  * @param walletClient The voter's wallet.
  * @param publicClient The public client, for simulation and the receipt.

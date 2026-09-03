@@ -20,9 +20,10 @@ that value as `leaf`. The official bridge hashes `leaf` once more when it checks
 Merkle root. The Solidity adapter first requires `leaf == contentHash`, then calls the bridge. Every
 reader also re-hashes the retrieved bytes against `contentHash` before use.
 
-The SDK encodes each six-field input envelope as a flat ABI parameter sequence. The server decodes
-that sequence as function parameters. It uses the same parameter encoding for the payload that
-`CRISPProgram.publishInput` reads through Solidity `abi.decode`.
+The SDK encodes each six-field staging envelope as a flat ABI parameter sequence. The server decodes
+that sequence as function parameters, removes the ciphertext, and adds the signed expiry. It returns
+a seven-field commitment payload that `CRISPProgram.publishInput` reads through Solidity
+`abi.decode`.
 
 ## Two-step voter flow
 
@@ -33,10 +34,10 @@ voter creates ciphertext and Noir proof
 CRISP server validates the proof and stores the exact bytes durably
         |
         v
-server signs InputAvailability(e3Id, inputId)
+server signs InputAvailability(e3Id, inputId, expiresAt)
         |
         v
-publishInput(proof, contentHash, commitment, slot, parent, signature)
+publishInput(proof, contentHash, commitment, slot, parent, expiresAt, signature)
         |
         +--> verifies the Noir proof and server signature
         +--> reserves the input leaf and index immediately
@@ -133,6 +134,9 @@ This is below Interfold's 30-day maximum lifecycle reservation.
 The boundaries are intentional:
 
 - `publishInput` requires `timestamp < inputCommitmentDeadline`.
+- The availability service signs `InputAvailability(e3Id, inputId, expiresAt)` only after it stores
+  the complete ciphertext. The promise expires after 10 minutes if no Ethereum commitment lands. A
+  retry receives a new promise only after the old one expires and the server releases its bytes.
 - The final 3-hour tail accepts no new proof commitments.
 - `finalizeInput` normally completes in that tail. A delayed receipt can recover while the E3 is
   still `KeyPublished` and `timestamp <= computeDeadline`.
@@ -167,6 +171,12 @@ Ethereum finalized block at or after the exclusive commitment cutoff and checks 
 at that block. The same rule applies to input and output publication: a job is marked failed only
 after a finalized block strictly after the inclusive compute deadline still lacks the publication.
 Until then, the worker keeps the durable job recoverable.
+
+The service does not release an expired promise based on its local clock or an unfinalized chain
+head. It waits for an Ethereum finalized block at or after `expiresAt`, then checks the historical
+`isInputCommitted` state at that block. A commitment mined before expiry therefore survives even
+when the service observes it later. If the finalized state contains no commitment, the service
+releases the ciphertext and lets the voter stage the original proof again for a fresh promise.
 
 The old four-hour CRISP duration was unsafe. In the worst case, the input commitment cutoff arrived
 before the committee key existed. Both the server and `CRISPProgram.validate` now refuse an unsafe

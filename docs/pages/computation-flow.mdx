@@ -81,8 +81,9 @@ windows outside these bounds.
    ensure they are valid for the requested E3. Some of these proofs are generic (e.g., proof of
    valid encryption) while others will be specific to your application.
 3. **Commit Input**: The CRISP service stores the encrypted bytes, then signs a compact input
-   commitment. `publishInput` verifies the ZK proof and signature and reserves the input's tree
-   index. The voter can leave after this transaction.
+   commitment that expires after 10 minutes. `publishInput` verifies the ZK proof, expiry, and
+   signature and reserves the input's tree index. If the wallet does not commit in time, the voter
+   can stage the same vote again. The voter can leave after the commitment transaction succeeds.
 4. **Finalize Availability**: The service publishes the bytes to Avail. After VectorX anchors the
    Avail block, any account calls `finalizeInput`. The E3 Program accepts only a receipt for the
    exact content hash committed by the ZK proof. Computation waits until every committed input is

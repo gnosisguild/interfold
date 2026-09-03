@@ -215,6 +215,10 @@ Sepolia and Ethereum mainnet use Avail. Before starting the CRISP server:
    VectorX finalization tail. The server reads those values at startup. Twelve hours covers the
    current production defaults with margin.
 
+The server signs a 10-minute commitment payload only after it stores and validates the complete
+ciphertext. If the commitment does not reach Ethereum before that payload expires, the server waits
+for Ethereum finality, releases the uncommitted bytes, and lets the voter stage the vote again.
+
 ```dotenv
 # Sepolia + Avail Turing
 DATA_AVAILABILITY_MODE=avail

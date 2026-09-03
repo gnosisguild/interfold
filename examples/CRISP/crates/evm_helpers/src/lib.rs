@@ -66,8 +66,9 @@ sol! {
             address slotAddress,
             uint40 parentIndexPlusOne
         ) external view returns (bytes32);
-        function inputAvailabilityDigest(uint256 e3Id, bytes32 inputId) external view returns (bytes32);
+        function inputAvailabilityDigest(uint256 e3Id, bytes32 inputId, uint64 expiresAt) external view returns (bytes32);
         function inputAvailabilitySigner() external view returns (address);
+        function INPUT_AVAILABILITY_ATTESTATION_TTL() external view returns (uint64);
         function availabilityFinalizationWindow() external view returns (uint256);
         function MIN_VOTING_DURATION() external view returns (uint256);
         function pendingInputCount(uint256 e3Id) external view returns (uint40);
@@ -378,6 +379,7 @@ impl CRISPContract<CRISPWriteProvider> {
         commitment: B256,
         slot_address: Address,
         parent_index_plus_one: u64,
+        expires_at: u64,
     ) -> Result<B256> {
         let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
         let parent = alloy::primitives::Uint::<40, 1>::from(parent_index_plus_one);
@@ -386,9 +388,15 @@ impl CRISPContract<CRISPWriteProvider> {
             .call()
             .await?;
         Ok(contract
-            .inputAvailabilityDigest(e3_id, input_id)
+            .inputAvailabilityDigest(e3_id, input_id, expires_at)
             .call()
             .await?)
+    }
+
+    /// Read the maximum lifetime of an input availability promise.
+    pub async fn input_availability_attestation_ttl(&self) -> Result<u64> {
+        let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
+        Ok(contract.INPUT_AVAILABILITY_ATTESTATION_TTL().call().await?)
     }
 
     /// Confirm that this relay's key is the signer frozen into the CRISP deployment.

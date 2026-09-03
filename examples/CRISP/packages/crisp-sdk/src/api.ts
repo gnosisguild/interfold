@@ -139,8 +139,9 @@ export const requestNewRound = async (serverUrl: string, request: NewRoundReques
 /**
  * Stage an encrypted vote with the CRISP availability service.
  *
- * This call returns after the proof commitment is accepted or is ready for the voter's wallet.
- * The server publishes the ciphertext to Avail and finalizes the input in the background.
+ * This call returns after the proof commitment is accepted or the server creates a 10-minute
+ * commitment payload for the voter's wallet. The server publishes the ciphertext to Avail and
+ * finalizes the input in the background after the commitment lands.
  * @param serverUrl - The base URL of the CRISP server
  * @param request - The vote request (round id and hex encoded proof)
  * @returns The broadcast result, including the transaction hash on success

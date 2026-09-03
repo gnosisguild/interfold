@@ -108,11 +108,13 @@ which orchestrates the entire voting process.
 
 When a new voting round is initialized, the `validate()` function sets up round parameters and
 initializes a Merkle tree to store votes efficiently. A vote then uses two transactions.
-`publishInput()` verifies the Noir proof and the availability service's signature, commits the
-encrypted vote's hash, and reserves its exact Merkle-tree position. The large ciphertext is stored
-on Avail instead of Ethereum. After VectorX anchors the relevant Avail range on Ethereum,
-`finalizeInput()` verifies the inclusion proof for that exact hash and marks the vote available.
-Computation cannot start while a committed vote is waiting for finalization.
+`publishInput()` verifies the Noir proof and a 10-minute availability promise from the service,
+commits the encrypted vote's hash, and reserves its exact Merkle-tree position. The promise starts
+only after the service stores the complete ciphertext. If the wallet does not commit it before the
+promise expires, the voter can stage the same vote again. The large ciphertext is stored on Avail
+instead of Ethereum. After VectorX anchors the relevant Avail range on Ethereum, `finalizeInput()`
+verifies the inclusion proof for that exact hash and marks the vote available. Computation cannot
+start while a committed vote is waiting for finalization.
 
 ### Proposal timing
 
