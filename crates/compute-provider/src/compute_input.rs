@@ -11,9 +11,21 @@ use crate::policy::InputPolicy;
 use e3_bfv_client::client::compute_ct_commitment;
 use e3_bfv_client::client::compute_ct_commitment_with_params;
 use e3_fhe_params::decode_bfv_params_arc;
+use fhe::bfv::BfvParameters;
 use sha3::{Digest, Keccak256};
+use std::sync::Arc;
 
-pub type FHEProcessor = fn(&FHEInputs) -> Vec<u8>;
+pub type FHEProcessor = for<'a> fn(&FHEProcessorInput<'a>) -> Vec<u8>;
+
+/// Inputs passed to an E3 program's homomorphic processor.
+///
+/// The secure process builds BFV parameters once and shares them with the processor. Building the
+/// secure parameter tables is expensive inside a zkVM, and decoding the same immutable bytes twice
+/// adds no verification.
+pub struct FHEProcessorInput<'a> {
+    pub ciphertexts: &'a [(Vec<u8>, u64)],
+    pub params: &'a Arc<BfvParameters>,
+}
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct FHEInputs {
@@ -123,9 +135,9 @@ impl ComputeInput {
         // The processor sees only what the policy selected. Both the root above and this set are
         // functions of values the root binds, so any prover over the same published inputs reaches
         // the same result.
-        let processed_ciphertext = (fhe_processor)(&FHEInputs {
-            ciphertexts: selected,
-            params: self.fhe_inputs.params.clone(),
+        let processed_ciphertext = (fhe_processor)(&FHEProcessorInput {
+            ciphertexts: &selected,
+            params: &params,
         });
         let processed_hash = Keccak256::digest(&processed_ciphertext).to_vec();
         let ciphertext_commitment =
@@ -156,12 +168,11 @@ mod tests {
     use fhe_traits::{FheEncoder, FheEncrypter, Serialize as FheSerialize};
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
-    fn sum_processor(inputs: &FHEInputs) -> Vec<u8> {
-        let params = decode_bfv_params_arc(&inputs.params).unwrap();
-        let mut sum = Ciphertext::zero(&params);
-        for (bytes, _) in &inputs.ciphertexts {
+    fn sum_processor(inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
+        let mut sum = Ciphertext::zero(inputs.params);
+        for (bytes, _) in inputs.ciphertexts {
             use fhe_traits::DeserializeParametrized;
-            sum += &Ciphertext::from_bytes(bytes, &params).unwrap();
+            sum += &Ciphertext::from_bytes(bytes, inputs.params).unwrap();
         }
         sum.to_bytes()
     }
@@ -431,7 +442,11 @@ mod tests {
         );
 
         // And it is genuinely the selected subset, not the whole set.
-        let over_everything = sum_processor(&inputs);
+        let params = decode_bfv_params_arc(&inputs.params).unwrap();
+        let over_everything = sum_processor(&FHEProcessorInput {
+            ciphertexts: &inputs.ciphertexts,
+            params: &params,
+        });
         assert_ne!(
             ciphertext, over_everything,
             "the excluded input must not be in the published ciphertext"

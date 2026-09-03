@@ -4,8 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use e3_compute_provider::FHEInputs;
-use e3_fhe_params::decode_bfv_params_arc;
+use e3_compute_provider::FHEProcessorInput;
 use fhe::bfv::Ciphertext;
 use fhe_traits::{DeserializeParametrized, Serialize};
 
@@ -18,12 +17,10 @@ pub fn policy() -> e3_compute_provider::InputPolicy {
 }
 
 /// CRISP Implementation of the CiphertextProcessor function
-pub fn fhe_processor(fhe_inputs: &FHEInputs) -> Vec<u8> {
-    let params = decode_bfv_params_arc(&fhe_inputs.params).unwrap();
-
-    let mut sum = Ciphertext::zero(&params);
-    for ciphertext_bytes in &fhe_inputs.ciphertexts {
-        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, &params).unwrap();
+pub fn fhe_processor(fhe_inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
+    let mut sum = Ciphertext::zero(fhe_inputs.params);
+    for ciphertext_bytes in fhe_inputs.ciphertexts {
+        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, fhe_inputs.params).unwrap();
 
         sum += &ciphertext;
     }
@@ -36,7 +33,7 @@ pub fn fhe_processor(fhe_inputs: &FHEInputs) -> Vec<u8> {
 /// Both are specific to this program and its contract. They live here, beside the `CRISPProgram`
 /// they must agree with, rather than in `e3-compute-provider`, which every E3 program shares.
 pub mod policy {
-    use e3_compute_provider::policy::{PublishedInput, leaf_from_digest};
+    use e3_compute_provider::policy::{leaf_from_digest, PublishedInput};
     use e3_compute_provider::{ComputeError, InputPolicy};
     use sha2::{Digest, Sha256};
     use sha3::Keccak256;
