@@ -499,12 +499,15 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │     │  │  → Stored encrypted locally for later decryption    │
 │     │  └─────────────────────────────────────────────────────┘
 │
-├─ 2b. CANONICAL H ROSTER (when H < N):
+├─ 2b. C4 ROSTER (when H < N):
 │     Before C4 witness layout, merge external honest party_ids with own_party_id,
 │     sort ascending, and keep the lowest H — same rule as PublicKeyAggregator C5 cap
-│     (`e3_zk_helpers::canonical_honest_party_ids_with_own`). Persisted as `honest_parties`.
-│     Parties outside the lowest H still complete KeyshareCreated but are not in the
-│     aggregator's NodeFold / `honest_committee_addresses` roster.
+│     (`e3_zk_helpers::canonical_honest_party_ids_with_own`).
+│
+│     After C5, PublicKeyAggregated carries the authoritative H-address subset. Each
+│     keyshare maps those addresses through the full N committee order and replaces its
+│     persisted `honest_parties` set before C6. Parties outside that global H roster
+│     ignore CiphertextOutputPublished and do not generate C6 work.
 │
 ├─ 3. PUBLISH C4 PROOF REQUESTS:
 │     DecryptionShareProofsPending {
@@ -908,7 +911,11 @@ active E3's deadlines.
 
 ---
 
-## Phase 4: Decryption Share Generation (Each Committee Member, with C6 Proof)
+## Phase 4: Decryption Share Generation (Canonical Honest Members, with C6 Proof)
+
+Only members in the persisted canonical honest roster of size `H` generate a decryption share and
+C6 proof. Other committee members ignore `CiphertextOutputPublished` for this phase. The active
+aggregator verifies and folds the resulting `H` share/proof bundles.
 
 Before proof verification, the BFV wrapper requires every public input to use its canonical BN254
 field representation. Message coefficients must also fit exactly in 64 bits. This second check is

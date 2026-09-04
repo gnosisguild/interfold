@@ -11,6 +11,7 @@
 //! It contains NO actix, persistence, bus or timer dependencies — only plain
 //! synchronous data and transition logic, which makes it directly unit-testable.
 
+use alloy::primitives::Address;
 use anyhow::{anyhow, Result};
 use e3_committee_hash::DecryptionDomainContext;
 use e3_crypto::SensitiveBytes;
@@ -29,6 +30,37 @@ use std::{
 };
 
 use crate::domain::timeout_policy::now_unix_secs;
+
+/// Map the authoritative honest addresses to their party IDs in full committee order.
+pub(crate) fn party_ids_for_honest_addresses(
+    committee_addresses: &[Address],
+    honest_committee_addresses: &[Address],
+) -> Result<BTreeSet<u64>> {
+    if honest_committee_addresses.is_empty() {
+        return Err(anyhow!(
+            "PublicKeyAggregated contained an empty honest committee"
+        ));
+    }
+
+    let mut party_ids = BTreeSet::new();
+    for address in honest_committee_addresses {
+        let index = committee_addresses
+            .iter()
+            .position(|candidate| candidate == address)
+            .ok_or_else(|| {
+                anyhow!("Honest committee address {address} is not in the full committee")
+            })?;
+        let party_id = u64::try_from(index)
+            .map_err(|_| anyhow!("Committee index {index} does not fit in a party ID"))?;
+        if !party_ids.insert(party_id) {
+            return Err(anyhow!(
+                "Honest committee contains duplicate address {address}"
+            ));
+        }
+    }
+
+    Ok(party_ids)
+}
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CollectingEncryptionKeysData {

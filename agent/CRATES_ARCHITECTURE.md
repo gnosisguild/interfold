@@ -437,6 +437,10 @@ terminating the process. Process-level health supervision would need to detect t
 but the current runtime does not provide that guarantee. A restart, when it occurs, treats the event
 log as authoritative and reconciles missing derived index rows.
 
+History collectors use the same `MAILBOX_LIMIT_LARGE` capacity to reduce mailbox saturation while
+they record bus events for history inspection. The larger mailbox does not make live fanout lossless;
+do not use it as a replacement for acknowledged delivery or replay.
+
 Those replay guarantees bound local replay memory and file-descriptor use, but they do not make the
 whole persistence path synchronously acknowledged. Live publication and the sequencer/store response
 path still contain `do_send` edges. Snapshot replay also forwards with `do_send`, and `BatchRouter`
@@ -568,8 +572,8 @@ sequenceDiagram
     P->>Z: folded/recursive aggregation proof work
     P->>W: aggregated public key
     Chain->>K: ciphertext outputs
-    K->>Z: C6 decryption-share proofs
-    K->>T: share + proof per output and party
+    K->>Z: C6 decryption-share proofs for the canonical H roster
+    K->>T: share + proof per output and honest party
     T->>Z: C7 aggregation proof
     T->>W: plaintext output
 ```

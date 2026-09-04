@@ -77,9 +77,9 @@
 12. COMPUTE     Data encrypted with aggregate PK, computation runs
                   → Ciphertext output published on-chain
 
-13. DECRYPT     Committee members produce decryption shares
-                  → C6 proof per share (proves share correctly derived)
-                  → broadcast to all committee members for buffering
+13. DECRYPT     Canonical honest committee members produce decryption shares
+                   → C6 proof per share (proves share correctly derived)
+                   → broadcast to all committee members for buffering
 
 14. AGGREGATE   Active aggregator combines M+1 shares → plaintext
                   → C7 proof (proves reconstruction correct)

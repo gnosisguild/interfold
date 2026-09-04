@@ -11,6 +11,23 @@ impl ThresholdKeyshare {
         msg: TypedEvent<CiphertextOutputPublished>,
     ) -> Result<()> {
         let (msg, ec) = msg.into_components();
+        let state = self.state.try_get()?;
+        let Some(honest_parties) = state.honest_parties.as_ref() else {
+            info!(
+                e3_id = %state.e3_id,
+                party_id = state.party_id,
+                "Skipping decryption-share generation because the canonical honest roster is unavailable"
+            );
+            return Ok(());
+        };
+        if !honest_parties.contains(&state.party_id) {
+            info!(
+                e3_id = %state.e3_id,
+                party_id = state.party_id,
+                "Skipping decryption-share generation for a party outside the canonical honest roster"
+            );
+            return Ok(());
+        }
         let ciphertext_output = msg.ciphertext_output;
 
         // If we are already in Decrypting (or beyond), this is a duplicate

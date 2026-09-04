@@ -771,6 +771,12 @@ if [ -n "$INTEGRATION_BLOB" ]; then
             [ -z "$name" ] && continue
             echo "| $name | $(format_s "$avgr") | $runs | $(format_s "$tot") |" >> "$OUTPUT_FILE"
         done < <(jq -r '.operation_timings[]? | [.name, .avg_seconds, .runs, .total_seconds] | @tsv' <<<"$INTEGRATION_BLOB")
+        c6_h=$(jq -r '.benchmark_config.committee_h // empty' <<<"$INTEGRATION_BLOB")
+        c6_n=$(jq -r '.benchmark_config.committee_n // empty' <<<"$INTEGRATION_BLOB")
+        if [ -n "$c6_h" ] && [ -n "$c6_n" ]; then
+            echo "" >> "$OUTPUT_FILE"
+            echo "_Run-count note: DKG preparation rows are N-scoped and remain \`N=${c6_n}\` for this committee. C6 producer rows are H-scoped: \`ZkThresholdShareDecryption\` should run once for each eligible honest party, so its expected request count is \`H=${c6_h}\`. C7 aggregation is one job per ciphertext output and consumes H C6 inputs. The \`runs\` value counts proof-generation or aggregation jobs, as applicable._" >> "$OUTPUT_FILE"
+        fi
         ott=$(jq -r '.operation_timings_total_seconds // empty' <<<"$INTEGRATION_BLOB")
         if [ -n "$ott" ] && [ "$ott" != "null" ]; then
             echo "" >> "$OUTPUT_FILE"

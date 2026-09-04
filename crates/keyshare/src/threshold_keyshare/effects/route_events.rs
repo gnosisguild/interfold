@@ -16,11 +16,22 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::PublicKeyAggregated(data) => {
+                let honest_party_ids = match party_ids_for_honest_addresses(
+                    &data.committee_addresses,
+                    &data.honest_committee_addresses,
+                ) {
+                    Ok(ids) => ids,
+                    Err(err) => {
+                        self.bus.err(EType::KeyGeneration, err);
+                        return;
+                    }
+                };
                 let committee_hash =
                     e3_committee_hash::hash_committee_addresses(&data.committee_addresses);
                 let pk = ArcBytes::from_bytes(&data.pubkey);
                 let _ = self.state.try_mutate(&ec, |mut s| {
                     s.aggregated_pk = Some(pk);
+                    s.honest_parties = Some(honest_party_ids.clone());
                     s.decryption_domain = Some(e3_committee_hash::DecryptionDomainContext {
                         interfold_address: self.interfold_address,
                         committee_hash,
@@ -28,6 +39,11 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                     });
                     Ok(s)
                 });
+                info!(
+                    e3_id = %data.e3_id,
+                    honest_party_ids = ?honest_party_ids,
+                    "Stored the canonical honest roster for decryption-share generation"
+                );
             }
             InterfoldEventData::ThresholdShareCreated(data) => {
                 let _ =
