@@ -94,18 +94,24 @@ export const COMMITTEE_PARAMS: Record<CircuitCommittee, CommitteeParams> = {
 }
 
 /**
- * Every `(preset, committee)` pair is supported because committee-dependent circuit artifacts are
- * regenerated automatically from the BFV presets and the committee's `(N, T)` by the
- * `generate_parity_matrices` Rust binary, invoked from `scripts/build-circuits.ts` whenever
- * the committee is set. The parity matrices and smudging constants are derived artifacts.
+ * Every pair can be generated because committee-dependent circuit artifacts are regenerated from
+ * the BFV presets and the committee's `(N, T)` by `generate_parity_matrices`.
  *
- * This constant is kept for future use (e.g. if a particular pair is ever known-broken at
- * a higher level than the parity matrix) and currently returns the full Cartesian product.
+ * Secure-16384 is generation-only. It is not part of the deployed chain matrix until contracts,
+ * verifier routes, and an artifact release support it.
  */
 export const SUPPORTED_PRESET_COMMITTEE_PAIRS: ReadonlyArray<{
   preset: CircuitPreset
   committee: CircuitCommittee
 }> = ALL_PRESETS.flatMap((preset) => ALL_COMMITTEES.map((committee) => ({ preset, committee })))
+
+/** Pairs that a released circuit archive must contain for the current deployment matrix. */
+export const RELEASE_PRESET_COMMITTEE_PAIRS: ReadonlyArray<{
+  preset: CircuitPreset
+  committee: CircuitCommittee
+}> = [CIRCUIT_PRESETS.INSECURE_512, CIRCUIT_PRESETS.SECURE_8192].flatMap((preset) =>
+  ALL_COMMITTEES.map((committee) => ({ preset, committee })),
+)
 
 export function isPresetCommitteeSupported(preset: CircuitPreset, committee: CircuitCommittee): boolean {
   return SUPPORTED_PRESET_COMMITTEE_PAIRS.some((p) => p.preset === preset && p.committee === committee)

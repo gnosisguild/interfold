@@ -6,6 +6,7 @@ import {
   bfvConfigsForChain,
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
+  getBfvPkVkBindingHashPaths,
   readVkRecursiveHash,
 } from "../utils";
 import { ADDRESS_ONE } from "./constants";
@@ -440,6 +441,11 @@ async function deployBfvVerifierRoute(
     dkgAggregatorVerifier,
     readVkRecursiveHash(pkPaths.nodesFold, config),
     readVkRecursiveHash(pkPaths.c5, config),
+    readVkRecursiveHash(pkPaths.skC2Chunk, config),
+    readVkRecursiveHash(pkPaths.esmC2Chunk, config),
+    getBfvPkVkBindingHashPaths(config).map((filePath) =>
+      readVkRecursiveHash(filePath, config),
+    ),
     config.h,
   );
   await pk.waitForDeployment();

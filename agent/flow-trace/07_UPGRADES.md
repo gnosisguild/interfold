@@ -61,6 +61,12 @@ each other.
 The initial VRF upgrade follows this combined path because it introduces the controller and changes
 both `Interfold` and `BondingRegistry`.
 
+The BFV preset and chunked DKG release uses `protocol_version = 3`, `GOSSIP_WIRE_MAJOR = 3`, and
+`SYNC_WIRE_MAJOR = 3`. The release changes circuit identities and persisted proof payloads. Drain
+all active E3s, stop old nodes, deploy the matching circuit archive, and start the new release
+before resuming requests. Nodes with schema versions below the release schema must use the explicit
+resync procedure; they must not replay the old event log with the new binary.
+
 ## Secure CRISP activation on mainnet
 
 The bootstrap deployment does not become production-ready when CRISP contracts are deployed. With

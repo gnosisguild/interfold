@@ -210,7 +210,7 @@ fn verify_dkg_bounds() {
     // msg_bound = t - 1
     assert(SHARE_ENCRYPTION_MSG_BOUND as u128 == t - 1, "SHARE_ENCRYPTION_MSG_BOUND mismatch");
 
-    // Plaintext coefficients are encoded in [0, t).
+    // The scaled plaintext uses a symmetric magnitude bound of t - 1.
     let ptxt_up_bound: u128 = t - 1;
 
     for i in 0..DKG_L {
@@ -260,8 +260,9 @@ fn verify_dkg_bounds() {
             "SHARE_ENCRYPTION_R1_UP_BOUNDS mismatch",
         );
 
-        // r1_low_bounds[i] uses the lower plaintext bound of zero.
-        let expected_r1_low: u128 = ((n * u_bound + 2) * qi_bound + e0_bound_i) / qi;
+        // r1_low_bounds[i] uses the magnitude of the negative plaintext bound.
+        let expected_r1_low: u128 =
+            (ptxt_up_bound * k0i + ((n * u_bound + 2) * qi_bound + e0_bound_i)) / qi;
         assert(
             SHARE_ENCRYPTION_R1_LOW_BOUNDS[i] as u128 == expected_r1_low,
             "SHARE_ENCRYPTION_R1_LOW_BOUNDS mismatch",

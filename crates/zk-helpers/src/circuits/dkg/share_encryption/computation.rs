@@ -263,8 +263,9 @@ impl Computation for Bounds {
         // Message bound: message is in [0, t), so bound is t - 1
         let msg_bound = t.clone() - BigInt::from(1);
 
-        // Plaintext coefficients are encoded in [0, t), not centered around zero.
-        let ptxt_low_bound = BigInt::from(0);
+        // The scaled plaintext is uncentered on the core/lbfv path. Use a symmetric bound
+        // because the residue quotient can have either sign after modulus switching.
+        let ptxt_low_bound = -(&t - BigInt::from(1));
         let ptxt_up_bound = t.clone() - BigInt::from(1);
 
         // Calculate bounds for each CRT basis

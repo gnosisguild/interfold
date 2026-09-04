@@ -336,69 +336,106 @@ export function getBfvPkSubCircuitVkHashPaths(config?: ActiveBfvConfig) {
 }
 
 /** Recursive VK hashes used to build the DKG pipeline binding manifest. */
-export function getBfvPkVkBindingHashPaths() {
-  const root = getRepoRoot();
+export function getBfvPkVkBindingHashPaths(config?: ActiveBfvConfig) {
+  const root = config ? distCircuitRoot(config) : getRepoRoot();
+  const recursive = config ? "recursive" : "target";
+  const defaultVariant = config ? "default" : "target";
   return [
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/node_fold/target/node_fold.vk_recursive_hash",
-    ),
-    path.join(root, "circuits/bin/dkg/target/pk.vk_recursive_hash"),
-    path.join(
-      root,
-      "circuits/bin/threshold/target/pk_generation.vk_recursive_hash",
+      config
+        ? "default/recursive_aggregation/node_fold/node_fold.vk_hash"
+        : "circuits/bin/recursive_aggregation/node_fold/target/node_fold.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/c2ab_chunk_fold/target/c2ab_chunk_fold.vk_recursive_hash",
+      config
+        ? `${recursive}/dkg/pk/pk.vk_hash`
+        : "circuits/bin/dkg/target/pk.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/c3ab_fold/target/c3ab_fold.vk_recursive_hash",
+      config
+        ? `${recursive}/threshold/pk_generation/pk_generation.vk_hash`
+        : "circuits/bin/threshold/target/pk_generation.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/c4ab_fold/target/c4ab_fold.vk_recursive_hash",
+      config
+        ? `${defaultVariant}/recursive_aggregation/c2ab_chunk_fold/c2ab_chunk_fold.vk_hash`
+        : "circuits/bin/recursive_aggregation/c2ab_chunk_fold/target/c2ab_chunk_fold.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/sk_c2_chunk_finalize/target/sk_c2_chunk_finalize.vk_recursive_hash",
+      config
+        ? `${defaultVariant}/recursive_aggregation/c3ab_fold/c3ab_fold.vk_hash`
+        : "circuits/bin/recursive_aggregation/c3ab_fold/target/c3ab_fold.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/esm_c2_chunk_finalize/target/esm_c2_chunk_finalize.vk_recursive_hash",
+      config
+        ? `${defaultVariant}/recursive_aggregation/c4ab_fold/c4ab_fold.vk_hash`
+        : "circuits/bin/recursive_aggregation/c4ab_fold/target/c4ab_fold.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/c2_chunk_batch/target/c2_chunk_batch.vk_recursive_hash",
+      config
+        ? `${defaultVariant}/recursive_aggregation/sk_c2_chunk_finalize/sk_c2_chunk_finalize.vk_hash`
+        : "circuits/bin/recursive_aggregation/sk_c2_chunk_finalize/target/sk_c2_chunk_finalize.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/dkg/target/sk_share_computation_chunk.vk_recursive_hash",
+      config
+        ? `${defaultVariant}/recursive_aggregation/esm_c2_chunk_finalize/esm_c2_chunk_finalize.vk_hash`
+        : "circuits/bin/recursive_aggregation/esm_c2_chunk_finalize/target/esm_c2_chunk_finalize.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/dkg/target/esm_share_computation_chunk.vk_recursive_hash",
+      config
+        ? `${defaultVariant}/recursive_aggregation/c2_chunk_batch/c2_chunk_batch.vk_hash`
+        : "circuits/bin/recursive_aggregation/c2_chunk_batch/target/c2_chunk_batch.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/c3_fold/target/c3_fold.vk_recursive_hash",
+      config
+        ? `${recursive}/dkg/sk_share_computation_chunk/sk_share_computation_chunk.vk_hash`
+        : "circuits/bin/dkg/target/sk_share_computation_chunk.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/dkg/target/share_encryption.vk_recursive_hash",
+      config
+        ? `${recursive}/dkg/esm_share_computation_chunk/esm_share_computation_chunk.vk_hash`
+        : "circuits/bin/dkg/target/esm_share_computation_chunk.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/dkg/target/share_decryption.vk_recursive_hash",
+      config
+        ? `${defaultVariant}/recursive_aggregation/c3_fold/c3_fold.vk_hash`
+        : "circuits/bin/recursive_aggregation/c3_fold/target/c3_fold.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/c3_fold_kernel/target/c3_fold_kernel.vk_recursive_hash",
+      config
+        ? `${recursive}/dkg/share_encryption/share_encryption.vk_hash`
+        : "circuits/bin/dkg/target/share_encryption.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/nodes_fold_kernel/target/nodes_fold_kernel.vk_recursive_hash",
+      config
+        ? `${recursive}/dkg/share_decryption/share_decryption.vk_hash`
+        : "circuits/bin/dkg/target/share_decryption.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      config
+        ? `${defaultVariant}/recursive_aggregation/c3_fold_kernel/c3_fold_kernel.vk_hash`
+        : "circuits/bin/recursive_aggregation/c3_fold_kernel/target/c3_fold_kernel.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      config
+        ? `${defaultVariant}/recursive_aggregation/nodes_fold_kernel/nodes_fold_kernel.vk_hash`
+        : "circuits/bin/recursive_aggregation/nodes_fold_kernel/target/nodes_fold_kernel.vk_recursive_hash",
     ),
   ] as const;
 }
@@ -501,8 +538,8 @@ export async function assertBfvPkVerifierSubCircuitVkHashes(
     getBfvPkSubCircuitVkHashPaths(config).esmC2Chunk,
     config,
   );
-  const expectedVkBinding = getBfvPkVkBindingHashPaths().map((filePath) =>
-    readVkRecursiveHash(filePath),
+  const expectedVkBinding = getBfvPkVkBindingHashPaths(config).map((filePath) =>
+    readVkRecursiveHash(filePath, config),
   );
   const [onChainNodesFold, onChainC5, onChainSkC2Chunk, onChainESmC2Chunk] =
     await Promise.all([

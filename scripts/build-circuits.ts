@@ -714,12 +714,13 @@ library ActiveCryptoConfig {
       }
 
       this.regenerateConfigModules(preset)
-      const sourceHash = this.computeSourceHash(preset, committee)
-      result.sourceHash = sourceHash
-
       if (modNrPath) {
         this.syncPresetAndCommittee(modNrPath, preset, committee)
       }
+      // Hash after syncing generated preset, committee, and parity inputs. Otherwise
+      // hydrate-only validation compares artifacts against a pre-sync source hash.
+      const sourceHash = this.computeSourceHash(preset, committee)
+      result.sourceHash = sourceHash
 
       if (this.options.hydrateBinOnly) {
         if (!this.isDistPresetUpToDate(preset, committee, sourceHash)) {

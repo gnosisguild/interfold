@@ -276,11 +276,11 @@ mod tests {
     }
 
     #[test]
-    fn sync_envelope_v2_fixture_is_stable() {
+    fn sync_envelope_v3_fixture_is_stable() {
         let bytes = encode_sync(SyncMessageKind::FetchEvents, &7u64).unwrap();
         assert_eq!(
             hex::encode(bytes),
-            "49465332020000000000aae89fc0f03e2959ae4d701a80cc3915918c950b159f6abb6c92c1433b1a853408000000000000000700000000000000"
+            "49465332030000000000aae89fc0f03e2959ae4d701a80cc3915918c950b159f6abb6c92c1433b1a853408000000000000000700000000000000"
         );
     }
 }

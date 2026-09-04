@@ -51,7 +51,8 @@ pub mod secure_8192 {
     }
 }
 
-/// Secure preset constants (degree 16384) - PRODUCTION READY. The runtime
+/// Secure preset constants (degree 16384), available for generation but not enabled in the
+/// current deployment matrix. The runtime
 /// `SmudgingBoundCalculator` enforces `2*(B_C + n*B_sm) < Delta = floor(Q/t)`;
 /// these 16384 parameters were regenerated with the multiplicative-depth-aware
 /// search (Prop. 20 recursion) and support `mult_depth` 0-3 at runtime.
