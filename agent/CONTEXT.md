@@ -76,10 +76,8 @@ The protocol release can carry more than one circuit artifact set. Current deplo
 matrix:
 
 - Ethereum mainnet supports `secure-8192/minimum`, `secure-8192/micro`, and `secure-8192/small`.
-- Sepolia and local chains support `insecure` and `secure-8192` with `minimum`, `micro`, and
-  `small` committees.
-- `secure-16384` is available for circuit generation but is not enabled in the current chain
-  deployment matrix.
+- Sepolia and local chains support `insecure`, `secure-8192`, and `secure-16384` with `minimum`,
+  `micro`, and `small` committees.
 
 `ActiveCryptoConfig.sol` selects the parameter sets and committee shapes supported by
 `block.chainid`. Deployment tooling mirrors that matrix with `bfvConfigsForChain(chainId)` and reads

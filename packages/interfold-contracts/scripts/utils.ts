@@ -104,7 +104,7 @@ export const ACTIVE_BFV_PARAM_SET = 0;
 export const ACTIVE_BFV_COMMITTEE_SIZE = 0;
 export const ACTIVE_BFV_COMMITTEE_N = 3;
 
-export type BfvArtifactPreset = "insecure" | "secure-8192";
+export type BfvArtifactPreset = "insecure" | "secure-8192" | "secure-16384";
 export type BfvCommittee = "minimum" | "micro" | "small";
 
 export interface ActiveBfvConfig {
@@ -127,19 +127,35 @@ const SECURE_PARAM_SET_HASH =
   "0x80775a19b6126a12943f9c1c53f92299f0c92ece819b625026ab1406bbbe0721";
 const SECURE_CONFIG_ID =
   "0x2af9e43a7b95b11300b6185f3ffaece530facafd2ce98c5e1a1cece8a80ad3cb";
+const SECURE_16384_PARAM_SET_HASH =
+  "0x8afd5dddf1bc0cfb00c70e9a7d0a0fb11bd0617df27574fa7d2ccf9ae3a6bdb8";
+const SECURE_16384_CONFIG_ID =
+  "0x81f3edb4c49db1c2baf578d6ade4aea6839ee6a71d7458c1bfc79670d2ece7cd";
 
 function bfvConfig(
   preset: BfvArtifactPreset,
   committee: BfvCommittee,
   params: Pick<ActiveBfvConfig, "committeeSize" | "h" | "t" | "n">,
 ): ActiveBfvConfig {
-  const secure = preset === "secure-8192";
+  const paramSet = preset === "insecure" ? 0 : preset === "secure-8192" ? 1 : 2;
+  const paramSetHash =
+    paramSet === 0
+      ? INSECURE_PARAM_SET_HASH
+      : paramSet === 1
+        ? SECURE_PARAM_SET_HASH
+        : SECURE_16384_PARAM_SET_HASH;
+  const configId =
+    paramSet === 0
+      ? INSECURE_CONFIG_ID
+      : paramSet === 1
+        ? SECURE_CONFIG_ID
+        : SECURE_16384_CONFIG_ID;
   return {
     preset,
     committee,
-    paramSet: secure ? 1 : 0,
-    paramSetHash: secure ? SECURE_PARAM_SET_HASH : INSECURE_PARAM_SET_HASH,
-    configId: secure ? SECURE_CONFIG_ID : INSECURE_CONFIG_ID,
+    paramSet,
+    paramSetHash,
+    configId,
     ...params,
   };
 }
@@ -180,6 +196,24 @@ export const SECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   { committeeSize: 2, h: 10, t: 9, n: 19 },
 );
 
+export const SECURE_16384_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-16384",
+  "minimum",
+  { committeeSize: 0, h: 2, t: 1, n: 3 },
+);
+
+export const SECURE_16384_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-16384",
+  "micro",
+  { committeeSize: 1, h: 5, t: 4, n: 9 },
+);
+
+export const SECURE_16384_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-16384",
+  "small",
+  { committeeSize: 2, h: 10, t: 9, n: 19 },
+);
+
 export const PRODUCTION_BFV_CONFIG: ActiveBfvConfig = SECURE_SMALL_BFV_CONFIG;
 
 export const TESTNET_BFV_CONFIG: ActiveBfvConfig = INSECURE_MINIMUM_BFV_CONFIG;
@@ -197,6 +231,9 @@ export const TESTNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [
   SECURE_MINIMUM_BFV_CONFIG,
   SECURE_MICRO_BFV_CONFIG,
   SECURE_SMALL_BFV_CONFIG,
+  SECURE_16384_MINIMUM_BFV_CONFIG,
+  SECURE_16384_MICRO_BFV_CONFIG,
+  SECURE_16384_SMALL_BFV_CONFIG,
 ] as const;
 
 export function isTestnetOrLocalChainId(chainId: number): boolean {

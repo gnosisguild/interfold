@@ -1077,6 +1077,9 @@ jobs:
           secure-8192 minimum
           secure-8192 micro
           secure-8192 small
+          secure-16384 minimum
+          secure-16384 micro
+          secure-16384 small
           insecure minimum
           EOF
 

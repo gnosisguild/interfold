@@ -247,7 +247,7 @@ ts_bytes32() {
     | head -n1
 }
 
-for prefix in INSECURE SECURE; do
+for prefix in INSECURE SECURE SECURE_16384; do
   utils_param_hash=$(ts_bytes32 "${prefix}_PARAM_SET_HASH")
   utils_config_id=$(ts_bytes32 "${prefix}_CONFIG_ID")
   sol_param_hash=$(sol_bytes32 "${prefix}_PARAM_SET_HASH")
@@ -275,7 +275,7 @@ extract_rust_config_id() {
     | head -n1
 }
 
-for prefix_and_param_set in INSECURE:0 SECURE:1; do
+for prefix_and_param_set in INSECURE:0 SECURE:1 SECURE_16384:2; do
   prefix="${prefix_and_param_set%%:*}"
   param_set="${prefix_and_param_set##*:}"
   expected_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
@@ -313,18 +313,21 @@ check_utils_route INSECURE_SMALL insecure small 2
 check_utils_route SECURE_MINIMUM secure-8192 minimum 0
 check_utils_route SECURE_MICRO secure-8192 micro 1
 check_utils_route SECURE_SMALL secure-8192 small 2
+check_utils_route SECURE_16384_MINIMUM secure-16384 minimum 0
+check_utils_route SECURE_16384_MICRO secure-16384 micro 1
+check_utils_route SECURE_16384_SMALL secure-16384 small 2
 
 route_list() {
   local array_name="$1"
   sed -n "/^export const ${array_name}:.*= \[/,/^\] as const;/p" "$UTILS_TS" \
-    | grep -oE '(INSECURE|SECURE)_(MINIMUM|MICRO|SMALL)_BFV_CONFIG' \
+    | grep -oE '(INSECURE|SECURE(_16384)?)_(MINIMUM|MICRO|SMALL)_BFV_CONFIG' \
     | paste -sd, -
 }
 
 TESTNET_ROUTES=$(route_list TESTNET_BFV_CONFIGS)
-EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG"
+EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG,SECURE_16384_MINIMUM_BFV_CONFIG,SECURE_16384_MICRO_BFV_CONFIG,SECURE_16384_SMALL_BFV_CONFIG"
 [[ "$TESTNET_ROUTES" == "$EXPECTED_TESTNET_ROUTES" ]] \
-  || fail "$UTILS_TS testnet routes must contain the exact six-pair matrix; got $TESTNET_ROUTES"
+  || fail "$UTILS_TS testnet routes must contain the exact nine-pair matrix; got $TESTNET_ROUTES"
 
 MAINNET_ROUTES=$(route_list MAINNET_BFV_CONFIGS)
 EXPECTED_MAINNET_ROUTES="SECURE_SMALL_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG"
@@ -494,4 +497,4 @@ else
   echo "  (skipping parity-matrix drift check: $GEN_BIN not built. Run \`cargo build -p e3-zk-helpers --bin generate_parity_matrices --release\` to enable.)" >&2
 fi
 
-echo "✓ check:committee: BFV tuples, configuration IDs, all six routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) are consistent across TypeScript, Rust, Noir, and Solidity$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"
+echo "✓ check:committee: BFV tuples, configuration IDs, all nine testnet routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) are consistent across TypeScript, Rust, Noir, and Solidity$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"

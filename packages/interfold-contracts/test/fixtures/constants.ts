@@ -61,6 +61,9 @@ export const BFV_PARAMS_DEFAULT = encodeBfvParams(BFV_PARAMS.insecure512);
 /** The secure-8192 parameter set that Sepolia/local deployments can also register. */
 export const BFV_PARAMS_SECURE = encodeBfvParams(BFV_PARAMS.secure8192);
 
+/** The secure-16384 parameter set that Sepolia/local deployments can also register. */
+export const BFV_PARAMS_SECURE_16384 = encodeBfvParams(BFV_PARAMS.secure16384);
+
 /** Circuit, BFV parameters, and verifier generation used by this build. */
 export const ACTIVE_CRYPTO_CONFIG_ID = ethers.keccak256(
   abiCoder.encode(

@@ -97,8 +97,7 @@ export const COMMITTEE_PARAMS: Record<CircuitCommittee, CommitteeParams> = {
  * Every pair can be generated because committee-dependent circuit artifacts are regenerated from
  * the BFV presets and the committee's `(N, T)` by `generate_parity_matrices`.
  *
- * Secure-16384 is generation-only. It is not part of the deployed chain matrix until contracts,
- * verifier routes, and an artifact release support it.
+ * Secure-16384 is enabled on Sepolia and local chains. Mainnet remains on secure-8192.
  */
 export const SUPPORTED_PRESET_COMMITTEE_PAIRS: ReadonlyArray<{
   preset: CircuitPreset
@@ -109,9 +108,7 @@ export const SUPPORTED_PRESET_COMMITTEE_PAIRS: ReadonlyArray<{
 export const RELEASE_PRESET_COMMITTEE_PAIRS: ReadonlyArray<{
   preset: CircuitPreset
   committee: CircuitCommittee
-}> = [CIRCUIT_PRESETS.INSECURE_512, CIRCUIT_PRESETS.SECURE_8192].flatMap((preset) =>
-  ALL_COMMITTEES.map((committee) => ({ preset, committee })),
-)
+}> = ALL_PRESETS.flatMap((preset) => ALL_COMMITTEES.map((committee) => ({ preset, committee })))
 
 export function isPresetCommitteeSupported(preset: CircuitPreset, committee: CircuitCommittee): boolean {
   return SUPPORTED_PRESET_COMMITTEE_PAIRS.some((p) => p.preset === preset && p.committee === committee)
