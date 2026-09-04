@@ -36,6 +36,22 @@ type TubeFixtureOutput = {
   c3b: TubeFixture[]
 }
 
+type LeafChonkCircuits = {
+  app: CompiledCircuit
+  init: CompiledCircuit
+  inner: CompiledCircuit
+  tail: CompiledCircuit
+  hiding: CompiledCircuit
+}
+
+type LeafChonkNoirs = {
+  app: Noir
+  init: Noir
+  inner: Noir
+  tail: Noir
+  hiding: Noir
+}
+
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(scriptDir, '../../..')
 const probeRoot = resolve(repoRoot, 'circuits/benchmarks/chonk_c3_probe')
@@ -60,8 +76,13 @@ const C3_SLOTS_PER_PARTY = C3_MODULI
 const C3_LEAF_COUNT = C3_SLOTS - C3_SLOTS_PER_PARTY
 const C3_BATCH_SIZE = C3_LEAF_COUNT / 2
 const C3_CHUNK_COUNT = C3_LEAF_COUNT / C3_BATCH_SIZE
+const C3_LEAF_STACK_SIZE = 9
+const C3_LEAF_STACK_COUNT = C3_LEAF_COUNT / C3_LEAF_STACK_SIZE
 if (!Number.isInteger(C3_BATCH_SIZE) || !Number.isInteger(C3_CHUNK_COUNT)) {
   throw new Error(`C3 leaf count must split evenly into Chonk batches: ${C3_LEAF_COUNT}`)
+}
+if (committee === 'small' && !Number.isInteger(C3_LEAF_STACK_COUNT)) {
+  throw new Error(`C3 leaf count must split evenly into leaf Chonk stacks: ${C3_LEAF_COUNT}`)
 }
 const C3_ACCUMULATOR_LEN = 3 * C3_SLOTS
 const C3_FOLD_PREFIX_LEN = 6
@@ -70,6 +91,13 @@ const CHONK_VK_LENGTH_IN_FIELDS = 115
 const CHONK_PROOF_LENGTH = 1270
 const ROLLUP_HONK_PROOF_LENGTH = 480
 const SLOT_INDICES = Array.from({ length: C3_LEAF_COUNT }, (_, index) => C3_SLOTS_PER_PARTY + index)
+const chonkMode = process.env.CHONK_C3_MODE ?? 'batch'
+if (chonkMode !== 'batch' && chonkMode !== 'leaf') {
+  throw new Error(`Unsupported CHONK_C3_MODE=${chonkMode}; expected batch or leaf`)
+}
+if (chonkMode === 'leaf' && committee !== 'small') {
+  throw new Error('CHONK_C3_MODE=leaf currently requires the Small committee artifacts')
+}
 
 function run(command: string, args: string[], cwd: string, inherit = false): void {
   execFileSync(command, args, { cwd, stdio: inherit ? 'inherit' : 'ignore' })
@@ -138,7 +166,20 @@ function ensureLeafArtifact(): void {
 }
 
 function ensureProbeArtifacts(): void {
-  const circuits = ['c3_commitment', 'c3_batch_app', 'c3_init_kernel', 'c3_tail_kernel', 'c3_hiding_kernel', 'c3_tube', 'c3ab_fold']
+  const circuits = [
+    'c3_commitment',
+    'c3_batch_app',
+    'c3_init_kernel',
+    'c3_tail_kernel',
+    'c3_hiding_kernel',
+    'c3_leaf_app',
+    'c3_leaf_init_kernel',
+    'c3_leaf_inner_kernel',
+    'c3_leaf_tail_kernel',
+    'c3_leaf_hiding_kernel',
+    'c3_tube',
+    'c3ab_fold',
+  ]
   for (const circuit of circuits) run('nargo', ['compile'], resolve(probeRoot, circuit))
 
   for (const circuit of ['c3_batch_app', 'c3_init_kernel', 'c3_tail_kernel']) {
@@ -146,8 +187,19 @@ function ensureProbeArtifacts(): void {
     run('bb', ['write_vk', '--scheme', 'chonk', '-b', `target/chonk_${circuit}.json`, '-o', 'target'], dir)
   }
 
+  for (const circuit of ['c3_leaf_app', 'c3_leaf_init_kernel', 'c3_leaf_inner_kernel', 'c3_leaf_tail_kernel']) {
+    const dir = resolve(probeRoot, circuit)
+    run('bb', ['write_vk', '--scheme', 'chonk', '-b', `target/chonk_${circuit}.json`, '-o', 'target'], dir)
+  }
+
   const hidingDir = resolve(probeRoot, 'c3_hiding_kernel')
   run('bb', ['write_vk', '--scheme', 'chonk', '--use_zk_flavor', '-b', 'target/chonk_c3_hiding_kernel.json', '-o', 'target'], hidingDir)
+  const leafHidingDir = resolve(probeRoot, 'c3_leaf_hiding_kernel')
+  run(
+    'bb',
+    ['write_vk', '--scheme', 'chonk', '--use_zk_flavor', '-b', 'target/chonk_c3_leaf_hiding_kernel.json', '-o', 'target'],
+    leafHidingDir,
+  )
 
   if (process.env.CHONK_C3_OUTPUT) {
     const c3abDir = resolve(probeRoot, 'c3ab_fold')
@@ -409,15 +461,185 @@ async function proveChonkTube(
   }
 }
 
+async function proveChonkLeafTube(
+  api: Barretenberg,
+  chonkApi: Barretenberg,
+  circuits: LeafChonkCircuits,
+  tubeCircuit: CompiledCircuit,
+  leafVkFields: string[],
+  leafKeyHash: string,
+  c3FoldKernelKeyHash: string,
+  leaves: ProofFixture[],
+  slotIndices: number[],
+  noirs: LeafChonkNoirs,
+  tubeNoir: Noir,
+): Promise<{ fixture: TubeFixture; chonkSeconds: number; tubeSeconds: number }> {
+  if (leaves.length !== C3_LEAF_STACK_SIZE || slotIndices.length !== C3_LEAF_STACK_SIZE) {
+    throw new Error(`Leaf Chonk stack expects ${C3_LEAF_STACK_SIZE} leaves and slots`)
+  }
+
+  const appVkFields = fieldsFromBytes(loadBytes(resolve(probeRoot, 'c3_leaf_app/target/vk')))
+  const initVkFields = fieldsFromBytes(loadBytes(resolve(probeRoot, 'c3_leaf_init_kernel/target/vk')))
+  const innerVkFields = fieldsFromBytes(loadBytes(resolve(probeRoot, 'c3_leaf_inner_kernel/target/vk')))
+  const tailVkFields = fieldsFromBytes(loadBytes(resolve(probeRoot, 'c3_leaf_tail_kernel/target/vk')))
+  const appVk = { key: appVkFields, hash: await poseidonHash(api, appVkFields) }
+  const initVk = { key: initVkFields, hash: await poseidonHash(api, initVkFields) }
+  const innerVk = { key: innerVkFields, hash: await poseidonHash(api, innerVkFields) }
+  const tailVk = { key: tailVkFields, hash: await poseidonHash(api, tailVkFields) }
+
+  const appVkBytes = loadBytes(resolve(probeRoot, 'c3_leaf_app/target/vk'))
+  const initVkBytes = loadBytes(resolve(probeRoot, 'c3_leaf_init_kernel/target/vk'))
+  const innerVkBytes = loadBytes(resolve(probeRoot, 'c3_leaf_inner_kernel/target/vk'))
+  const tailVkBytes = loadBytes(resolve(probeRoot, 'c3_leaf_tail_kernel/target/vk'))
+  const hidingVkBytes = loadBytes(resolve(probeRoot, 'c3_leaf_hiding_kernel/target/vk'))
+
+  const stackCircuits: CompiledCircuit[] = []
+  const stackVks: Uint8Array[] = []
+  const circuitNames: string[] = []
+  const witnesses: Uint8Array[] = []
+  const addStackStep = (name: string, circuit: CompiledCircuit, vk: Uint8Array, witness: Uint8Array): void => {
+    circuitNames.push(name)
+    stackCircuits.push(circuit)
+    stackVks.push(vk)
+    witnesses.push(gunzipSync(witness))
+  }
+
+  let previousKernelReturnValue: any
+  for (let i = 0; i < C3_LEAF_STACK_SIZE; i++) {
+    const appExecution = await noirs.app.execute({
+      verification_key: leafVkFields,
+      key_hash: leafKeyHash,
+      proof: leaves[i].proof,
+      public_inputs: leaves[i].publicInputs,
+      slot_index: slotIndices[i],
+    })
+    const appOutput = flattenReturnValue(appExecution.returnValue)
+    if (appOutput.length !== 4) throw new Error(`Expected four C3 leaf return fields, got ${appOutput.length}`)
+    addStackStep('chonk_c3_leaf_app', circuits.app, appVkBytes, appExecution.witness)
+
+    if (i === 0) {
+      const initExecution = await noirs.init.execute({
+        app_inputs: appExecution.returnValue,
+        app_vk: appVk,
+      })
+      addStackStep('chonk_c3_leaf_init_kernel', circuits.init, initVkBytes, initExecution.witness)
+      previousKernelReturnValue = initExecution.returnValue
+    } else {
+      const innerExecution = await noirs.inner.execute({
+        prev_kernel_inputs: previousKernelReturnValue,
+        kernel_vk: i === 1 ? initVk : innerVk,
+        app_inputs: appExecution.returnValue,
+        app_vk: appVk,
+      })
+      addStackStep('chonk_c3_leaf_inner_kernel', circuits.inner, innerVkBytes, innerExecution.witness)
+      previousKernelReturnValue = innerExecution.returnValue
+    }
+  }
+
+  const tailExecution = await noirs.tail.execute({
+    prev_kernel_inputs: previousKernelReturnValue,
+    kernel_vk: innerVk,
+  })
+  addStackStep('chonk_c3_leaf_tail_kernel', circuits.tail, tailVkBytes, tailExecution.witness)
+
+  const hidingExecution = await noirs.hiding.execute({
+    prev_kernel_inputs: tailExecution.returnValue,
+    kernel_vk: tailVk,
+  })
+  addStackStep('chonk_c3_leaf_hiding_kernel', circuits.hiding, hidingVkBytes, hidingExecution.witness)
+
+  const expectedOutput = flattenReturnValue(hidingExecution.returnValue)
+  if (expectedOutput.length !== C3_ACCUMULATOR_LEN) {
+    throw new Error(`Expected ${C3_ACCUMULATOR_LEN} hiding-kernel fields, got ${expectedOutput.length}`)
+  }
+
+  const expectedStackLength = 2 * C3_LEAF_STACK_SIZE + 2
+  if (circuitNames.length !== expectedStackLength) {
+    throw new Error(`Expected ${expectedStackLength} leaf Chonk circuits, got ${circuitNames.length}`)
+  }
+
+  const chonkBackend = new AztecClientBackend(stackCircuits.map(uncompressedBytecode), chonkApi, circuitNames)
+  const chonkStarted = performance.now()
+  const chonkResult = await chonkBackend.prove(witnesses, stackVks)
+  const chonkSeconds = (performance.now() - chonkStarted) / 1000
+  if (!(await chonkBackend.verify(chonkResult.proof, chonkResult.vk))) throw new Error('Chonk proof did not verify')
+
+  const chonkProofFields = chonkResult.proofFields.map(fieldToHex)
+  if (chonkProofFields.length !== C3_ACCUMULATOR_LEN + CHONK_PROOF_LENGTH) {
+    throw new Error(`Unexpected Chonk field count: ${chonkProofFields.length}`)
+  }
+  const chonkPublicInputs = chonkProofFields.slice(0, C3_ACCUMULATOR_LEN)
+  const chonkProof = chonkProofFields.slice(C3_ACCUMULATOR_LEN)
+  const chonkVkFields = fieldsFromBytes(chonkResult.vk)
+  if (chonkVkFields.length !== CHONK_VK_LENGTH_IN_FIELDS) {
+    throw new Error(`Expected ${CHONK_VK_LENGTH_IN_FIELDS} Chonk VK fields, got ${chonkVkFields.length}`)
+  }
+  const chonkKeyHash = await poseidonHash(api, chonkVkFields)
+  if (expectedOutput.some((value, index) => canonicalField(value) !== canonicalField(chonkPublicInputs[index]))) {
+    throw new Error('Hiding-kernel and Chonk accumulator values differ')
+  }
+
+  const c3PublicInputs = [
+    leafKeyHash,
+    '',
+    numberToField(0),
+    numberToField(slotIndices[slotIndices.length - 1]),
+    c3FoldKernelKeyHash,
+    '',
+    ...chonkPublicInputs,
+  ]
+
+  const tubeBackend = new UltraHonkBackend(tubeCircuit.bytecode, api)
+  const tubeVk = await tubeBackend.getVerificationKey({ verifierTarget: 'noir-rollup-no-zk' })
+  const tubeVkFields = fieldsFromBytes(tubeVk)
+  const tubeKeyHash = await poseidonHash(api, tubeVkFields)
+  c3PublicInputs[1] = tubeKeyHash
+  c3PublicInputs[5] = tubeKeyHash
+  if (c3PublicInputs.length !== C3_FOLD_PUBLIC_LEN) {
+    throw new Error(`Expected ${C3_FOLD_PUBLIC_LEN} tube public inputs, got ${c3PublicInputs.length}`)
+  }
+
+  const { witness: tubeWitness } = await tubeNoir.execute({
+    verification_key: chonkVkFields,
+    proof: chonkProof,
+    chonk_public_inputs: chonkPublicInputs,
+    key_hash: chonkKeyHash,
+    c3_public_inputs: c3PublicInputs,
+  })
+  const tubeStarted = performance.now()
+  const tubeProof = await tubeBackend.generateProof(tubeWitness, { verifierTarget: 'noir-rollup-no-zk' })
+  const tubeSeconds = (performance.now() - tubeStarted) / 1000
+  if (!(await tubeBackend.verifyProof(tubeProof, { verifierTarget: 'noir-rollup-no-zk' }))) {
+    throw new Error('C3 tube proof did not verify')
+  }
+  if (fieldsFromBytes(tubeProof.proof).length !== ROLLUP_HONK_PROOF_LENGTH) {
+    throw new Error(`Expected ${ROLLUP_HONK_PROOF_LENGTH} rollup proof fields, got ${fieldsFromBytes(tubeProof.proof).length}`)
+  }
+  if (tubeProof.publicInputs.length !== C3_FOLD_PUBLIC_LEN) {
+    throw new Error(`Expected ${C3_FOLD_PUBLIC_LEN} tube proof public inputs, got ${tubeProof.publicInputs.length}`)
+  }
+
+  return {
+    fixture: {
+      proofFields: fieldsFromBytes(tubeProof.proof),
+      publicInputs: tubeProof.publicInputs,
+      verificationKey: tubeVkFields,
+      keyHash: tubeKeyHash,
+    },
+    chonkSeconds,
+    tubeSeconds,
+  }
+}
+
 function uncompressedBytecode(circuit: CompiledCircuit): Uint8Array {
   return gunzipSync(Buffer.from(circuit.bytecode, 'base64'))
 }
 
 function chunk<T>(values: T[], size: number): T[][] {
-  if (values.length !== C3_LEAF_COUNT) {
-    throw new Error(`Expected ${C3_LEAF_COUNT} C3 leaves, got ${values.length}`)
+  if (!Number.isInteger(size) || size <= 0 || values.length % size !== 0) {
+    throw new Error(`Cannot split ${values.length} values into chunks of ${size}`)
   }
-  return Array.from({ length: C3_CHUNK_COUNT }, (_, index) => values.slice(index * size, (index + 1) * size))
+  return Array.from({ length: values.length / size }, (_, index) => values.slice(index * size, (index + 1) * size))
 }
 
 async function main(): Promise<void> {
@@ -430,6 +652,11 @@ async function main(): Promise<void> {
   const initCircuit = loadCircuit('c3_init_kernel')
   const tailCircuit = loadCircuit('c3_tail_kernel')
   const hidingCircuit = loadCircuit('c3_hiding_kernel')
+  const leafAppCircuit = loadCircuit('c3_leaf_app')
+  const leafInitCircuit = loadCircuit('c3_leaf_init_kernel')
+  const leafInnerCircuit = loadCircuit('c3_leaf_inner_kernel')
+  const leafTailCircuit = loadCircuit('c3_leaf_tail_kernel')
+  const leafHidingCircuit = loadCircuit('c3_leaf_hiding_kernel')
   const tubeCircuit = loadCircuit('c3_tube')
 
   const leafVkFields = fieldsFromBytes(loadBytes(resolve(dkgTargetDir, 'share_encryption.vk_noir')))
@@ -450,6 +677,15 @@ async function main(): Promise<void> {
   const slotChunks = chunk(slotIndices, C3_BATCH_SIZE)
   const c3aChunks = chunk(leafProofsA, C3_BATCH_SIZE)
   const c3bChunks = chunk(leafProofsB, C3_BATCH_SIZE)
+  const leafSlotChunks = chonkMode === 'leaf' ? chunk(slotIndices, C3_LEAF_STACK_SIZE) : []
+  const leafC3aChunks = chonkMode === 'leaf' ? chunk(leafProofsA, C3_LEAF_STACK_SIZE) : []
+  const leafC3bChunks = chonkMode === 'leaf' ? chunk(leafProofsB, C3_LEAF_STACK_SIZE) : []
+
+  const leafFixturesOutputPath = process.env.CHONK_C3_LEAF_FIXTURES_OUTPUT
+  if (leafFixturesOutputPath && !input) {
+    mkdirSync(dirname(leafFixturesOutputPath), { recursive: true })
+    writeFileSync(leafFixturesOutputPath, `${JSON.stringify({ slotIndices, c3a: leafProofsA, c3b: leafProofsB }, null, 2)}\n`)
+  }
 
   const api = await Barretenberg.new({ threads: 4 })
   const chonkApi = await Barretenberg.new({ threads: 4 })
@@ -459,38 +695,87 @@ async function main(): Promise<void> {
     const initNoir = new Noir(initCircuit as any)
     const tailNoir = new Noir(tailCircuit as any)
     const hidingNoir = new Noir(hidingCircuit as any)
+    const leafNoirs: LeafChonkNoirs = {
+      app: new Noir(leafAppCircuit as any),
+      init: new Noir(leafInitCircuit as any),
+      inner: new Noir(leafInnerCircuit as any),
+      tail: new Noir(leafTailCircuit as any),
+      hiding: new Noir(leafHidingCircuit as any),
+    }
     const tubeNoir = new Noir(tubeCircuit as any)
 
-    const circuitNames = ['chonk_c3_batch_app', 'chonk_c3_init_kernel', 'chonk_c3_tail_kernel', 'chonk_c3_hiding_kernel']
-    const circuits = [appCircuit, initCircuit, tailCircuit, hidingCircuit]
-    const vks = circuitNames.map((name) => loadBytes(resolve(probeRoot, name.replace('chonk_', ''), 'target/vk')))
     const c3FoldKernelKeyHash = fieldToHex(
       loadBytes(resolve(repoRoot, 'circuits/bin/recursive_aggregation/c3_fold_kernel/target/c3_fold_kernel.vk_recursive_hash')),
     )
-    const proveChunk = (leaves: ProofFixture[], slots: number[]) =>
-      proveChonkTube(
-        api,
-        chonkApi,
-        circuits,
-        vks,
-        circuitNames,
-        tubeCircuit,
-        leafVkFields,
-        leafKeyHash,
-        c3FoldKernelKeyHash,
-        leaves,
-        slots,
-        appNoir,
-        initNoir,
-        tailNoir,
-        hidingNoir,
-        tubeNoir,
-      )
     const c3aResults = []
     const c3bResults = []
-    for (let i = 0; i < C3_CHUNK_COUNT; i++) {
-      c3aResults.push(await proveChunk(c3aChunks[i], slotChunks[i]))
-      c3bResults.push(await proveChunk(c3bChunks[i], slotChunks[i]))
+    if (chonkMode === 'leaf') {
+      const leafCircuits: LeafChonkCircuits = {
+        app: leafAppCircuit,
+        init: leafInitCircuit,
+        inner: leafInnerCircuit,
+        tail: leafTailCircuit,
+        hiding: leafHidingCircuit,
+      }
+      for (let i = 0; i < C3_LEAF_STACK_COUNT; i++) {
+        c3aResults.push(
+          await proveChonkLeafTube(
+            api,
+            chonkApi,
+            leafCircuits,
+            tubeCircuit,
+            leafVkFields,
+            leafKeyHash,
+            c3FoldKernelKeyHash,
+            leafC3aChunks[i],
+            leafSlotChunks[i],
+            leafNoirs,
+            tubeNoir,
+          ),
+        )
+        c3bResults.push(
+          await proveChonkLeafTube(
+            api,
+            chonkApi,
+            leafCircuits,
+            tubeCircuit,
+            leafVkFields,
+            leafKeyHash,
+            c3FoldKernelKeyHash,
+            leafC3bChunks[i],
+            leafSlotChunks[i],
+            leafNoirs,
+            tubeNoir,
+          ),
+        )
+      }
+    } else {
+      const circuitNames = ['chonk_c3_batch_app', 'chonk_c3_init_kernel', 'chonk_c3_tail_kernel', 'chonk_c3_hiding_kernel']
+      const circuits = [appCircuit, initCircuit, tailCircuit, hidingCircuit]
+      const vks = circuitNames.map((name) => loadBytes(resolve(probeRoot, name.replace('chonk_', ''), 'target/vk')))
+      const proveChunk = (leaves: ProofFixture[], slots: number[]) =>
+        proveChonkTube(
+          api,
+          chonkApi,
+          circuits,
+          vks,
+          circuitNames,
+          tubeCircuit,
+          leafVkFields,
+          leafKeyHash,
+          c3FoldKernelKeyHash,
+          leaves,
+          slots,
+          appNoir,
+          initNoir,
+          tailNoir,
+          hidingNoir,
+          tubeNoir,
+        )
+      for (let i = 0; i < C3_CHUNK_COUNT; i++) {
+        c3aResults.push(await proveChunk(c3aChunks[i], slotChunks[i]))
+        c3bResults.push(await proveChunk(c3bChunks[i], slotChunks[i]))
+      }
     }
     const output: TubeFixtureOutput = {
       slotIndices,
@@ -506,8 +791,14 @@ async function main(): Promise<void> {
     console.log(`Real C3 leaf proofs: ${input ? leafProofsA.length + leafProofsB.length : leafProofsA.length}`)
     console.log(`C3 slots: ${C3_SLOTS}; accumulator fields: ${C3_ACCUMULATOR_LEN}`)
     if (!input) console.log(`Real C3 leaf generation time: ${leafSeconds.toFixed(2)}s`)
-    console.log(`Chonk chunks per C3 chain: ${C3_CHUNK_COUNT}; leaves per chunk: ${C3_BATCH_SIZE}`)
-    console.log(`Chonk proof fields per chunk including public inputs: ${C3_ACCUMULATOR_LEN + CHONK_PROOF_LENGTH}`)
+    if (chonkMode === 'leaf') {
+      console.log(
+        `Chonk leaf apps per stack: ${C3_LEAF_STACK_SIZE}; stacks per C3 chain: ${C3_LEAF_STACK_COUNT}; circuits per stack: ${2 * C3_LEAF_STACK_SIZE + 2}`,
+      )
+    } else {
+      console.log(`Chonk chunks per C3 chain: ${C3_CHUNK_COUNT}; leaves per chunk: ${C3_BATCH_SIZE}`)
+    }
+    console.log(`Chonk proof fields including public inputs: ${C3_ACCUMULATOR_LEN + CHONK_PROOF_LENGTH}`)
     console.log(`C3a Chonk proving time: ${c3aResults.reduce((total, result) => total + result.chonkSeconds, 0).toFixed(2)}s`)
     console.log(`C3a tube proving time: ${c3aResults.reduce((total, result) => total + result.tubeSeconds, 0).toFixed(2)}s`)
     console.log(`C3b Chonk proving time: ${c3bResults.reduce((total, result) => total + result.chonkSeconds, 0).toFixed(2)}s`)

@@ -6,23 +6,24 @@ local macOS runner with the insecure-512 preset.
 
 ## Executive Result
 
-The final comparison used the same small committee and the same complete multi-node pipeline:
+The final comparison used the same small committee and the same complete multi-node pipeline. All
+three runs passed `NodeFold -> NodesFold -> C5 -> dkg_aggregator`, including proof verification:
 
-| Metric | Classic sequential | Chonk | Change |
+| Metric | Classic sequential | Batched Chonk | Leaf-stacked Chonk |
 | --- | ---: | ---: | ---: |
-| Committee | N=19, H=10 | N=19, H=10 | same |
-| C3 leaf proofs per node | 72 | 72 | same |
-| C3 fold shape per chain | 36 sequential folds | 2 Chonk chunks | batched |
-| Full test time | 4553.86s | 3552.63s | -1001.23s |
-| Wall-clock duration | 1h 15m 53.86s | 59m 12.63s | -21.99% |
+| Committee | N=19, H=10 | N=19, H=10 | N=19, H=10 |
+| C3 leaf proofs per node | 72 | 72 | 72 |
+| C3 fold shape per chain | 36 sequential folds | 2 x 18-leaf chunks | 4 x 9-leaf stacks |
+| Full test time | 4340.90s | 3592.07s | 4823.19s |
+| Wall-clock duration | 1h 12m 20.90s | 59m 52.07s | 1h 20m 23.19s |
+| Change vs classic | baseline | -748.83s (-17.25%) | +482.29s (+11.11%) |
 
-The classic path was `1.2818x` slower than the Chonk path. Both tests passed the complete
-`NodeFold -> NodesFold -> C5 -> dkg_aggregator` flow, including proof verification.
+The batched path was `1.2085x` faster than the classic path. The leaf-stacked path was `1.1110x`
+slower than classic and `1.3427x` slower than batched Chonk in this full-pipeline measurement.
 
-The headline result includes the complete fixture-generation cost, C4 proofs, C3 aggregation,
-NodeFold, NodesFold, C5, and DKG aggregation. It is therefore an end-to-end result, not an isolated
-C3 prover microbenchmark. The paths were run independently with equivalent generated committee
-material.
+The headline results include complete fixture-generation cost, C4 proofs, C3 aggregation, NodeFold,
+NodesFold, C5, and DKG aggregation. They are end-to-end results, not isolated C3 prover
+microbenchmarks. The paths were run independently with equivalent generated committee material.
 
 ## Reproduction
 
@@ -42,6 +43,13 @@ cargo test -p e3-zk-prover --test chonk_node_fold_e2e_tests \
   chonk_c3_flows_through_small_multi_node_dkg_aggregator -- --ignored --nocapture
 ```
 
+Run leaf-stacked Chonk:
+
+```bash
+cargo test -p e3-zk-prover --test chonk_node_fold_e2e_tests \
+  chonk_c3_leaf_flows_through_small_multi_node_dkg_aggregator -- --ignored --nocapture
+```
+
 Run the classic control:
 
 ```bash
@@ -49,9 +57,9 @@ cargo test -p e3-zk-prover --test chonk_node_fold_e2e_tests \
   classic_c3_flows_through_small_multi_node_dkg_aggregator -- --ignored --nocapture
 ```
 
-The tests are intentionally ignored because each full run is long. The small-committee run
+The tests are intentionally ignored because each full run is long. Each small-committee run
 generated 10 correlated honest-node DKG states, 72 C3 leaf proofs per node, and 10 C4 proof pairs.
-The classic run took approximately 76 minutes; the Chonk run took approximately 59 minutes.
+The measured classic, batched, and leaf-stacked runs took approximately 72, 60, and 80 minutes.
 
 The standalone probe can be run with compiled probe artifacts and optional Rust-generated leaf
 fixtures:
@@ -65,7 +73,7 @@ Set `CHONK_C3_COMMITTEE` to `minimum`, `micro`, or `small`. Set `CHONK_C3_LEAF_F
 
 ## Chonk Pipeline
 
-For each C3 chain, the probe performs the following steps:
+For batched Chonk, the probe performs the following steps:
 
 1. `c3_batch_app` verifies a batch of real `ShareEncryption` proofs and emits the sparse `pk/msg/ct`
    accumulator.
@@ -77,12 +85,15 @@ For each C3 chain, the probe performs the following steps:
    emits one ordinary C3 fold-shaped proof.
 6. `c3ab_fold` verifies the ordinary C3a and C3b chunk-fold proofs and returns the existing C3ab ABI.
 
-For the small committee, each node therefore runs four Chonk/tube fixtures: two chunks for C3a and
-two chunks for C3b. It then runs two `c3_chunk_fold` proofs and one final `c3ab_fold` proof.
+For leaf-stacked Chonk, `c3_leaf_app` verifies one real `ShareEncryption` proof per step, and the
+leaf-specific init/inner/tail/hiding kernels compactly carry the sparse state through a nine-leaf
+stack. For the small committee, each chain runs four Chonk/tube fixtures. Each pair is closed by
+`c3_chunk_fold`, and the two resulting ordinary proofs are merged by `c3_leaf_chunk_fold` before
+`c3ab_fold`.
 
 The classic control retains the original sequential Rust fold helper and uses
 `c3ab_fold_sequential` for the final C3a/C3b wrapper. The production request path passes no Chonk
-override, so the default behavior remains sequential while the experimental seam is evaluated.
+override, so the default behavior remains sequential while the experimental seams are evaluated.
 
 ## Why Two Chunks
 
@@ -94,9 +105,10 @@ Root rollup must accumulate two IPA proofs.
 ```
 
 The v5.1.0 root Rollup verifier requires exactly two nested IPA claims. A single C3a or C3b root
-cannot close all of the small committee's non-local leaves in one Chonk proof, so the implementation
-uses two Chonk batches per chain and an intermediate `c3_chunk_fold` root. This keeps each root at
-the supported two-claim boundary and preserves the ordinary proof ABI consumed by NodeFold.
+cannot close all of the small committee's non-local leaves in one Chonk proof. Batched mode therefore
+uses two 18-leaf Chonk batches per chain and one `c3_chunk_fold` root. Leaf mode uses four 9-leaf
+stacks, two `c3_chunk_fold` roots, and the ordinary `c3_leaf_chunk_fold` merge. Every root remains at
+the supported two-claim boundary and the final proof retains the ordinary ABI consumed by NodeFold.
 
 The batch size is derived as:
 
@@ -104,8 +116,8 @@ The batch size is derived as:
 C3_BATCH_SIZE = (C3_SLOTS - L_THRESHOLD) / 2
 ```
 
-For the measured small committee this is 18 leaves per chunk: 36 non-local leaves per chain split
-into two chunks.
+For the measured small committee this is 18 leaves per batch: 36 non-local leaves per chain split
+into two chunks. Leaf mode uses `C3_LEAF_STACK_SIZE = 9`, producing four stacks per chain.
 
 ## Correctness Coverage
 
@@ -139,14 +151,14 @@ those leaf and total timings are not used for the final claim.
 ## Implementation Changes
 
 - Added `circuits/bin/recursive_aggregation/c3_chunk_fold`.
+- Added the compact leaf-stack circuits and `circuits/bin/recursive_aggregation/c3_leaf_chunk_fold`.
 - Added `circuits/bin/recursive_aggregation/c3ab_fold_sequential` and kept the original sequential
   boundary available for control and production fallback.
 - Updated `c3ab_fold` to consume ordinary proofs emitted by the chunk-fold adapter.
 - Added the real Chonk probe and benchmark circuits under this directory.
 - Added `packages/interfold-sdk/scripts/chonk-c3-probe.ts` and the `probe:chonk-c3` script.
 - Added optional C3 proof overrides to `node_dkg_fold.rs` while leaving the default path unchanged.
-- Added circuit-name, artifact, staging, VK-manifest, and generated-verifier support for both new
-  circuits.
+- Added circuit-name, artifact, staging, and VK-manifest support for the new recursive adapters.
 - Added correlated single-node and full multi-node Chonk/classic E2E tests.
 - Regenerated the insecure-512/small DKG aggregator verifier for the updated public-input manifest.
 
@@ -172,8 +184,8 @@ probe or the Rust E2E results.
 ## Limitations and Follow-ups
 
 - The final end-to-end comparison covers insecure-512/small only; secure-8192 was not run.
-- The current Chonk implementation intentionally uses two chunks and requires the non-local slot
-  count to divide evenly.
+- Batched mode intentionally uses two chunks; leaf mode uses four nine-leaf stacks. Both require the
+  non-local slot count to divide evenly.
 - The experiment measures full pipeline wall time. A future report can expose per-stage timing from
   `FoldProveStepTiming` and the probe's Chonk/tube timers in one common table.
 - The TypeScript probe uses fixed bb.js v5.1.0 field lengths and should be versioned alongside the

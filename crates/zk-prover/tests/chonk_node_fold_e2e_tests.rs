@@ -174,7 +174,10 @@ fn tube_proof(fixture: &ChonkTubeFixture, total_slots: usize) -> Proof {
 }
 
 fn tube_proofs(fixtures: &[ChonkTubeFixture], total_slots: usize) -> Vec<Proof> {
-    assert_eq!(fixtures.len(), 2, "Chonk C3 chunk count");
+    assert!(
+        fixtures.len() == 1 || fixtures.len() == 2 || fixtures.len() == 4,
+        "Chonk C3 output must contain one direct tube, two batch tubes, or four leaf tubes"
+    );
     let first = fixtures.first().expect("Chonk C3 tube fixture");
     for fixture in fixtures {
         assert_eq!(
@@ -263,6 +266,7 @@ async fn setup_chonk_multi_node_test(
     if !c3_fold_json_path().exists()
         || !recursive_aggregation_compiled_json_path(CircuitName::NodeFold).exists()
         || !recursive_aggregation_compiled_json_path(CircuitName::C3ChunkFold).exists()
+        || !recursive_aggregation_compiled_json_path(CircuitName::C3LeafChunkFold).exists()
         || !recursive_aggregation_compiled_json_path(CircuitName::NodesFold).exists()
         || !recursive_aggregation_compiled_json_path(CircuitName::NodesFoldKernel).exists()
         || !recursive_aggregation_compiled_json_path(CircuitName::DkgAggregator).exists()
@@ -303,6 +307,7 @@ async fn setup_chonk_multi_node_test(
         CircuitName::C3Fold,
         CircuitName::C3FoldKernel,
         CircuitName::C3ChunkFold,
+        CircuitName::C3LeafChunkFold,
         CircuitName::C3abFold,
         CircuitName::C3abFoldSequential,
         CircuitName::C4abFold,
@@ -593,6 +598,7 @@ fn run_chonk_probe_for_node(
     node: &ChonkNodeMaterial,
     committee: CiphernodesCommitteeSize,
     total_slots: usize,
+    mode: &str,
 ) -> ChonkNodeTubes {
     let leaf_input_path = temp
         .path()
@@ -617,6 +623,7 @@ fn run_chonk_probe_for_node(
         .env("CHONK_C3_LEAF_FIXTURES", &leaf_input_path)
         .env("CHONK_C3_OUTPUT", &tube_output_path)
         .env("CHONK_C3_COMMITTEE", committee.as_str())
+        .env("CHONK_C3_MODE", mode)
         .status()
         .expect("run Chonk C3 probe");
     assert!(probe_status.success(), "Chonk C3 probe failed");
@@ -659,9 +666,11 @@ fn assert_chonk_c3_bindings(
 ) {
     let c2a_public = proof_public_fields(c2a);
     let c2b_public = proof_public_fields(c2b);
-    assert_eq!(c3a.len(), 2, "C3a Chonk chunk count");
-    assert_eq!(c3b.len(), 2, "C3b Chonk chunk count");
     assert_eq!(c3a.len(), c3b.len());
+    assert!(
+        c3a.len() == 1 || c3a.len() == 2 || c3a.len() == 4,
+        "C3a Chonk output must contain one direct tube, two batch tubes, or four leaf tubes"
+    );
     let non_local_slots = total_slots - slots_per_party;
     assert_eq!(
         slot_indices.len(),
@@ -1014,7 +1023,11 @@ async fn chonk_c3_flows_through_correlated_node_fold() {
     drop(temp);
 }
 
-async fn run_multi_node_dkg_aggregator(committee_size: CiphernodesCommitteeSize, use_chonk: bool) {
+async fn run_multi_node_dkg_aggregator(
+    committee_size: CiphernodesCommitteeSize,
+    use_chonk: bool,
+    chonk_mode: &str,
+) {
     let Some((_backend, temp, prover, preset, artifacts_dir, committee)) =
         setup_chonk_multi_node_test(committee_size).await
     else {
@@ -1058,7 +1071,9 @@ async fn run_multi_node_dkg_aggregator(committee_size: CiphernodesCommitteeSize,
     let tubes = if use_chonk {
         let tubes = materials
             .iter()
-            .map(|material| run_chonk_probe_for_node(&temp, material, committee_size, total_slots))
+            .map(|material| {
+                run_chonk_probe_for_node(&temp, material, committee_size, total_slots, chonk_mode)
+            })
             .collect::<Vec<_>>();
         println!("Chonk probes complete for {} nodes", tubes.len());
         Some(tubes)
@@ -1240,19 +1255,33 @@ async fn run_multi_node_dkg_aggregator(committee_size: CiphernodesCommitteeSize,
     let committee_addresses: Vec<Address> = (0..committee.n)
         .map(|party_id| Address::from([party_id as u8 + 1; 20]))
         .collect();
-    let c3_chunk_fold_vk = tubes.as_ref().map(|_| {
-        load_vk_artifacts(
-            &prover.circuits_dir(CircuitVariant::Default, &artifacts_dir),
-            CircuitName::C3ChunkFold,
-        )
-        .expect("C3 chunk fold VK")
+    let c3_fold_key_hash = tubes.as_ref().map(|tubes| {
+        let first = tubes.first().expect("Chonk C3 tube set");
+        if first.c3a.len() == 1 {
+            first.c3a_key_hash.clone()
+        } else if first.c3a.len() == 4 {
+            load_vk_artifacts(
+                &prover.circuits_dir(CircuitVariant::Default, &artifacts_dir),
+                CircuitName::C3LeafChunkFold,
+            )
+            .expect("C3 leaf chunk fold VK")
+            .key_hash
+        } else {
+            load_vk_artifacts(
+                &prover.circuits_dir(CircuitVariant::Default, &artifacts_dir),
+                CircuitName::C3ChunkFold,
+            )
+            .expect("C3 chunk fold VK")
+            .key_hash
+        }
     });
-    let c3_overrides = c3_chunk_fold_vk
-        .as_ref()
-        .map(|vk| DkgAggregationC3Overrides {
-            c3_fold_key_hash: &vk.key_hash,
-            c3ab_fold_circuit: CircuitName::C3abFold,
-        });
+    let c3_overrides =
+        c3_fold_key_hash
+            .as_deref()
+            .map(|c3_fold_key_hash| DkgAggregationC3Overrides {
+                c3_fold_key_hash,
+                c3ab_fold_circuit: CircuitName::C3abFold,
+            });
     let dkg_aggregator = prove_dkg_aggregation(
         &prover,
         &DkgAggregationInput {
@@ -1284,17 +1313,23 @@ async fn run_multi_node_dkg_aggregator(committee_size: CiphernodesCommitteeSize,
 #[tokio::test]
 #[ignore = "benchmark: real Chonk C3 through nodes_fold and dkg_aggregator"]
 async fn chonk_c3_flows_through_multi_node_dkg_aggregator() {
-    run_multi_node_dkg_aggregator(CiphernodesCommitteeSize::Minimum, true).await;
+    run_multi_node_dkg_aggregator(CiphernodesCommitteeSize::Minimum, true, "batch").await;
 }
 
 #[tokio::test]
 #[ignore = "benchmark: real Chonk C3 through nodes_fold and dkg_aggregator for 36 leaves/node"]
 async fn chonk_c3_flows_through_small_multi_node_dkg_aggregator() {
-    run_multi_node_dkg_aggregator(CiphernodesCommitteeSize::Small, true).await;
+    run_multi_node_dkg_aggregator(CiphernodesCommitteeSize::Small, true, "batch").await;
+}
+
+#[tokio::test]
+#[ignore = "benchmark: leaf-folded Chonk C3 through nodes_fold and dkg_aggregator for 36 leaves/node"]
+async fn chonk_c3_leaf_flows_through_small_multi_node_dkg_aggregator() {
+    run_multi_node_dkg_aggregator(CiphernodesCommitteeSize::Small, true, "leaf").await;
 }
 
 #[tokio::test]
 #[ignore = "benchmark: classic sequential C3 through nodes_fold and dkg_aggregator for 36 leaves/node"]
 async fn classic_c3_flows_through_small_multi_node_dkg_aggregator() {
-    run_multi_node_dkg_aggregator(CiphernodesCommitteeSize::Small, false).await;
+    run_multi_node_dkg_aggregator(CiphernodesCommitteeSize::Small, false, "batch").await;
 }

@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: LGPL-3.0-only
+
+[package]
+name = "chonk_c3_leaf_inner_kernel"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+ivc_types = { path = "../ivc_types" }
+lib = { path = "../../../lib" }

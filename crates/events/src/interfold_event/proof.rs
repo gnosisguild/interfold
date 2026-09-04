@@ -158,6 +158,8 @@ pub enum CircuitName {
     C3abFoldSequential,
     /// Root wrapper that closes two Chonk C3 tube proofs into one ordinary C3 proof.
     C3ChunkFold,
+    /// Root wrapper that closes two ordinary folds of leaf-folded Chonk C3 tube proofs.
+    C3LeafChunkFold,
 }
 
 impl CircuitName {
@@ -183,6 +185,7 @@ impl CircuitName {
             CircuitName::C3abFold => "c3ab_fold",
             CircuitName::C3abFoldSequential => "c3ab_fold_sequential",
             CircuitName::C3ChunkFold => "c3_chunk_fold",
+            CircuitName::C3LeafChunkFold => "c3_leaf_chunk_fold",
             CircuitName::C4abFold => "c4ab_fold",
             CircuitName::NodeFold => "node_fold",
             CircuitName::NodesFold => "nodes_fold",
@@ -214,6 +217,7 @@ impl CircuitName {
             | CircuitName::C3abFold
             | CircuitName::C3abFoldSequential
             | CircuitName::C3ChunkFold
+            | CircuitName::C3LeafChunkFold
             | CircuitName::C4abFold
             | CircuitName::NodeFold
             | CircuitName::NodesFold
@@ -265,6 +269,7 @@ impl CircuitName {
             | CircuitName::C3abFold
             | CircuitName::C3abFoldSequential
             | CircuitName::C3ChunkFold
+            | CircuitName::C3LeafChunkFold
             | CircuitName::C4abFold
             | CircuitName::NodeFold
             | CircuitName::NodesFold

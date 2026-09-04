@@ -20,6 +20,7 @@ DIRS=(
   "bin/recursive_aggregation/c2ab_chunk_fold"
   "bin/recursive_aggregation/c3_fold"
   "bin/recursive_aggregation/c3_fold_kernel"
+  "bin/recursive_aggregation/c3_leaf_chunk_fold"
   "bin/recursive_aggregation/c6_fold"
   "bin/recursive_aggregation/c6_fold_kernel"
   "bin/recursive_aggregation/c3ab_fold"

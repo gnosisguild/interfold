@@ -40,6 +40,7 @@ const REQUIRED_AGGREGATION_CIRCUITS = [
   'recursive_aggregation/c3_fold/c3_fold',
   'recursive_aggregation/c3_fold_kernel/c3_fold_kernel',
   'recursive_aggregation/c3_chunk_fold/c3_chunk_fold',
+  'recursive_aggregation/c3_leaf_chunk_fold/c3_leaf_chunk_fold',
   'recursive_aggregation/c3ab_fold/c3ab_fold',
   'recursive_aggregation/c3ab_fold_sequential/c3ab_fold_sequential',
   'recursive_aggregation/c4ab_fold/c4ab_fold',
