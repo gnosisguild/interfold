@@ -31,7 +31,8 @@ static NONCE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 fn crypto_config_id_for_param_set(param_set: u8) -> Result<B256> {
     match param_set {
         0 => Ok("0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78".parse()?),
-        1 => Ok("0xd9c86e581f8291ffb5b63595600e8d096ed30b16e2e0a6634a76c22b1f58fb4e".parse()?),
+        1 => Ok("0x2af9e43a7b95b11300b6185f3ffaece530facafd2ce98c5e1a1cece8a80ad3cb".parse()?),
+        2 => Ok("0x81f3edb4c49db1c2baf578d6ade4aea6839ee6a71d7458c1bfc79670d2ece7cd".parse()?),
         _ => Err(eyre::eyre!("unsupported BFV parameter set: {}", param_set)),
     }
 }

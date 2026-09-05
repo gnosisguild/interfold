@@ -93,7 +93,7 @@ export function getRepoRoot(): string {
 
 /**
  * <generated-committee-doc>
- * Active insecure-512 / minimum committee layout for BFV aggregator verifiers.
+ * Active insecure / minimum committee layout for BFV aggregator verifiers.
  * Must match `lib::configs::default::{H, T}` in compiled circuits.
  * Minimum committee: N=3, T=1, H=2.
  * </generated-committee-doc>
@@ -104,7 +104,7 @@ export const ACTIVE_BFV_PARAM_SET = 0;
 export const ACTIVE_BFV_COMMITTEE_SIZE = 0;
 export const ACTIVE_BFV_COMMITTEE_N = 3;
 
-export type BfvArtifactPreset = "insecure-512" | "secure-8192";
+export type BfvArtifactPreset = "insecure" | "secure-8192" | "secure-16384";
 export type BfvCommittee = "minimum" | "micro" | "small";
 
 export interface ActiveBfvConfig {
@@ -124,40 +124,56 @@ const INSECURE_PARAM_SET_HASH =
 const INSECURE_CONFIG_ID =
   "0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78";
 const SECURE_PARAM_SET_HASH =
-  "0xd7068fdcc1910f5e49c8b05530cf74f876cadee2a1caf797a40b1ae53ae143ec";
+  "0x80775a19b6126a12943f9c1c53f92299f0c92ece819b625026ab1406bbbe0721";
 const SECURE_CONFIG_ID =
-  "0xd9c86e581f8291ffb5b63595600e8d096ed30b16e2e0a6634a76c22b1f58fb4e";
+  "0x2af9e43a7b95b11300b6185f3ffaece530facafd2ce98c5e1a1cece8a80ad3cb";
+const SECURE_16384_PARAM_SET_HASH =
+  "0x8afd5dddf1bc0cfb00c70e9a7d0a0fb11bd0617df27574fa7d2ccf9ae3a6bdb8";
+const SECURE_16384_CONFIG_ID =
+  "0x81f3edb4c49db1c2baf578d6ade4aea6839ee6a71d7458c1bfc79670d2ece7cd";
 
 function bfvConfig(
   preset: BfvArtifactPreset,
   committee: BfvCommittee,
   params: Pick<ActiveBfvConfig, "committeeSize" | "h" | "t" | "n">,
 ): ActiveBfvConfig {
-  const secure = preset === "secure-8192";
+  const paramSet = preset === "insecure" ? 0 : preset === "secure-8192" ? 1 : 2;
+  const paramSetHash =
+    paramSet === 0
+      ? INSECURE_PARAM_SET_HASH
+      : paramSet === 1
+        ? SECURE_PARAM_SET_HASH
+        : SECURE_16384_PARAM_SET_HASH;
+  const configId =
+    paramSet === 0
+      ? INSECURE_CONFIG_ID
+      : paramSet === 1
+        ? SECURE_CONFIG_ID
+        : SECURE_16384_CONFIG_ID;
   return {
     preset,
     committee,
-    paramSet: secure ? 1 : 0,
-    paramSetHash: secure ? SECURE_PARAM_SET_HASH : INSECURE_PARAM_SET_HASH,
-    configId: secure ? SECURE_CONFIG_ID : INSECURE_CONFIG_ID,
+    paramSet,
+    paramSetHash,
+    configId,
     ...params,
   };
 }
 
 export const INSECURE_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
-  "insecure-512",
+  "insecure",
   "minimum",
   { committeeSize: 0, h: 2, t: 1, n: 3 },
 );
 
 export const INSECURE_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
-  "insecure-512",
+  "insecure",
   "micro",
   { committeeSize: 1, h: 5, t: 4, n: 9 },
 );
 
 export const INSECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
-  "insecure-512",
+  "insecure",
   "small",
   { committeeSize: 2, h: 10, t: 9, n: 19 },
 );
@@ -180,6 +196,24 @@ export const SECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   { committeeSize: 2, h: 10, t: 9, n: 19 },
 );
 
+export const SECURE_16384_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-16384",
+  "minimum",
+  { committeeSize: 0, h: 2, t: 1, n: 3 },
+);
+
+export const SECURE_16384_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-16384",
+  "micro",
+  { committeeSize: 1, h: 5, t: 4, n: 9 },
+);
+
+export const SECURE_16384_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-16384",
+  "small",
+  { committeeSize: 2, h: 10, t: 9, n: 19 },
+);
+
 export const PRODUCTION_BFV_CONFIG: ActiveBfvConfig = SECURE_SMALL_BFV_CONFIG;
 
 export const TESTNET_BFV_CONFIG: ActiveBfvConfig = INSECURE_MINIMUM_BFV_CONFIG;
@@ -197,6 +231,9 @@ export const TESTNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [
   SECURE_MINIMUM_BFV_CONFIG,
   SECURE_MICRO_BFV_CONFIG,
   SECURE_SMALL_BFV_CONFIG,
+  SECURE_16384_MINIMUM_BFV_CONFIG,
+  SECURE_16384_MICRO_BFV_CONFIG,
+  SECURE_16384_SMALL_BFV_CONFIG,
 ] as const;
 
 export function isTestnetOrLocalChainId(chainId: number): boolean {
@@ -336,69 +373,106 @@ export function getBfvPkSubCircuitVkHashPaths(config?: ActiveBfvConfig) {
 }
 
 /** Recursive VK hashes used to build the DKG pipeline binding manifest. */
-export function getBfvPkVkBindingHashPaths() {
-  const root = getRepoRoot();
+export function getBfvPkVkBindingHashPaths(config?: ActiveBfvConfig) {
+  const root = config ? distCircuitRoot(config) : getRepoRoot();
+  const recursive = config ? "recursive" : "target";
+  const defaultVariant = config ? "default" : "target";
   return [
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/node_fold/target/node_fold.vk_recursive_hash",
-    ),
-    path.join(root, "circuits/bin/dkg/target/pk.vk_recursive_hash"),
-    path.join(
-      root,
-      "circuits/bin/threshold/target/pk_generation.vk_recursive_hash",
+      config
+        ? "default/recursive_aggregation/node_fold/node_fold.vk_hash"
+        : "circuits/bin/recursive_aggregation/node_fold/target/node_fold.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/c2ab_chunk_fold/target/c2ab_chunk_fold.vk_recursive_hash",
+      config
+        ? `${recursive}/dkg/pk/pk.vk_hash`
+        : "circuits/bin/dkg/target/pk.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/c3ab_fold/target/c3ab_fold.vk_recursive_hash",
+      config
+        ? `${recursive}/threshold/pk_generation/pk_generation.vk_hash`
+        : "circuits/bin/threshold/target/pk_generation.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/c4ab_fold/target/c4ab_fold.vk_recursive_hash",
+      config
+        ? `${defaultVariant}/recursive_aggregation/c2ab_chunk_fold/c2ab_chunk_fold.vk_hash`
+        : "circuits/bin/recursive_aggregation/c2ab_chunk_fold/target/c2ab_chunk_fold.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/sk_c2_chunk_finalize/target/sk_c2_chunk_finalize.vk_recursive_hash",
+      config
+        ? `${defaultVariant}/recursive_aggregation/c3ab_fold/c3ab_fold.vk_hash`
+        : "circuits/bin/recursive_aggregation/c3ab_fold/target/c3ab_fold.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/esm_c2_chunk_finalize/target/esm_c2_chunk_finalize.vk_recursive_hash",
+      config
+        ? `${defaultVariant}/recursive_aggregation/c4ab_fold/c4ab_fold.vk_hash`
+        : "circuits/bin/recursive_aggregation/c4ab_fold/target/c4ab_fold.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/c2_chunk_batch/target/c2_chunk_batch.vk_recursive_hash",
+      config
+        ? `${defaultVariant}/recursive_aggregation/sk_c2_chunk_finalize/sk_c2_chunk_finalize.vk_hash`
+        : "circuits/bin/recursive_aggregation/sk_c2_chunk_finalize/target/sk_c2_chunk_finalize.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/dkg/target/sk_share_computation_chunk.vk_recursive_hash",
+      config
+        ? `${defaultVariant}/recursive_aggregation/esm_c2_chunk_finalize/esm_c2_chunk_finalize.vk_hash`
+        : "circuits/bin/recursive_aggregation/esm_c2_chunk_finalize/target/esm_c2_chunk_finalize.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/dkg/target/esm_share_computation_chunk.vk_recursive_hash",
+      config
+        ? `${defaultVariant}/recursive_aggregation/c2_chunk_batch/c2_chunk_batch.vk_hash`
+        : "circuits/bin/recursive_aggregation/c2_chunk_batch/target/c2_chunk_batch.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/c3_fold/target/c3_fold.vk_recursive_hash",
+      config
+        ? `${recursive}/dkg/sk_share_computation_chunk/sk_share_computation_chunk.vk_hash`
+        : "circuits/bin/dkg/target/sk_share_computation_chunk.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/dkg/target/share_encryption.vk_recursive_hash",
+      config
+        ? `${recursive}/dkg/esm_share_computation_chunk/esm_share_computation_chunk.vk_hash`
+        : "circuits/bin/dkg/target/esm_share_computation_chunk.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/dkg/target/share_decryption.vk_recursive_hash",
+      config
+        ? `${defaultVariant}/recursive_aggregation/c3_fold/c3_fold.vk_hash`
+        : "circuits/bin/recursive_aggregation/c3_fold/target/c3_fold.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/c3_fold_kernel/target/c3_fold_kernel.vk_recursive_hash",
+      config
+        ? `${recursive}/dkg/share_encryption/share_encryption.vk_hash`
+        : "circuits/bin/dkg/target/share_encryption.vk_recursive_hash",
     ),
     path.join(
       root,
-      "circuits/bin/recursive_aggregation/nodes_fold_kernel/target/nodes_fold_kernel.vk_recursive_hash",
+      config
+        ? `${recursive}/dkg/share_decryption/share_decryption.vk_hash`
+        : "circuits/bin/dkg/target/share_decryption.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      config
+        ? `${defaultVariant}/recursive_aggregation/c3_fold_kernel/c3_fold_kernel.vk_hash`
+        : "circuits/bin/recursive_aggregation/c3_fold_kernel/target/c3_fold_kernel.vk_recursive_hash",
+    ),
+    path.join(
+      root,
+      config
+        ? `${defaultVariant}/recursive_aggregation/nodes_fold_kernel/nodes_fold_kernel.vk_hash`
+        : "circuits/bin/recursive_aggregation/nodes_fold_kernel/target/nodes_fold_kernel.vk_recursive_hash",
     ),
   ] as const;
 }
@@ -501,8 +575,8 @@ export async function assertBfvPkVerifierSubCircuitVkHashes(
     getBfvPkSubCircuitVkHashPaths(config).esmC2Chunk,
     config,
   );
-  const expectedVkBinding = getBfvPkVkBindingHashPaths().map((filePath) =>
-    readVkRecursiveHash(filePath),
+  const expectedVkBinding = getBfvPkVkBindingHashPaths(config).map((filePath) =>
+    readVkRecursiveHash(filePath, config),
   );
   const [onChainNodesFold, onChainC5, onChainSkC2Chunk, onChainESmC2Chunk] =
     await Promise.all([

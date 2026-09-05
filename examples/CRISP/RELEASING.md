@@ -4,8 +4,8 @@
 
 | channel    | tag       | preset         | who it is for                      |
 | ---------- | --------- | -------------- | ---------------------------------- |
-| testing    | `testing` | `insecure-512` | testnets, demos, local development |
-| production | `latest`  | both presets   | deployed clients and real rounds   |
+| testing    | `testing` | `insecure` | testnets, demos, local development |
+| production | `latest`  | all supported presets | deployed clients and real rounds   |
 
 ## Why presets are separate entry points
 
@@ -14,7 +14,7 @@ from that same circuit's verification key. A verifier only accepts proofs from t
 generated for, so mixing presets across the two packages produces a round that rejects every ballot
 — and it fails at on-chain verification, not anywhere a test would catch it.
 
-Each preset is a separate SDK subpath. The production package carries both subpaths so one client
+Each preset is a separate SDK subpath. The production package carries all subpaths so one client
 can read the E3's on-chain `paramSet` and load the matching preset. The testing package carries only
 the real insecure preset so local and testnet installs stay small. It also ships tiny stubs for the
 other exported subpaths, so bundlers can resolve the client import graph without bundling secure
@@ -22,12 +22,14 @@ circuits into test builds.
 
 ```ts
 // on @crisp-e3/sdk@testing
-import { loadCircuits } from '@crisp-e3/sdk/insecure-512' // resolves
+import { loadCircuits } from '@crisp-e3/sdk/insecure' // resolves
 import { loadCircuits } from '@crisp-e3/sdk/secure-8192' // resolves, throws if called
+import { loadCircuits } from '@crisp-e3/sdk/secure-16384' // resolves, throws if called
 
 // on @crisp-e3/sdk@latest
-import { loadCircuits as loadInsecure } from '@crisp-e3/sdk/insecure-512'
+import { loadCircuits as loadInsecure } from '@crisp-e3/sdk/insecure'
 import { loadCircuits as loadSecure } from '@crisp-e3/sdk/secure-8192'
+import { loadCircuits as loadSecure16384 } from '@crisp-e3/sdk/secure-16384'
 ```
 
 This keeps the secure circuits out of testing installs while making the production client flexible
@@ -38,8 +40,8 @@ enough for secure mainnet rounds and insecure test deployments.
 Testing releases carry a prerelease identifier; production releases do not.
 
 ```text
-0.18.0-insecure.0   tag: testing    insecure-512
-0.20.0              tag: latest     insecure-512 + secure-8192
+0.18.0-insecure.0   tag: testing    insecure
+0.20.0              tag: latest     insecure + secure-8192 + secure-16384
 ```
 
 The identifier is load-bearing. npm excludes prerelease versions from ordinary ranges, so a consumer
@@ -49,7 +51,7 @@ on `^0.18.0` can never drift onto a testing build through an update — reaching
 ## The client tracks production
 
 `client/` reads the E3 `paramSet` before proving and loads the matching preset. Because production
-SDK releases carry both presets, a production publish moves `client/package.json` and
+SDK releases carry all supported presets, a production publish moves `client/package.json` and
 `client/pnpm-lock.yaml` to the published version. A testing publish leaves the client alone.
 
 The pin cannot be a `workspace:` range, because the same `client/package.json` also serves the
@@ -84,16 +86,16 @@ The build refuses artifacts that are missing or older than the sources, using th
 that `stage-preset-artifacts.mjs` records at staging time.
 
 The default SDK build is intentionally the lightweight testing build. It builds and ships only the
-real `insecure-512` bundle, plus resolver stubs for off-channel presets, so pull-request CI does not
+real `insecure` bundle, plus resolver stubs for off-channel presets, so pull-request CI does not
 compile or bundle the large secure preset. Use the production channel, or
-`pnpm -C examples/CRISP/packages/crisp-sdk build:prod`, when the output must include real
-`insecure-512` and `secure-8192` bundles.
+  `pnpm -C examples/CRISP/packages/crisp-sdk build:prod`, when the output must include real
+  `insecure`, `secure-8192`, and `secure-16384` bundles.
 
 ```sh
-# testing — insecure-512 under the `testing` tag, leaves the client alone
+# testing — insecure under the `testing` tag, leaves the client alone
 pnpm -C examples/CRISP publish:packages --channel testing 0.19.0-insecure.0
 
-# production — both presets under the `latest` tag, and moves the client
+# production — all supported presets under the `latest` tag, and moves the client
 pnpm -C examples/CRISP publish:packages --channel prod 0.20.0
 ```
 
@@ -121,7 +123,7 @@ concrete PK and decryption verifier for each supported pair. A router selects th
 from the proof's public-input length and VK hash anchors.
 
 The SDK must also match the round. A `latest` SDK can load either supported preset and should select
-from the E3's on-chain `paramSet`. Pair a `testing` SDK only with `insecure-512` deployments.
+from the E3's on-chain `paramSet`. Pair a `testing` SDK only with `insecure` deployments.
 
 For an existing paused mainnet bootstrap deployment, prepare the complete activation batch with:
 

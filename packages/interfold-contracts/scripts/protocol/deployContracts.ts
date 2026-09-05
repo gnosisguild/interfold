@@ -6,6 +6,7 @@ import {
   bfvConfigsForChain,
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
+  getBfvPkVkBindingHashPaths,
   readVkRecursiveHash,
 } from "../utils";
 import { ADDRESS_ONE } from "./constants";
@@ -289,7 +290,7 @@ function bfvHonkSource(
   config: ActiveBfvConfig,
   contractName: "DkgAggregatorVerifier" | "DecryptionAggregatorVerifier",
 ): string {
-  if (config.preset === "insecure-512" && config.committee === "minimum") {
+  if (config.preset === "insecure" && config.committee === "minimum") {
     return `contracts/verifiers/bfv/honk/${contractName}.sol`;
   }
   return `contracts/verifiers/bfv/honk/${config.preset}/${config.committee}/${contractName}.sol`;
@@ -440,6 +441,11 @@ async function deployBfvVerifierRoute(
     dkgAggregatorVerifier,
     readVkRecursiveHash(pkPaths.nodesFold, config),
     readVkRecursiveHash(pkPaths.c5, config),
+    readVkRecursiveHash(pkPaths.skC2Chunk, config),
+    readVkRecursiveHash(pkPaths.esmC2Chunk, config),
+    getBfvPkVkBindingHashPaths(config).map((filePath) =>
+      readVkRecursiveHash(filePath, config),
+    ),
     config.h,
   );
   await pk.waitForDeployment();

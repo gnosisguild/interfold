@@ -84,12 +84,12 @@ fn check_prefix_zero<let D: u32>(k1: Polynomial<D>, base: u32) -> bool {
 ///
 /// # Arguments
 /// * `k1` - The plaintext polynomial encoding the vote
-/// * `q_mod_t_centered` - The field representation of 1 in centered form
+/// * `q_mod_t` - The field representation of 1 modulo t
 /// * `balance` - The voter's balance/voting power
 /// * `num_options` - Number of voting options
 pub fn check_coefficient_values_with_balance<let D: u32>(
     k1: Polynomial<D>,
-    q_mod_t_centered: Field,
+    q_mod_t: Field,
     balance: Field,
     num_options: u32,
 ) -> bool {
@@ -117,7 +117,7 @@ pub fn check_coefficient_values_with_balance<let D: u32>(
                     let coeff = k1.coefficients[idx];
 
                     // Binary constraint: coeff must be 0 or q_mod_t
-                    valid = valid & (0 == coeff * (q_mod_t_centered - coeff));
+                    valid = valid & (0 == coeff * (q_mod_t - coeff));
 
                     let bit: u64 = if coeff == 0 { 0 } else { 1 };
                     sum += bit * (1 << (bit_pos as u64));
@@ -187,7 +187,7 @@ pub fn check_coefficient_zero<let D: u32>(k1: Polynomial<D>, num_options: u32) -
 // degree equals `MAX_MSG_NON_ZERO_COEFFS`, which no preset uses, so testing at the message width
 // hid the layout the circuit actually receives.
 
-/// The BFV degree of the `insecure-512` preset. Large enough that the padding between the top of
+/// The BFV degree of the `insecure` preset. Large enough that the padding between the top of
 /// the message region and the degree is most of the polynomial, which is the region the old index
 /// arithmetic read from.
 global TEST_DEGREE: u32 = 512;

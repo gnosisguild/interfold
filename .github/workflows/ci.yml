@@ -268,8 +268,8 @@ jobs:
       - name: Stage source-aligned circuit fixtures
         run: |
           chmod +x .ci-noir/bin/bb
-          mkdir -p dist/circuits/insecure-512
-          cp -R .ci-noir/circuits/insecure-512/minimum dist/circuits/insecure-512/
+          mkdir -p dist/circuits/insecure
+          cp -R .ci-noir/circuits/insecure/minimum dist/circuits/insecure/
 
       - name: Run Integration Tests
         env:
@@ -949,7 +949,7 @@ jobs:
           chmod +x /usr/local/bin/bb
 
       - name: Build interfold circuits
-        run: pnpm build:circuits --preset insecure-512 --committee minimum --skip-if-built
+        run: pnpm build:circuits --preset insecure --committee minimum --skip-if-built
 
       - name: Install and verify candidate circuits
         working-directory: ./examples/CRISP
@@ -1072,12 +1072,15 @@ jobs:
               --check \
               --no-compile
           done <<'EOF'
-          insecure-512 micro
-          insecure-512 small
+          insecure micro
+          insecure small
           secure-8192 minimum
           secure-8192 micro
           secure-8192 small
-          insecure-512 minimum
+          secure-16384 minimum
+          secure-16384 micro
+          secure-16384 small
+          insecure minimum
           EOF
 
       # Asserted before the upload, so a step that consumes or clears a build output fails in the
@@ -1449,7 +1452,7 @@ jobs:
           chmod +x /usr/local/bin/bb
 
       - name: Build interfold circuits
-        run: pnpm build:circuits --preset insecure-512 --committee minimum --skip-if-built
+        run: pnpm build:circuits --preset insecure --committee minimum --skip-if-built
 
       - name: Install and verify candidate circuits
         working-directory: ./templates/default

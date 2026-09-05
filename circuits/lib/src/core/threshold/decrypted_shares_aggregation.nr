@@ -9,7 +9,7 @@ use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
 use ::bignum::BigNum;
 use ::bignum::bignum::to_field;
-use ::bignum::SecureThreshold8192;
+use ::bignum::U256;
 
 /// Parameters for decrypted shares aggregation (C7).
 pub struct Configs<let L: u32> {
@@ -120,14 +120,14 @@ impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u3
         }
 
         // For centered arithmetic
-        let q_bn = SecureThreshold8192::from(q_modulus);
+        let q_bn = U256::from(q_modulus);
 
-        let q_half_bn = q_bn.udiv(&SecureThreshold8192::from(2));
+        let q_half_bn = q_bn.udiv(&U256::from(2));
 
         for coeff_idx in 0..MAX_MSG_NON_ZERO_COEFFS {
             // Compute (t * u_global) mod Q using BigNum
-            let u_bn = SecureThreshold8192::from(self.u_global.coefficients[coeff_idx]);
-            let t_bn = SecureThreshold8192::from(self.configs.plaintext_modulus);
+            let u_bn = U256::from(self.u_global.coefficients[coeff_idx]);
+            let t_bn = U256::from(self.configs.plaintext_modulus);
             // Q is at most 208 bits and t is about 10 bits, so t * u fits in BN254.
             let u_bn_mod_q = u_bn.umod(&q_bn);
             let t_bn_mod_q = t_bn.umod(&q_bn);

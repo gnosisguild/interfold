@@ -10,7 +10,7 @@
 #
 #   1. packages/interfold-contracts/scripts/protocol/constants.ts (deployment parameters)
 #   2. crates/fhe-params/src/constants.rs (ciphernode parameters)
-#   3. circuits/lib/src/configs/{insecure,secure}/threshold.nr (circuit parameters)
+#   3. circuits/lib/src/configs/{insecure,secure_8192,secure_16384}/threshold.nr (circuit parameters)
 #   4. circuits/lib/src/configs/committee/active.nr (Noir-side active committee)
 #   5. packages/interfold-contracts/scripts/utils.ts (deployment hashes and committee values)
 #   6. crates/zk-helpers/src/ciphernodes_committee.rs (committee enum values)
@@ -58,7 +58,7 @@ for required_file in \
 done
 
 for committee in minimum micro small; do
-  for artifact in parity_insecure.nr parity_secure.nr smudging.nr; do
+  for artifact in parity_insecure.nr parity_secure_8192.nr parity_secure_16384.nr smudging.nr; do
     [[ -f "circuits/lib/src/configs/committee/$committee/$artifact" ]] \
       || fail "missing generated committee artifact: $committee/$artifact"
   done
@@ -162,6 +162,7 @@ if (value < 2n) {
     current = next;
     next = (current + value / current) / 2n;
   }
+  if (current * current < value) current += 1n;
   process.stdout.write(current.toString());
 }
 ' "$1"
@@ -214,7 +215,7 @@ check_bfv_preset() {
 
   noir_degree=$(grep -E '^pub global N: u32 = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   noir_plaintext=$(grep -E '^pub global PLAINTEXT_MODULUS: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
-  noir_moduli=$(grep -E '^pub global QIS:' "$noir_file" | sed -E 's/.*= \[([^]]+)\];/\1/' | tr -d ' ')
+  noir_moduli=$(awk '/^pub global QIS:/,/];/ { gsub(/[^0-9,]/, ""); if ($0 != "") { printf "%s%s", sep, $0; sep = "," } }' "$noir_file")
   noir_error_bound=$(grep -E '^pub global PK_GENERATION_B_ENC: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   expected_error_bound=$(error_bound_for_variance "$ts_error")
 
@@ -225,8 +226,9 @@ check_bfv_preset() {
   fi
 }
 
-check_bfv_preset insecure-512 insecure512 insecure_512 insecure
-check_bfv_preset secure-8192 secure8192 secure_8192 secure
+check_bfv_preset insecure insecure512 insecure_512 insecure
+check_bfv_preset secure-8192 secure8192 secure_8192 secure_8192
+check_bfv_preset secure-16384 secure16384 secure_16384 secure_16384
 
 # 6. Every chain-supported route in utils.ts must match the Noir committee shape and the
 #    parameter/configuration hashes compiled into ActiveCryptoConfig.sol. Keep this check
@@ -245,7 +247,7 @@ ts_bytes32() {
     | head -n1
 }
 
-for prefix in INSECURE SECURE; do
+for prefix in INSECURE SECURE SECURE_16384; do
   utils_param_hash=$(ts_bytes32 "${prefix}_PARAM_SET_HASH")
   utils_config_id=$(ts_bytes32 "${prefix}_CONFIG_ID")
   sol_param_hash=$(sol_bytes32 "${prefix}_PARAM_SET_HASH")
@@ -273,7 +275,7 @@ extract_rust_config_id() {
     | head -n1
 }
 
-for prefix_and_param_set in INSECURE:0 SECURE:1; do
+for prefix_and_param_set in INSECURE:0 SECURE:1 SECURE_16384:2; do
   prefix="${prefix_and_param_set%%:*}"
   param_set="${prefix_and_param_set##*:}"
   expected_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
@@ -305,24 +307,27 @@ check_utils_route() {
   fi
 }
 
-check_utils_route INSECURE_MINIMUM insecure-512 minimum 0
-check_utils_route INSECURE_MICRO insecure-512 micro 1
-check_utils_route INSECURE_SMALL insecure-512 small 2
+check_utils_route INSECURE_MINIMUM insecure minimum 0
+check_utils_route INSECURE_MICRO insecure micro 1
+check_utils_route INSECURE_SMALL insecure small 2
 check_utils_route SECURE_MINIMUM secure-8192 minimum 0
 check_utils_route SECURE_MICRO secure-8192 micro 1
 check_utils_route SECURE_SMALL secure-8192 small 2
+check_utils_route SECURE_16384_MINIMUM secure-16384 minimum 0
+check_utils_route SECURE_16384_MICRO secure-16384 micro 1
+check_utils_route SECURE_16384_SMALL secure-16384 small 2
 
 route_list() {
   local array_name="$1"
   sed -n "/^export const ${array_name}:.*= \[/,/^\] as const;/p" "$UTILS_TS" \
-    | grep -oE '(INSECURE|SECURE)_(MINIMUM|MICRO|SMALL)_BFV_CONFIG' \
+    | grep -oE '(INSECURE|SECURE(_16384)?)_(MINIMUM|MICRO|SMALL)_BFV_CONFIG' \
     | paste -sd, -
 }
 
 TESTNET_ROUTES=$(route_list TESTNET_BFV_CONFIGS)
-EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG"
+EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG,SECURE_16384_MINIMUM_BFV_CONFIG,SECURE_16384_MICRO_BFV_CONFIG,SECURE_16384_SMALL_BFV_CONFIG"
 [[ "$TESTNET_ROUTES" == "$EXPECTED_TESTNET_ROUTES" ]] \
-  || fail "$UTILS_TS testnet routes must contain the exact six-pair matrix; got $TESTNET_ROUTES"
+  || fail "$UTILS_TS testnet routes must contain the exact nine-pair matrix; got $TESTNET_ROUTES"
 
 MAINNET_ROUTES=$(route_list MAINNET_BFV_CONFIGS)
 EXPECTED_MAINNET_ROUTES="SECURE_SMALL_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG"
@@ -400,7 +405,7 @@ format_parity_matrices_for_committee() {
 
   trap '_restore_swapped_parity_live' ERR
 
-  for variant in insecure secure; do
+  for variant in insecure secure_8192 secure_16384; do
     live="$NOIR_LIB/src/configs/committee/$committee/parity_${variant}.nr"
     fresh="$tmp/$committee/parity_${variant}.nr"
     [[ -f "$live" && -f "$fresh" ]] || continue
@@ -433,7 +438,7 @@ format_parity_matrices_for_committee() {
     return 1
   fi
 
-  for variant in insecure secure; do
+  for variant in insecure secure_8192 secure_16384; do
     live="$NOIR_LIB/src/configs/committee/$committee/parity_${variant}.nr"
     fresh="$tmp/$committee/parity_${variant}.nr"
     backup="$tmp/$committee/parity_${variant}.live.bak"
@@ -473,7 +478,7 @@ if [[ -x "$GEN_BIN" ]]; then
       [[ -d "$TMP/$c" ]] || continue
       "$GEN_BIN" --committee "$c" --output-root "$TMP" >/dev/null
       format_parity_matrices_for_committee "$c" "$TMP"
-      for variant in insecure secure; do
+      for variant in insecure secure_8192 secure_16384; do
         live="circuits/lib/src/configs/committee/$c/parity_${variant}.nr"
         fresh="$TMP/$c/parity_${variant}.nr"
         if [[ -f "$live" && -f "$fresh" ]] && ! diff -q "$live" "$fresh" >/dev/null; then
@@ -492,4 +497,4 @@ else
   echo "  (skipping parity-matrix drift check: $GEN_BIN not built. Run \`cargo build -p e3-zk-helpers --bin generate_parity_matrices --release\` to enable.)" >&2
 fi
 
-echo "✓ check:committee: BFV tuples, configuration IDs, all six routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) are consistent across TypeScript, Rust, Noir, and Solidity$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"
+echo "✓ check:committee: BFV tuples, configuration IDs, all nine testnet routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) are consistent across TypeScript, Rust, Noir, and Solidity$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"

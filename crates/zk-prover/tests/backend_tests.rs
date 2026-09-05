@@ -99,7 +99,7 @@ fn test_prover_requires_bb() {
         e3_events::CircuitName::PkBfv,
         b"witness",
         "e3-1",
-        "insecure-512",
+        "insecure",
     );
     assert!(matches!(result, Err(e3_zk_prover::ZkError::BbNotInstalled)));
 }

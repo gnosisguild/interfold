@@ -192,7 +192,8 @@ design citation alone does not establish current runtime behavior.
   must preserve the complete `uint256`. — `Interfold.initialize`; `flow-trace/03`
 - A request can select only the parameter set and committee shape in `ActiveCryptoConfig.sol`.
   Mainnet supports `secure-8192` with `minimum`, `micro`, and `small` committees. Sepolia and local
-  chains support `insecure-512` and `secure-8192` with `minimum`, `micro`, and `small` committees.
+  chains support `insecure`, `secure-8192`, and `secure-16384` with `minimum`, `micro`, and `small`
+  committees.
   Governance cannot enable a different parameter hash, `[H, N]`, or verifier threshold without
   rebuilding the circuits and contracts for that pair. The request supplies the expected
   configuration ID, which binds the scheme, parameter hash, and circuit version; committee size is
@@ -340,12 +341,12 @@ design citation alone does not establish current runtime behavior.
 - Committee `(N, T, H)` and each complete BFV parameter tuple must stay synchronized. The tuple is
   defined for deployment in `packages/interfold-contracts/scripts/protocol/constants.ts`, for
   ciphernodes in `crates/fhe-params/src/constants.rs`, and for circuits in
-  `circuits/lib/src/configs/{insecure,secure}/threshold.nr`. Committee values also appear in
-  `circuits/lib/src/configs/committee/active.nr`, `packages/interfold-contracts/scripts/utils.ts`,
-  `crates/zk-helpers/src/ciphernodes_committee.rs`, and
-  `packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol`. The generated Solidity and
-  TypeScript values bind the BFV parameter-set hashes and configuration IDs. The gate verifies the
-  tuple, the circuit error bound, and every runtime configuration-ID copy. The local
+  `circuits/lib/src/configs/{insecure,secure_8192,secure_16384}/threshold.nr`. Committee values also
+  appear in `circuits/lib/src/configs/committee/active.nr`,
+  `packages/interfold-contracts/scripts/utils.ts`, `crates/zk-helpers/src/ciphernodes_committee.rs`,
+  and `packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol`. The generated Solidity
+  and TypeScript values bind the BFV parameter-set hashes and configuration IDs. The gate verifies
+  the tuple, the circuit error bound, and every runtime configuration-ID copy. The local
   `circuits/bin/.active-preset.json` cache may differ from the production chain pair. Drift means a
   deployment can register parameters that ciphernodes or circuits do not implement. Regenerate
   configuration constants with `pnpm build:circuits sync-config --preset <name> --committee <name>`;
@@ -355,8 +356,8 @@ design citation alone does not establish current runtime behavior.
   and `CiphernodesCommitteeSize::values()`. — `scripts/circuit-constants.ts`
 - Wrapper Solidity verifiers (`BfvPkVerifier`, `BfvDecryptionVerifier`) have an `(H, T)`-specific
   public-input layout and must be redeployed on committee change.
-- Parity matrices (`parity_{insecure,secure}.nr`) are derived artifacts regenerated from preset
-  `QIS` + committee `(N, T)`; hand-edits are caught by regenerate-and-diff.
+- Parity matrices (`parity_{insecure,secure_8192,secure_16384}.nr`) are derived artifacts
+  regenerated from preset `QIS` + committee `(N, T)`; hand-edits are caught by regenerate-and-diff.
 
 ### Noir / Barretenberg compatibility
 
@@ -375,10 +376,10 @@ design citation alone does not establish current runtime behavior.
   release workflow rejects a different value because the ciphernode resolves both the GitHub release
   and `circuits-{version}.tar.gz` from this field.
 - A circuit release archive that supports current deployments must include every
-  `insecure-512/{minimum,micro,small}` and `secure-8192/{minimum,micro,small}` pair. Each pair has a
-  build stamp with the exact preset, committee, and source hash. `checksums.json` and `SHA256SUMS`
-  must cover the archive contents. Nodes select the artifact directory from the E3's on-chain
-  parameter set and committee size.
+  `insecure/{minimum,micro,small}`, `secure-8192/{minimum,micro,small}`, and
+  `secure-16384/{minimum,micro,small}` pair. Each pair has a build stamp with the exact preset,
+  committee, and source hash. `checksums.json` and `SHA256SUMS` must cover the archive contents.
+  Nodes select the artifact directory from the E3's on-chain parameter set and committee size.
 
 ### DKG / threshold structure
 

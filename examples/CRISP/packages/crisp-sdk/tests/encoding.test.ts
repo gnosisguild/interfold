@@ -8,7 +8,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import { setCircuits } from '../src/circuits'
 import { getZkInputsGenerator, setZkInputsGeneratorPreset } from '../src/encoding'
-import { loadCircuits } from '../src/presets/insecure-512'
+import { loadCircuits } from '../src/presets/insecure'
 
 beforeAll(async () => {
   setCircuits(await loadCircuits())

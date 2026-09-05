@@ -52,7 +52,7 @@ describe("BFV verifier routers", function () {
         [],
         ethers.ZeroHash,
         ethers.ZeroHash,
-        proofWithAnchors(36, HASH_C, HASH_D),
+        proofWithAnchors(54, HASH_C, HASH_D),
       ),
     ).to.equal(true);
     expect(
@@ -62,7 +62,7 @@ describe("BFV verifier routers", function () {
         [],
         ethers.ZeroHash,
         ethers.ZeroHash,
-        proofWithAnchors(12, HASH_A, HASH_B),
+        proofWithAnchors(30, HASH_A, HASH_B),
       ),
     ).to.equal(false);
 
@@ -73,7 +73,7 @@ describe("BFV verifier routers", function () {
         [],
         ethers.ZeroHash,
         ethers.ZeroHash,
-        proofWithAnchors(36, HASH_C, HASH_A),
+        proofWithAnchors(54, HASH_C, HASH_A),
       ),
     ).to.be.revertedWithCustomError(router, "VkHashMismatch");
     await expect(
@@ -83,7 +83,7 @@ describe("BFV verifier routers", function () {
         [],
         ethers.ZeroHash,
         ethers.ZeroHash,
-        proofWithAnchors(13, HASH_A, HASH_B),
+        proofWithAnchors(31, HASH_A, HASH_B),
       ),
     ).to.be.revertedWithCustomError(router, "InvalidPublicInputsLength");
   });

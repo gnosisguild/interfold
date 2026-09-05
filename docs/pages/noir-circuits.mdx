@@ -99,14 +99,14 @@ The CLI keeps this copy under `~/.interfold/noir` instead of on your `PATH`, so
 From the **repository root**:
 
 ```bash
-pnpm build:circuits                              # default: --preset insecure-512 --committee minimum
+pnpm build:circuits                              # default: --preset insecure --committee minimum
 pnpm build:circuits --preset secure-8192 --committee small
 pnpm check:committee                             # verify active.nr, utils.ts, parity files agree
 ./scripts/lint-circuits.sh                       # nargo fmt --check && nargo check (lib + bin areas)
 ./scripts/test-circuits.sh                       # nargo test on circuits/lib
 ```
 
-**Preset** (`insecure-512` | `secure-8192`) selects the BFV parameter set; **committee** (`minimum`
+**Preset** (`insecure` | `secure-8192`) selects the BFV parameter set; **committee** (`minimum`
 | `micro` | `small`) selects `(N, T, H)` for secret sharing. Always switch committee via
 `pnpm build:circuits --committee <name>` — see
 [`scripts/README.md`](https://github.com/theinterfold/interfold/blob/main/scripts/README.md#circuit-builder)
@@ -125,7 +125,7 @@ optional-Noir CI stays green.
 ## Solidity verifiers (example: CRISP)
 
 The `@interfold/sdk` `generateProof()` helper embeds user-data-encryption circuits built with
-`--preset insecure-512 --committee minimum`. It is a convenience for that path only. For on-chain
+`--preset insecure --committee minimum`. It is a convenience for that path only. For on-chain
 Honk verification, compile your own UDE, app, and fold circuits for the preset and committee your
 deployment uses — see
 [Proving: embedded circuits or your own](./sdk#proving-embedded-circuits-or-your-own).

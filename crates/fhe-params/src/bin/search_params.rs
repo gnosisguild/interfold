@@ -6,54 +6,58 @@
 
 //! BFV Parameter Search CLI
 //!
-//! Standalone command-line tool for searching BFV parameters using NTT-friendly primes.
+//! Standalone command-line tool for searching BFV parameters using NTT-friendly
+//! CRT primes over the fixed ring dimension N = 16384.
 
 use clap::Parser;
 use e3_fhe_params::search::bfv::{
     bfv_search, bfv_search_second_param, BfvSearchConfig, BfvSearchResult,
 };
-use e3_fhe_params::search::constants::K_MAX;
+use e3_fhe_params::search::constants::{K_MAX, RING_DIM, TARGET_NUM_PRIMES};
 use e3_fhe_params::search::prime::{build_prime_items, build_prime_items_for_second};
-use e3_fhe_params::search::utils::{approx_bits_from_log2, fmt_big_summary};
+use e3_fhe_params::search::utils::{approx_bits_from_log2, fmt_big_summary, log2_big};
 use num_bigint::BigUint;
 
 #[derive(Parser, Debug, Clone)]
 #[command(
     version,
-    about = "Search BFV params with NTT-friendly CRT primes (40..63 bits)"
+    about = "Search BFV params with NTT-friendly CRT primes (ring dimension N=16384)"
 )]
 struct Args {
-    /// Number of parties n (e.g. ciphernodes, default is 1000)
-    #[arg(long, default_value_t = 1000u128)]
+    /// Number of ciphernodes n.
+    #[arg(long, default_value_t = 20u128)]
     n: u128,
 
-    /// Number of fresh ciphertext z, i.e. number of votes. Note that the BFV plaintext modulus k will be defined as k = z
-    #[arg(long, default_value_t = 1000u128)]
+    /// Number of fresh-ciphertext additions z summed before the multiplicative
+    /// circuit (also caps the plaintext space).
+    #[arg(long, default_value_t = 3u128)]
     z: u128,
 
-    /// Plaintext modulus k (plaintext space).
+    /// Total multiplicative circuit depth (Prop. 20 recursion).
+    #[arg(long, default_value_t = 3u32)]
+    mult_depth: u32,
+
+    /// BFV plaintext modulus k.
     #[arg(long, default_value_t = 1000u128)]
     k: u128,
 
-    /// Statistical Security parameter λ (negl(λ)=2^{-λ}).
-    #[arg(long, default_value_t = 80u32)]
+    /// Statistical security parameter λ (negl(λ)=2^{-λ}).
+    #[arg(long, default_value_t = 31u32)]
     lambda: u32,
 
-    /// Bound B on the error distribution \psi (see pdf) used generate e1 when encrypting (e.g., 20 for CBD with σ≈3.2).
+    /// Bound B on the error distribution ψ (e.g. 20 for CBD with σ≈3.2).
     #[arg(long, default_value_t = 20u128)]
     b: u128,
 
-    /// Bound B_{\chi} on the distribution \chi (see pdf) used generate the secret key sk_i of each party i.
-    /// By default, it is fixed to be 20 (that is the case when \chi is CBD with with σ≈3.2, which
-    /// is the distribution by default in fhe.rs).
+    /// Bound B_χ on the secret-key distribution χ.
     #[arg(long, default_value_t = 1u128)]
     b_chi: u128,
 
-    /// Min margin.
-    #[arg(long, default_value_t = 1f64)]
+    /// Minimum correctness margin in bits (log2(Δ) − log2(LHS)).
+    #[arg(long, default_value_t = 2.0f64)]
     min_margin: f64,
 
-    /// Verbose per-candidate logging
+    /// Verbose per-candidate logging.
     #[arg(long, default_value_t = false)]
     verbose: bool,
 }
@@ -73,7 +77,7 @@ fn variance_uniform_str(b: u128) -> String {
 }
 
 fn variance_uniform_big_str(b: &BigUint) -> String {
-    // Variance for Uniform(-B..B): Var = B^2 / 3
+    // Variance for Uniform(-B..B): Var = B^2 / 3.
     let var = (b * b) / 3u32;
     var.to_str_radix(10)
 }
@@ -94,7 +98,10 @@ fn print_param_set(
     println!();
     if show_common {
         println!("  n (ciphernodes)       = {}", config.n);
-        println!("  z (votes)             = {}", config.z);
+        println!("  z (additions)         = {}", config.z);
+        if result.mult_depth > 0 {
+            println!("  mult_depth            = {}", result.mult_depth);
+        }
     }
     println!(
         "  k (plaintext space)   = {} ({} bits)",
@@ -136,7 +143,20 @@ fn print_param_set(
             "  B_fresh               = {}",
             result.b_fresh.to_str_radix(10)
         );
-        println!("  B_C                   = {}", result.b_c.to_str_radix(10));
+        println!("  B_C (additions)       = {}", result.b_c.to_str_radix(10));
+        if result.mult_depth > 0 {
+            println!("  mult_depth            = {}", result.mult_depth);
+            println!(
+                "  B_relin (Eq. 30)      = {} (log₂ ≈ {:.1})",
+                result.b_relin.to_str_radix(10),
+                log2_big(&result.b_relin)
+            );
+            println!(
+                "  B_C (after mult)      = {} (log₂ ≈ {:.1})",
+                result.b_c_final.to_str_radix(10),
+                log2_big(&result.b_c_final)
+            );
+        }
         println!(
             "  B_sm                  = {}",
             result.b_sm_min.to_str_radix(10)
@@ -177,21 +197,22 @@ fn main() {
     println!();
     println!("Inputs:");
     println!("  n (ciphernodes)     = {}", args.n);
-    println!("  z (votes)           = {}", args.z);
+    println!("  z (additions)       = {}", args.z);
+    println!("  mult_depth          = {}", args.mult_depth);
     println!("  k (plaintext space) = {}", args.k);
     println!("  λ (statistical sec) = {}", args.lambda);
     println!("  B (error bound)     = {}", args.b);
     println!("  B_χ (secret bound)  = {}", args.b_chi);
     println!();
 
-    // Enforce constraints on z and k
+    // Enforce constraints on z and k.
     if args.z == 0 {
         eprintln!("ERROR: z must be positive.");
         std::process::exit(1);
     }
     if args.z > K_MAX {
         eprintln!(
-            "ERROR: too many votes — z = {} exceeds 2^25 = {}.",
+            "ERROR: too many additions — z = {} exceeds {}.",
             args.z, K_MAX
         );
         std::process::exit(1);
@@ -200,17 +221,22 @@ fn main() {
         eprintln!("ERROR: user-supplied plaintext space k must be positive.");
         std::process::exit(1);
     }
-
     if !args.min_margin.is_finite() || args.min_margin < 0.0 {
         eprintln!("ERROR: --min-margin must be a finite, non-negative number.");
         std::process::exit(1);
     }
+
+    println!(
+        "Fixed ring dimension set: N={}, {} CRT primes.",
+        RING_DIM, TARGET_NUM_PRIMES
+    );
 
     let config = BfvSearchConfig {
         n: args.n,
         z: args.z,
         k: args.k,
         lambda: args.lambda,
+        mult_depth: args.mult_depth,
         b: args.b,
         b_chi: args.b_chi,
         min_margin: args.min_margin,
@@ -218,13 +244,16 @@ fn main() {
     };
 
     println!("Prime pools:");
-    println!("  First set:  {} primes", build_prime_items().len());
     println!(
-        "  Second set: {} primes",
+        "  First set:  {} primes (49-62 bit, q ≡ 1 mod 32768)",
+        build_prime_items().len()
+    );
+    println!(
+        "  Second set: {} primes (50-62 bit, q ≡ 1 mod 32768)",
         build_prime_items_for_second().len()
     );
 
-    // Search for first parameter set
+    // Search for the first parameter set.
     if args.verbose {
         println!();
         println!(
@@ -236,13 +265,17 @@ fn main() {
         );
     }
 
-    let Ok(bfv) = bfv_search(&config) else {
-        eprintln!("\nERROR: No feasible first parameter set found.");
-        eprintln!("Try reducing n, z, k, λ, B, B_χ or min_margin.");
-        std::process::exit(1);
+    let bfv = match bfv_search(&config) {
+        Ok(res) => res,
+        Err(err) => {
+            eprintln!("\nERROR: No feasible first parameter set found.");
+            eprintln!("{err}");
+            eprintln!("Try reducing n, z, k, λ, B, B_χ or min_margin.");
+            std::process::exit(1);
+        }
     };
 
-    // Decide distributions: CBD for B ≤ 32, otherwise Uniform
+    // Decide distributions: CBD for B ≤ 32, otherwise Uniform.
     let (dist_b, var_b) = if args.b <= 32 {
         ("CBD", variance_cbd_str(args.b))
     } else {
@@ -252,7 +285,7 @@ fn main() {
     let var_chi = variance_cbd_str(args.b_chi);
     let var_enc = variance_uniform_big_str(&bfv.benc_min);
 
-    // Search for second parameter set
+    // Search for the second parameter set.
     if args.verbose {
         println!();
         println!(

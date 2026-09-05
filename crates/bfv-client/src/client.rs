@@ -290,10 +290,7 @@ mod tests {
         let normalized_bytes = PublicKey::from_bytes(&expected_bytes, &params)
             .unwrap()
             .to_bytes();
-        assert_ne!(
-            normalized_bytes, expected_bytes,
-            "threshold aggregation must exercise fhe.rs variable-time normalization"
-        );
+        assert_eq!(normalized_bytes, expected_bytes);
         let expected_commitment = compute_pk_commitment(
             expected_bytes.clone(),
             param_set.degree,

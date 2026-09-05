@@ -66,7 +66,7 @@ fn rust_reproduces_the_root_the_contract_produced() {
     let entries = fixture["inputs"].as_array().expect("inputs");
     let (ciphertexts, published) = load(entries);
 
-    // The SDK builds ballots under the insecure-512 threshold preset.
+    // The SDK builds ballots under the insecure threshold preset.
     let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
     let result = ComputeInput {
         fhe_inputs: FHEInputs {

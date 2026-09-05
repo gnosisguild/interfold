@@ -5,9 +5,21 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { execSync } from 'child_process'
+import { execFileSync, execSync } from 'child_process'
 import { createHash } from 'crypto'
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import {
+  appendFileSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'fs'
+import { tmpdir } from 'os'
 import { basename, join, resolve } from 'path'
 import { AbiCoder, id, keccak256 } from 'ethers'
 import { BFV_PARAMS } from '../packages/interfold-contracts/scripts/protocol/constants'
@@ -95,6 +107,7 @@ class NoirCircuitBuilder {
   private rootDir: string
   private circuitsDir: string
   private options: BuildOptions
+  private generatedConfigPresets = new Set<CircuitPreset>()
 
   constructor(rootDir?: string, options: BuildOptions = {}) {
     this.rootDir = rootDir ?? resolve(__dirname, '..')
@@ -214,11 +227,13 @@ class NoirCircuitBuilder {
       `pub global H: u32 = crate::configs::committee::${committee}::H;`,
       '',
       '/// Parity matrices for the secret-sharing scheme, sized for the active committee.',
-      '/// `configs::{insecure,secure}::dkg` re-exports the relevant one as `PARITY_MATRIX`.',
+      '/// `configs::{insecure,secure_8192,secure_16384}::dkg` re-exports the relevant one as `PARITY_MATRIX`.',
       `pub use crate::configs::committee::${committee}::parity_insecure::PARITY_MATRIX as PARITY_MATRIX_INSECURE;`,
-      `pub use crate::configs::committee::${committee}::parity_secure::PARITY_MATRIX as PARITY_MATRIX_SECURE;`,
+      `pub use crate::configs::committee::${committee}::parity_secure_8192::PARITY_MATRIX as PARITY_MATRIX_SECURE_8192;`,
+      `pub use crate::configs::committee::${committee}::parity_secure_16384::PARITY_MATRIX as PARITY_MATRIX_SECURE_16384;`,
       `pub use crate::configs::committee::${committee}::smudging::{`,
-      '    INSECURE_E_SM_BIT, INSECURE_E_SM_BOUND, SECURE_E_SM_BIT, SECURE_E_SM_BOUND,',
+      '    INSECURE_E_SM_BIT, INSECURE_E_SM_BOUND, SECURE_8192_E_SM_BIT, SECURE_8192_E_SM_BOUND,',
+      '    SECURE_16384_E_SM_BIT, SECURE_16384_E_SM_BOUND,',
       '};',
       '',
     ].join('\n')
@@ -227,7 +242,7 @@ class NoirCircuitBuilder {
   }
 
   /**
-   * Regenerates `circuits/lib/src/configs/committee/<committee>/parity_{insecure,secure}.nr`
+   * Regenerates `circuits/lib/src/configs/committee/<committee>/parity_{insecure,secure_8192,secure_16384}.nr`
    * by invoking the Rust `generate_parity_matrices` binary. The Reed-Solomon parity matrix is
    * a deterministic function of `(N, T, QIS)` — committing the output keeps `nargo check`
    * working standalone, but the build script always overwrites it so a change in committee
@@ -253,9 +268,9 @@ class NoirCircuitBuilder {
 
   private bfvConfig(preset: CircuitPreset, committee: CircuitCommittee) {
     const { h, t, n } = COMMITTEE_PARAMS[committee]
-    const paramSet = preset === CIRCUIT_PRESETS.INSECURE_512 ? 0 : 1
+    const paramSet = preset === CIRCUIT_PRESETS.INSECURE_512 ? 0 : preset === CIRCUIT_PRESETS.SECURE_8192 ? 1 : 2
     const committeeSize = ALL_COMMITTEES.indexOf(committee)
-    const params = paramSet === 0 ? BFV_PARAMS.insecure512 : BFV_PARAMS.secure8192
+    const params = paramSet === 0 ? BFV_PARAMS.insecure512 : paramSet === 1 ? BFV_PARAMS.secure8192 : BFV_PARAMS.secure16384
     const encodedParams = AbiCoder.defaultAbiCoder().encode(
       ['tuple(uint256 degree,uint256 plaintext_modulus,uint256[] moduli,string error1_variance)'],
       [[params.degree, params.plaintextModulus, [...params.moduli], params.error1Variance]],
@@ -275,6 +290,7 @@ class NoirCircuitBuilder {
     const { h, t, n, paramSet, committeeSize } = this.bfvConfig(preset, committee)
     const insecure = this.bfvConfig(CIRCUIT_PRESETS.INSECURE_512, CIRCUIT_COMMITTEES.MINIMUM)
     const secure = this.bfvConfig(CIRCUIT_PRESETS.SECURE_8192, CIRCUIT_COMMITTEES.SMALL)
+    const secure16384 = this.bfvConfig(CIRCUIT_PRESETS.SECURE_16384, CIRCUIT_COMMITTEES.MINIMUM)
     const path = join(this.rootDir, 'packages', 'interfold-contracts', 'scripts', 'utils.ts')
     if (!existsSync(path)) return // optional in minimal checkouts
     const before = readFileSync(path, 'utf-8')
@@ -298,6 +314,11 @@ class NoirCircuitBuilder {
       .replace(/const INSECURE_CONFIG_ID =\s*\n\s*"0x[0-9a-fA-F]+"/, `const INSECURE_CONFIG_ID =\n  "${insecure.configId}"`)
       .replace(/const SECURE_PARAM_SET_HASH =\s*\n\s*"0x[0-9a-fA-F]+"/, `const SECURE_PARAM_SET_HASH =\n  "${secure.paramSetHash}"`)
       .replace(/const SECURE_CONFIG_ID =\s*\n\s*"0x[0-9a-fA-F]+"/, `const SECURE_CONFIG_ID =\n  "${secure.configId}"`)
+      .replace(
+        /const SECURE_16384_PARAM_SET_HASH =\s*\n\s*"0x[0-9a-fA-F]+"/,
+        `const SECURE_16384_PARAM_SET_HASH =\n  "${secure16384.paramSetHash}"`,
+      )
+      .replace(/const SECURE_16384_CONFIG_ID =\s*\n\s*"0x[0-9a-fA-F]+"/, `const SECURE_16384_CONFIG_ID =\n  "${secure16384.configId}"`)
 
     if (!after.includes(`export const BFV_DKG_H = ${h}`)) {
       throw new Error(`patchUtilsTs: could not update BFV_DKG_H in ${path} (expected export const BFV_DKG_H = <number>)`)
@@ -319,6 +340,8 @@ class NoirCircuitBuilder {
       ['INSECURE_CONFIG_ID', insecure.configId],
       ['SECURE_PARAM_SET_HASH', secure.paramSetHash],
       ['SECURE_CONFIG_ID', secure.configId],
+      ['SECURE_16384_PARAM_SET_HASH', secure16384.paramSetHash],
+      ['SECURE_16384_CONFIG_ID', secure16384.configId],
     ] as const) {
       if (!after.includes(`const ${name} =\n  "${value}"`)) {
         throw new Error(`patchUtilsTs: could not update ${name} in ${path}`)
@@ -345,8 +368,84 @@ class NoirCircuitBuilder {
 
   /** Regenerates the protocol constants without compiling circuit artifacts. */
   syncProtocolConfig(preset: CircuitPreset, committee: CircuitCommittee): void {
+    const modNrPath = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', 'default', 'mod.nr')
+    this.regenerateConfigModules(preset)
+    this.setNoirConfigPreset(modNrPath, preset)
+    this.setNoirCommittee(committee)
+    this.regenerateParityMatrices(committee)
     this.patchUtilsTs(preset, committee)
     this.writeActiveCryptoConfig(preset, committee)
+  }
+
+  private regenerateConfigModules(preset: CircuitPreset): void {
+    if (this.generatedConfigPresets.has(preset)) return
+    const generatedRoot = mkdtempSync(join(tmpdir(), 'interfold-config-'))
+    try {
+      this.runConfigModuleGenerator(preset, generatedRoot)
+      const module = PRESET_NOIR_CONFIG[preset]
+      for (const file of ['mod.nr', 'threshold.nr', 'dkg.nr']) {
+        copyFileSync(join(generatedRoot, module, file), join(this.rootDir, 'circuits', 'lib', 'src', 'configs', module, file))
+      }
+      this.generatedConfigPresets.add(preset)
+    } catch (err: any) {
+      throw new Error(
+        `Failed to regenerate BFV config modules for preset=${preset}: ${err.message}\n` +
+          `   Try: cargo run --release --bin generate_config_modules -- --preset ${this.configModuleName(preset)}`,
+      )
+    } finally {
+      rmSync(generatedRoot, { recursive: true, force: true })
+    }
+  }
+
+  private verifyConfigModules(preset: CircuitPreset): void {
+    const generatedRoot = mkdtempSync(join(tmpdir(), 'interfold-config-'))
+    try {
+      this.runConfigModuleGenerator(preset, generatedRoot)
+      const module = PRESET_NOIR_CONFIG[preset]
+      const normalize = (content: string) => content.replace(/\s+/g, '').replace(/,([}\]])/g, '$1')
+      for (const file of ['mod.nr', 'threshold.nr', 'dkg.nr']) {
+        const committed = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', module, file)
+        const generated = join(generatedRoot, module, file)
+        if (!existsSync(committed) || normalize(readFileSync(committed, 'utf8')) !== normalize(readFileSync(generated, 'utf8'))) {
+          throw new Error(
+            `Generated config drift detected for ${module}/${file}. ` +
+              `Run: pnpm build:circuits sync-config --preset ${preset} --committee ${this.options.committee ?? CIRCUIT_COMMITTEES.MINIMUM}`,
+          )
+        }
+      }
+    } finally {
+      rmSync(generatedRoot, { recursive: true, force: true })
+    }
+  }
+
+  private configModuleName(preset: CircuitPreset): string {
+    return preset === CIRCUIT_PRESETS.INSECURE_512
+      ? 'INSECURE_THRESHOLD_512'
+      : preset === CIRCUIT_PRESETS.SECURE_8192
+        ? 'SECURE_THRESHOLD_8192'
+        : 'SECURE_THRESHOLD_16384'
+  }
+
+  private runConfigModuleGenerator(preset: CircuitPreset, outputRoot: string): void {
+    execFileSync(
+      'cargo',
+      [
+        'run',
+        '--quiet',
+        '--release',
+        '--bin',
+        'generate_config_modules',
+        '--',
+        '--preset',
+        this.configModuleName(preset),
+        '--output-root',
+        outputRoot,
+      ],
+      {
+        cwd: this.rootDir,
+        stdio: ['ignore', 'pipe', 'inherit'],
+      },
+    )
   }
 
   /** Writes the circuit-bound constants consumed by Interfold. */
@@ -355,6 +454,7 @@ class NoirCircuitBuilder {
     const secureMinimum = this.bfvConfig(CIRCUIT_PRESETS.SECURE_8192, CIRCUIT_COMMITTEES.MINIMUM)
     const secureMicro = this.bfvConfig(CIRCUIT_PRESETS.SECURE_8192, CIRCUIT_COMMITTEES.MICRO)
     const testnet = this.bfvConfig(CIRCUIT_PRESETS.INSECURE_512, CIRCUIT_COMMITTEES.MINIMUM)
+    const secure16384 = this.bfvConfig(CIRCUIT_PRESETS.SECURE_16384, CIRCUIT_COMMITTEES.MINIMUM)
     const path = join(this.rootDir, 'packages', 'interfold-contracts', 'contracts', 'lib', 'ActiveCryptoConfig.sol')
     const source = `// SPDX-License-Identifier: LGPL-3.0-only
 //
@@ -366,8 +466,8 @@ pragma solidity >=0.8.27;
 import { IInterfold } from "../interfaces/IInterfold.sol";
 
 // Auto-generated by scripts/build-circuits.ts. Active local selection: ${preset}/${committee}.
-// Mainnet supports secure BFV with minimum, micro, and small committees. Sepolia and local chains
-// support insecure and secure BFV with every committee size.
+// Mainnet supports secure-8192 BFV with minimum, micro, and small committees. Sepolia and local
+// chains support insecure, secure-8192, and secure-16384 BFV with every committee size.
 library ActiveCryptoConfig {
     bytes32 internal constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
     bytes32 internal constant CIRCUIT_VERSION = keccak256("interfold-bfv-v1");
@@ -383,6 +483,12 @@ library ActiveCryptoConfig {
     uint8 internal constant SECURE_PARAM_SET = ${production.paramSet};
     bytes32 internal constant SECURE_PARAM_SET_HASH =
         ${production.paramSetHash};
+
+    bytes32 internal constant SECURE_16384_CONFIG_ID =
+        ${secure16384.configId};
+    uint8 internal constant SECURE_16384_PARAM_SET = ${secure16384.paramSet};
+    bytes32 internal constant SECURE_16384_PARAM_SET_HASH =
+        ${secure16384.paramSetHash};
 
     uint8 internal constant MINIMUM_COMMITTEE_SIZE = ${secureMinimum.committeeSize};
     uint32 internal constant MINIMUM_T = ${secureMinimum.t};
@@ -427,6 +533,7 @@ library ActiveCryptoConfig {
     ) internal pure returns (bytes32) {
         if (paramSet == INSECURE_PARAM_SET) return INSECURE_CONFIG_ID;
         if (paramSet == SECURE_PARAM_SET) return SECURE_CONFIG_ID;
+        if (paramSet == SECURE_16384_PARAM_SET) return SECURE_16384_CONFIG_ID;
         revert IInterfold.UnsupportedCryptoConfig();
     }
 
@@ -441,7 +548,9 @@ library ActiveCryptoConfig {
     function isParamSetSupported(uint8 paramSet) internal view returns (bool) {
         if (isTestnetOrLocal()) {
             return
-                paramSet == INSECURE_PARAM_SET || paramSet == SECURE_PARAM_SET;
+                paramSet == INSECURE_PARAM_SET ||
+                paramSet == SECURE_PARAM_SET ||
+                paramSet == SECURE_16384_PARAM_SET;
         }
         return paramSet == SECURE_PARAM_SET;
     }
@@ -494,7 +603,9 @@ library ActiveCryptoConfig {
             revert IInterfold.UnsupportedCryptoConfig();
         bytes32 expectedHash = paramSet == INSECURE_PARAM_SET
             ? INSECURE_PARAM_SET_HASH
-            : SECURE_PARAM_SET_HASH;
+            : paramSet == SECURE_PARAM_SET
+                ? SECURE_PARAM_SET_HASH
+                : SECURE_16384_PARAM_SET_HASH;
         if (paramSetHash != expectedHash)
             revert IInterfold.UnsupportedCryptoConfig();
     }
@@ -690,12 +801,14 @@ library ActiveCryptoConfig {
         return result
       }
 
-      const sourceHash = this.computeSourceHash(preset, committee)
-      result.sourceHash = sourceHash
-
+      this.verifyConfigModules(preset)
       if (modNrPath) {
         this.syncPresetAndCommittee(modNrPath, preset, committee)
       }
+      // Hash after syncing generated preset, committee, and parity inputs. Otherwise
+      // hydrate-only validation compares artifacts against a pre-sync source hash.
+      const sourceHash = this.computeSourceHash(preset, committee)
+      result.sourceHash = sourceHash
 
       if (this.options.hydrateBinOnly) {
         if (!this.isDistPresetUpToDate(preset, committee, sourceHash)) {
@@ -1281,7 +1394,7 @@ Commands: build (default), hash, sync-config
 Options:
   --group <groups>    Circuit groups (comma-separated: dkg,threshold)
   --circuit <name>    Build specific circuit(s)
-  --preset <preset>   Parameter preset: insecure-512 (default), secure-8192, or all
+  --preset <preset>   Parameter preset: insecure (default), secure-8192, secure-16384, or all
   --committee <name>  Committee size: minimum (default), micro, small, or all
   --skip-utils-patch  Don't rewrite BFV_DKG_H/T in packages/interfold-contracts/scripts/utils.ts
   --skip-vk           Skip verification key generation

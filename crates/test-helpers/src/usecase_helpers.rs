@@ -75,8 +75,9 @@ pub fn generate_shares_hash_map(
                 GenPkShareAndSkSssRequest {
                     trbfv_config: trbfv_config.clone(),
                     crp: ArcBytes::from_bytes(&crp.to_bytes()),
-                    lambda: LambdaConfig::Insecure(40),
+                    lambda: LambdaConfig::Insecure(2),
                     num_ciphertexts: 1,
+                    mult_depth: 0,
                 },
             )
         }?;

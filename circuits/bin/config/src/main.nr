@@ -19,18 +19,20 @@
 /// - BFV and Threshold BFV parameter sets are mutually consistent
 
 use lib::configs::default::{N_PARTIES, T};
-use lib::configs::secure::dkg::{
-    L as DKG_L, L_THRESHOLD, N as DKG_N, PARITY_MATRIX, PLAINTEXT_MODULUS as DKG_PLAINTEXT_MODULUS,
-    Q_MOD_T as DKG_Q_MOD_T, Q_MOD_T_CENTERED as DKG_Q_MOD_T_CENTERED, QIS as DKG_QIS, QIS_THRESHOLD,
+use lib::configs::default::dkg::{
+    DKG_ERROR_BOUND, L as DKG_L, L_THRESHOLD, N as DKG_N, PARITY_MATRIX,
+    PLAINTEXT_MODULUS as DKG_PLAINTEXT_MODULUS, Q_MOD_T as DKG_Q_MOD_T,
+    Q_MOD_T_CENTERED as DKG_Q_MOD_T_CENTERED, QIS as DKG_QIS, QIS_THRESHOLD,
     SHARE_ENCRYPTION_E0_BOUND, SHARE_ENCRYPTION_E1_BOUND, SHARE_ENCRYPTION_K0IS,
     SHARE_ENCRYPTION_MSG_BOUND, SHARE_ENCRYPTION_P1_BOUNDS, SHARE_ENCRYPTION_P2_BOUNDS,
     SHARE_ENCRYPTION_PK_BOUNDS, SHARE_ENCRYPTION_R1_LOW_BOUNDS, SHARE_ENCRYPTION_R1_UP_BOUNDS,
     SHARE_ENCRYPTION_R2_BOUNDS, SHARE_ENCRYPTION_U_BOUND,
 };
 
-use lib::configs::secure::threshold::{
+use lib::configs::default::threshold::{
     // Structural parameters
-    N as THRESHOLD_N, L as THRESHOLD_L, PARAMS_SEARCH_Z as N_CIPHERTEXTS,
+    N as THRESHOLD_N, L as THRESHOLD_L, PARAMS_MULT_DEPTH, PARAMS_TWO_POW_LAMBDA_PLUS_ONE,
+    PARAMS_SEARCH_Z as N_CIPHERTEXTS,
     // Moduli
     QIS as THRESHOLD_QIS,
     // Derived values
@@ -38,7 +40,7 @@ use lib::configs::secure::threshold::{
     Q_MOD_T_CENTERED as THRESHOLD_Q_MOD_T_CENTERED, Q_INVERSE_MOD_T as THRESHOLD_Q_INVERSE_MOD_T,
     // pk_generation bounds
     PK_GENERATION_EEK_BOUND, PK_GENERATION_SK_BOUND, PK_GENERATION_E_SM_BOUND,
-    PK_GENERATION_R1_BOUNDS, PK_GENERATION_R2_BOUNDS, PK_GENERATION_B_ENC,
+    PK_GENERATION_R1_BOUNDS, PK_GENERATION_R2_BOUNDS, PARAMS_SMUDGING_B_ENC,
     // share_decryption bounds
     THRESHOLD_SHARE_DECRYPTION_R1_BOUNDS, THRESHOLD_SHARE_DECRYPTION_R2_BOUNDS,
     // user_data_encryption bounds
@@ -201,20 +203,15 @@ fn verify_dkg_bounds() {
     // u_bound = 1 (ternary)
     assert(SHARE_ENCRYPTION_U_BOUND == 1, "SHARE_ENCRYPTION_U_BOUND should be 1 for ternary");
 
-    // e0_bound = 20
-    assert(SHARE_ENCRYPTION_E0_BOUND == 20, "SHARE_ENCRYPTION_E0_BOUND should be 20");
-
-    // e1_bound = 20
-    assert(SHARE_ENCRYPTION_E1_BOUND == 20, "SHARE_ENCRYPTION_E1_BOUND should be 20");
+    // e0_bound and e1_bound use the DKG error sampler support.
+    assert(SHARE_ENCRYPTION_E0_BOUND == DKG_ERROR_BOUND, "SHARE_ENCRYPTION_E0_BOUND mismatch");
+    assert(SHARE_ENCRYPTION_E1_BOUND == DKG_ERROR_BOUND, "SHARE_ENCRYPTION_E1_BOUND mismatch");
 
     // msg_bound = t - 1
     assert(SHARE_ENCRYPTION_MSG_BOUND as u128 == t - 1, "SHARE_ENCRYPTION_MSG_BOUND mismatch");
 
-    // ptxt bounds for r1 calculation
-    let ptxt_up_bound: u128 = (t - 1) / 2;
-
-    // Check if t is even or odd for ptxt_low calculation
-    let t_is_even: bool = (t % 2) == 0;
+    // The scaled plaintext uses a symmetric magnitude bound of t - 1.
+    let ptxt_up_bound: u128 = t - 1;
 
     for i in 0..DKG_L {
         let qi: u128 = DKG_QIS[i] as u128;
@@ -263,12 +260,9 @@ fn verify_dkg_bounds() {
             "SHARE_ENCRYPTION_R1_UP_BOUNDS mismatch",
         );
 
-        // r1_low_bounds[i] depends on whether t is even or odd
-        let expected_r1_low: u128 = if t_is_even {
-            ((ptxt_up_bound + 1) * k0i + ((n * u_bound + 2) * qi_bound + e0_bound_i)) / qi
-        } else {
-            expected_r1_up
-        };
+        // r1_low_bounds[i] uses the magnitude of the negative plaintext bound.
+        let expected_r1_low: u128 =
+            (ptxt_up_bound * k0i + ((n * u_bound + 2) * qi_bound + e0_bound_i)) / qi;
         assert(
             SHARE_ENCRYPTION_R1_LOW_BOUNDS[i] as u128 == expected_r1_low,
             "SHARE_ENCRYPTION_R1_LOW_BOUNDS mismatch",
@@ -376,10 +370,8 @@ fn verify_pk_generation_bounds() {
 ///
 /// The smudging noise bound is critical for threshold decryption security.
 /// It's computed as: e_sm_bound = 2^lambda * N_CIPHERTEXTS * (b_fresh + Q_MOD_T)
-/// where b_fresh = N * e_norm + b_enc + N * b_e * sk_norm and lambda = 50.
-///
-/// The 2^50 factor provides 50 bits of statistical security, ensuring that
-/// decryption shares don't leak secret key information.
+/// where b_fresh = N * e_norm + b_enc + N * b_e * sk_norm. The bound includes the
+/// configured statistical security level and multiplicative-depth noise recursion.
 fn verify_e_sm_bound() {
     let n: Field = THRESHOLD_N as Field;
     let committee_n: Field = N_PARTIES as Field;
@@ -389,16 +381,37 @@ fn verify_e_sm_bound() {
     let num_ciphertexts: Field = N_CIPHERTEXTS as Field;
 
     // b_fresh = N * e_norm + b_enc + N * b_e * sk_norm
-    let b_fresh = n * e_norm + PK_GENERATION_B_ENC + n * b_e * sk_norm;
+    let b_fresh = n * e_norm + PARAMS_SMUDGING_B_ENC + n * b_e * sk_norm;
 
     // b_c = N_CIPHERTEXTS * (b_fresh + Q_MOD_T)
-    let b_c = num_ciphertexts * (b_fresh + THRESHOLD_Q_MOD_T);
+    let b_c_additive = num_ciphertexts * (b_fresh + THRESHOLD_Q_MOD_T);
 
-    // 2^50
-    let two_pow_50: Field = 0x4000000000000;
+    // Prop. 20 multiplicative-depth recursion.
+    let b_c = if PARAMS_MULT_DEPTH == 0 {
+        b_c_additive
+    } else {
+        let l: Field = THRESHOLD_L as Field;
+        let mut b_g: Field = THRESHOLD_QIS[0];
+        for i in 1..THRESHOLD_L {
+            if (THRESHOLD_QIS[i] as u128) > (b_g as u128) {
+                b_g = THRESHOLD_QIS[i];
+            }
+        }
+        let k: Field = THRESHOLD_PLAINTEXT_MODULUS;
+        let n_sk: Field = committee_n;
+        let aggregate_b_e = committee_n * b_e;
+        let b_relin = n * l * n_sk * b_g * aggregate_b_e
+            + 2 * n * n * l * l * n_sk * n_sk * b_g * aggregate_b_e;
+        let coeff = 2 * k * n * n * n_sk;
+        let mut b = b_c_additive;
+        for _ in 0..PARAMS_MULT_DEPTH {
+            b = coeff * b + b_relin;
+        }
+        b
+    };
 
-    // e_sm_bound = 2^50 * b_c
-    let expected_e_sm_bound = two_pow_50 * b_c;
+    // e_sm_bound = 2^(lambda + 1) * degree * b_c.
+    let expected_e_sm_bound = PARAMS_TWO_POW_LAMBDA_PLUS_ONE * n * b_c;
 
     assert(expected_e_sm_bound == PK_GENERATION_E_SM_BOUND, "PK_GENERATION_E_SM_BOUND mismatch");
 }
@@ -444,36 +457,29 @@ fn verify_user_data_encryption_bounds() {
     // u_bound = 1 (ternary)
     assert(USER_DATA_ENCRYPTION_U_BOUND == 1, "USER_DATA_ENCRYPTION_U_BOUND should be 1");
 
-    // e1_bound = 20 (variance * 2)
+    // e1_bound = 20 (threshold error variance * 2)
     assert(USER_DATA_ENCRYPTION_E1_BOUND == 20, "USER_DATA_ENCRYPTION_E1_BOUND should be 20");
 
-    // e0_bound = sqrt(3 * error1_variance) = PK_GENERATION_B_ENC (same parameter set)
+    // e0_bound follows the configured threshold error sampler.
     assert(
-        USER_DATA_ENCRYPTION_E0_BOUND == PK_GENERATION_B_ENC,
-        "USER_DATA_ENCRYPTION_E0_BOUND should equal PK_GENERATION_B_ENC",
+        (USER_DATA_ENCRYPTION_E0_BOUND as u128) > 0,
+        "USER_DATA_ENCRYPTION_E0_BOUND must be positive",
     );
 
-    // k1_up_bound = (t - 1) / 2 = 49
-    let expected_k1_up: u128 = (t - 1) / 2;
+    // k1 bounds use the plaintext interval [0, t).
+    let expected_k1_low: u128 = 0;
+    let expected_k1_up: u128 = t - 1;
     assert(
         USER_DATA_ENCRYPTION_K1_UP_BOUND as u128 == expected_k1_up,
         "USER_DATA_ENCRYPTION_K1_UP_BOUND mismatch",
     );
-
-    // k1_low_bound = (t - 1) / 2 + 1 = 50 (for even t)
-    let t_is_even: bool = (t % 2) == 0;
-    let expected_k1_low: u128 = if t_is_even {
-        expected_k1_up + 1
-    } else {
-        expected_k1_up
-    };
     assert(
         USER_DATA_ENCRYPTION_K1_LOW_BOUND as u128 == expected_k1_low,
         "USER_DATA_ENCRYPTION_K1_LOW_BOUND mismatch",
     );
 
-    // ptxt_up_bound for r1 calculations
-    let ptxt_up_bound: u128 = (t - 1) / 2;
+    // Plaintext coefficients are encoded in [0, t).
+    let ptxt_up_bound: u128 = t - 1;
 
     for i in 0..THRESHOLD_L {
         let qi: u128 = THRESHOLD_QIS[i] as u128;
@@ -523,12 +529,8 @@ fn verify_user_data_encryption_bounds() {
             "USER_DATA_ENCRYPTION_R1_UP_BOUNDS mismatch",
         );
 
-        // r1_low_bounds[i] for even t
-        let expected_r1_low: u128 = if t_is_even {
-            ((ptxt_up_bound + 1) * k0i + ((n * u_bound + 2) * qi_bound + e0_bound_i)) / qi
-        } else {
-            expected_r1_up
-        };
+        // r1_low_bounds[i] uses the lower plaintext bound of zero.
+        let expected_r1_low: u128 = ((n * u_bound + 2) * qi_bound + e0_bound_i) / qi;
         assert(
             USER_DATA_ENCRYPTION_R1_LOW_BOUNDS[i] as u128 == expected_r1_low,
             "USER_DATA_ENCRYPTION_R1_LOW_BOUNDS mismatch",

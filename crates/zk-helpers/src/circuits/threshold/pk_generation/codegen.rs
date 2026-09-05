@@ -60,8 +60,9 @@ pub fn generate_configs(
 
     let crp_matrix_str = crp_matrix_constant_string(&threshold_params)?;
 
-    // B_enc ≈ sqrt(3 * error1_variance)
-    let b_enc = (BigUint::from(3u32) * threshold_params.get_error1_variance()).sqrt();
+    // B_enc is the ceiling of sqrt(3 * error1_variance).
+    let b_enc =
+        crate::utils::ceil_sqrt(&(BigUint::from(3u32) * threshold_params.get_error1_variance()));
 
     Ok(format!(
         r#"use crate::core::threshold::pk_generation::Configs as PkGenerationConfigs;

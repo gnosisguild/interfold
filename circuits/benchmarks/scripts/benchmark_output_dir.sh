@@ -9,6 +9,7 @@
 #   results_insecure_minimum
 #   results_insecure_micro
 #   results_secure_small
+#   results_secure-16384_small
 #
 # Proof aggregation is always enabled in the benchmark harness. Committee sizes are
 # minimum, micro, or small.
@@ -18,7 +19,11 @@ benchmark_results_dir_basename() {
     local mode="$1"
     local committee="${2:-minimum}"
     local base="${BENCHMARK_OUTPUT_DIR_BASE:-results}"
-    echo "${base}_${mode}_${committee}"
+    local preset_suffix=""
+    if [ "${BENCHMARK_PRESET:-}" = "secure-16384" ]; then
+        preset_suffix="-16384"
+    fi
+    echo "${base}_${mode}${preset_suffix}_${committee}"
 }
 
 # Full path under BENCHMARKS_DIR (set by caller).

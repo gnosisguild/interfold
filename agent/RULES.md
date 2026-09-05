@@ -71,7 +71,8 @@ For Rust work, read both `agent/ARCHITECTURE.md` (contribution rules) and
 
 Two orthogonal axes pick what gets compiled into `circuits/bin/`:
 
-- **Preset** (`--preset insecure-512` [default] | `secure-8192`): the BFV parameter set.
+- **Preset** (`--preset insecure` [default] | `secure-8192` | `secure-16384`): the BFV parameter
+  set.
 - **Committee** (`--committee minimum` [default] | `micro` | `small`): `(N, T, H)` for the
   secret-sharing committee. Mirrors `e3_zk_helpers::CiphernodesCommitteeSize`.
 

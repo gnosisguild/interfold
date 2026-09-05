@@ -4,7 +4,8 @@ Tool-neutral body for the switch-committee command/skill. Tool adapters point he
 to change the procedure.
 
 Input: a committee name `minimum` | `micro` | `small`, optionally
-`--preset insecure-512 | secure-8192`. Supported pairs live in `scripts/circuit-constants.ts`.
+`--preset insecure | secure-8192 | secure-16384`. Supported pairs live in
+`scripts/circuit-constants.ts`.
 
 Rules — read `agent/INVARIANTS.md` §Committee config sync first:
 
@@ -17,7 +18,7 @@ Rules — read `agent/INVARIANTS.md` §Committee config sync first:
 3. Verify with `pnpm check:committee` and report its output.
 4. Remind the user of the operational consequences: wrapper Solidity verifiers (`BfvPkVerifier`,
    `BfvDecryptionVerifier`) have an `(H, T)`-specific public-input layout and must be redeployed;
-   committed verifiers exist only for `(insecure-512, minimum)`; `crates/zk-helpers`
+   committed verifiers exist only for `(insecure, minimum)`; `crates/zk-helpers`
    `CiphernodesCommitteeSize` must agree (check:committee covers this).
 5. If artifacts are needed without a local rebuild, `pnpm store:circuits pull` fetches the cached
    ones from the `circuit-artifacts` branch.

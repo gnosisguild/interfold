@@ -5,7 +5,6 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use num_bigint::BigUint;
-use num_traits::One;
 use std::collections::BTreeMap;
 
 use crate::search::constants::NTT_PRIMES_BY_BITS;
@@ -24,15 +23,28 @@ pub struct PrimeItem {
     pub hex: String,
 }
 
-/// Filter function type for excluding specific bit lengths
-type BitFilter = fn(u8) -> bool;
+/// Build the prime pool for the first parameter set (49–62 bits).
+///
+/// The ring dimension is fixed at 16384, so every table entry already satisfies
+/// `p ≡ 1 (mod 32768)`; the search only needs the 49–62-bit working pool.
+pub fn build_prime_items() -> Vec<PrimeItem> {
+    build_in_range(49, 62)
+}
 
-/// Build a flat list of primes with precomputed log2 and hex strings.
-/// Excludes primes whose bit length matches the filter predicate.
-fn build_prime_items_with_filter(filter: BitFilter) -> Vec<PrimeItem> {
+/// Build the prime pool for the second parameter set (50–62 bits).
+///
+/// The second set needs `qi > 1.25 × max_qi_first`, so the 50-bit floor matches
+/// `first`'s minimum prime size and avoids the marginal 49-bit primes.
+pub fn build_prime_items_for_second() -> Vec<PrimeItem> {
+    build_in_range(50, 62)
+}
+
+/// Build a flat list of primes with bit-length in `[lo, hi]`, precomputing
+/// log2 and hex strings.
+fn build_in_range(lo: u8, hi: u8) -> Vec<PrimeItem> {
     let mut vec = Vec::new();
     for (bits, arr) in NTT_PRIMES_BY_BITS.iter() {
-        if filter(*bits) {
+        if *bits < lo || *bits > hi {
             continue;
         }
         for &phex in arr.iter() {
@@ -48,58 +60,32 @@ fn build_prime_items_with_filter(filter: BitFilter) -> Vec<PrimeItem> {
     vec
 }
 
-/// Build the prime pool for the first parameter set.
-/// Restricted to 50..=60 bit primes: the floor of 50 bits avoids the <0.2-bit
-/// correctness margin of 49-bit primes for worst-case inputs, and 61/62/63-bit
-/// primes are reserved for the second set (centered-RNS gap requirement).
-pub fn build_prime_items() -> Vec<PrimeItem> {
-    build_prime_items_with_filter(|bits| bits < 50 || bits == 61 || bits == 62 || bits == 63)
-}
-
-/// Build prime items for second parameter set (includes 62-bit primes, excludes 61 and 63-bit)
-pub fn build_prime_items_for_second() -> Vec<PrimeItem> {
-    build_prime_items_with_filter(|bits| bits == 63 || bits == 61)
-}
-
-/// Check whether `p` is NTT-friendly for ring dimension `d`, i.e. `p ≡ 1 (mod 2d)`.
-///
-/// All primes in `NTT_PRIMES_BY_BITS` satisfy this for the base ring dimension
-/// (2*8192 = 16384), but not every prime remains NTT-friendly for the larger
-/// dimensions `bfv_search` may step up to (16384, 32768), so candidates must be
-/// re-filtered against the actual `d` before selection.
-pub fn is_ntt_friendly(p: &BigUint, d: u64) -> bool {
-    p % BigUint::from(2u64 * d) == BigUint::one()
-}
-
-/// Greedily select the maximum q under a log2 cap by taking largest primes first.
-///
-/// Iterates through bit lengths from largest to smallest (60 down to 40),
-/// adding primes as long as the cumulative log2(q) stays under the limit.
-pub fn select_max_q_under_cap(limit_log2: f64, all: &[PrimeItem]) -> Vec<PrimeItem> {
+/// Group primes by bit-length, sorting each bucket ascending or descending.
+pub fn group_by_bits(primes: &[PrimeItem], ascending: bool) -> BTreeMap<u8, Vec<PrimeItem>> {
     let mut by_bits: BTreeMap<u8, Vec<PrimeItem>> = BTreeMap::new();
-    for p in all {
+    for p in primes {
         by_bits.entry(p.bitlen).or_default().push(p.clone());
     }
     for v in by_bits.values_mut() {
-        v.sort_by(|a, b| b.value.cmp(&a.value));
+        if ascending {
+            v.sort_by(|a, b| a.value.cmp(&b.value));
+        } else {
+            v.sort_by(|a, b| b.value.cmp(&a.value));
+        }
     }
+    by_bits
+}
 
-    let mut sel: Vec<PrimeItem> = Vec::new();
-    let mut qlog = 0.0f64;
-
-    for bb in (40u8..=60u8).rev() {
-        if let Some(bucket) = by_bits.get_mut(&bb) {
-            for pi in bucket.iter() {
-                let new_qlog = qlog + pi.log2;
-                if new_qlog <= limit_log2 + 1e-12 {
-                    sel.push(pi.clone());
-                    qlog = new_qlog;
-                }
+/// Whether any two primes in the selection share the same value.
+pub fn has_duplicate_primes(sel: &[PrimeItem]) -> bool {
+    for i in 0..sel.len() {
+        for j in (i + 1)..sel.len() {
+            if sel[i].value == sel[j].value {
+                return true;
             }
         }
     }
-
-    sel
+    false
 }
 
 #[cfg(test)]
@@ -112,14 +98,12 @@ mod tests {
         let items = build_prime_items();
         assert!(!items.is_empty());
 
-        // Verify no 61, 62, or 63-bit primes are included
+        // First-set pool covers 49..=62 bits.
         for item in &items {
-            assert_ne!(item.bitlen, 61);
-            assert_ne!(item.bitlen, 62);
-            assert_ne!(item.bitlen, 63);
+            assert!((49..=62).contains(&item.bitlen));
         }
 
-        // Verify items have correct structure
+        // Verify items have correct structure.
         for item in &items {
             assert_eq!(parse_hex_big(&item.hex), item.value);
             assert!(item.log2 > 0.0);
@@ -131,103 +115,15 @@ mod tests {
         let items = build_prime_items_for_second();
         assert!(!items.is_empty());
 
-        // Verify no 61 or 63-bit primes are included, but 62-bit should be included
-        assert!(items.iter().any(|item| item.bitlen == 62));
+        // Second-set pool covers 50..=62 bits.
         for item in &items {
-            assert_ne!(item.bitlen, 61);
-            assert_ne!(item.bitlen, 63);
+            assert!((50..=62).contains(&item.bitlen));
         }
 
-        // Verify items have correct structure
+        // Verify items have correct structure.
         for item in &items {
             assert_eq!(parse_hex_big(&item.hex), item.value);
             assert!(item.log2 > 0.0);
         }
-    }
-
-    #[test]
-    fn test_is_ntt_friendly() {
-        let items = build_prime_items();
-
-        // Base ring dimension: every first-set prime is NTT-friendly (table-wide invariant).
-        for item in &items {
-            assert!(
-                is_ntt_friendly(&item.value, 8192),
-                "{} fails NTT check for d=8192",
-                item.hex
-            );
-        }
-
-        // 60-bit primes are only NTT-friendly for the base dimension; larger d
-        // (which bfv_search may step up to) excludes them.
-        let sixty_bit: Vec<&PrimeItem> = items.iter().filter(|p| p.bitlen == 60).collect();
-        assert!(!sixty_bit.is_empty());
-        for item in &sixty_bit {
-            assert!(
-                !is_ntt_friendly(&item.value, 16384),
-                "{} unexpectedly NTT-friendly for d=16384",
-                item.hex
-            );
-            assert!(
-                !is_ntt_friendly(&item.value, 32768),
-                "{} unexpectedly NTT-friendly for d=32768",
-                item.hex
-            );
-        }
-
-        // 50..=59-bit primes remain NTT-friendly for every dimension bfv_search may return.
-        for item in items.iter().filter(|p| p.bitlen < 60) {
-            for &d in &[8192u64, 16384, 32768] {
-                assert!(
-                    is_ntt_friendly(&item.value, d),
-                    "{} fails NTT check for d={}",
-                    item.hex,
-                    d
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_select_max_q_under_cap() {
-        let all = build_prime_items();
-        assert!(!all.is_empty());
-
-        // Test with a reasonable cap
-        let limit_log2 = 100.0;
-        let selected = select_max_q_under_cap(limit_log2, &all);
-
-        // Verify selected items are under the cap
-        let mut total_log2 = 0.0;
-        for item in &selected {
-            total_log2 += item.log2;
-        }
-        assert!(total_log2 <= limit_log2 + 1e-12);
-
-        // Verify selected items are from the input
-        for sel_item in &selected {
-            assert!(all.iter().any(|item| item.hex == sel_item.hex));
-        }
-    }
-
-    #[test]
-    fn test_select_max_q_under_cap_small_limit() {
-        let all = build_prime_items();
-        let limit_log2 = 50.0;
-        let selected = select_max_q_under_cap(limit_log2, &all);
-
-        // With a small limit, we should get fewer items
-        let mut total_log2 = 0.0;
-        for item in &selected {
-            total_log2 += item.log2;
-        }
-        assert!(total_log2 <= limit_log2 + 1e-12);
-    }
-
-    #[test]
-    fn test_select_max_q_under_cap_empty_input() {
-        let empty: Vec<PrimeItem> = vec![];
-        let selected = select_max_q_under_cap(100.0, &empty);
-        assert!(selected.is_empty());
     }
 }

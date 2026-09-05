@@ -392,7 +392,7 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     equalAddress(pkRoute[0], recorded.pkVerifier, `PK route ${index}`);
     equalValue(
       pkRoute[1],
-      3 * expected.h + 6,
+      3 * expected.h + 24,
       `PK route ${index} public input count`,
     );
     equalAddress(

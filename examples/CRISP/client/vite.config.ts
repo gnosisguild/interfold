@@ -35,8 +35,9 @@ export default defineConfig({
       '@aztec/bb.js', // Pre-bundling breaks worker URLs (thread.worker.js, main.worker.js)
       // The SDK worker URL must stay relative to the installed SDK package.
       '@crisp-e3/sdk',
-      '@crisp-e3/sdk/insecure-512',
+      '@crisp-e3/sdk/insecure',
       '@crisp-e3/sdk/secure-8192',
+      '@crisp-e3/sdk/secure-16384',
     ],
   },
   resolve: {
