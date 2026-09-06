@@ -123,6 +123,13 @@ pub global DS_USER_DATA_ENCRYPTION_COMMITMENT: [u8; 64] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
+// Domain separator - "USER_DATA_ENCRYPTION_CHUNK"
+pub global DS_USER_DATA_ENCRYPTION_CHUNK: [u8; 64] = [
+    0x55, 0x53, 0x45, 0x52, 0x5f, 0x44, 0x41, 0x54, 0x41, 0x5f, 0x45, 0x4e, 0x43, 0x52, 0x59, 0x50,
+    0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x43, 0x48, 0x55, 0x4e, 0x4b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
 
 /// WRAPPERS
 
@@ -262,6 +269,47 @@ pub fn compute_sc_secret_chunk_root_commitment(
         payload = payload.push_back(chunk_commitments[i]);
     }
     compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK)
+}
+
+// Commitment kind tags for user_data_encryption (ct0/ct1). Distinguishes which witness group a
+// commitment belongs to so values from different groups/legs never collide under the shared
+// DS_USER_DATA_ENCRYPTION_CHUNK domain separator. `u`/`k1` (ct0) and `u` (ct1) aren't here - they
+// use the protocol-invariant `compute_single_polynomial_commitment` scheme instead (see
+// `ct0_u_k1_check`/`ct1_e1_p2_u_check`), since the wrapper cross-checks ct0's and ct1's
+// `u_commitment` directly.
+pub global UDE_KIND_CT0_E0: Field = 1;
+pub global UDE_KIND_CT0_R2: Field = 3;
+pub global UDE_KIND_CT0_R1: Field = 4;
+pub global UDE_KIND_CT1_E1: Field = 6;
+pub global UDE_KIND_CT1_P2: Field = 7;
+pub global UDE_KIND_CT1_P1: Field = 8;
+
+/// Compute a domain-separated commitment for one user_data_encryption witness group (single
+/// polynomial: e0 or e1). `kind_tag` is one of the `UDE_KIND_*` constants above.
+pub fn compute_ude_chunk_commitment<let CHUNK_SIZE: u32, let BIT: u32>(
+    kind_tag: Field,
+    chunk_idx: u32,
+    n: u32,
+    chunk_poly: Polynomial<CHUNK_SIZE>,
+) -> Field {
+    let mut payload =
+        [0, kind_tag, chunk_idx as Field, n as Field, CHUNK_SIZE as Field].as_vector();
+    payload = single_polynomial_payload::<CHUNK_SIZE, BIT>(payload, chunk_poly);
+    compute_commitment(payload, DS_USER_DATA_ENCRYPTION_CHUNK)
+}
+
+/// Compute a domain-separated commitment for one user_data_encryption chunk across all CRT
+/// limbs (r1is, r2is, p1is, or p2is). `kind_tag` is one of the `UDE_KIND_*` constants above.
+pub fn compute_ude_multi_chunk_commitment<let CHUNK_SIZE: u32, let L: u32, let BIT: u32>(
+    kind_tag: Field,
+    chunk_idx: u32,
+    n: u32,
+    polynomials: [Polynomial<CHUNK_SIZE>; L],
+) -> Field {
+    let mut payload =
+        [0, kind_tag, chunk_idx as Field, n as Field, CHUNK_SIZE as Field].as_vector();
+    payload = multiple_polynomial_payload::<CHUNK_SIZE, L, BIT>(payload, polynomials);
+    compute_commitment(payload, DS_USER_DATA_ENCRYPTION_CHUNK)
 }
 
 /// Compute the root commitment for one party share and CRT modulus.
